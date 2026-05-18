@@ -1,0 +1,49 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      // In this specific system, the server (Admin SDK) handles most writes.
+      // We only allow users to read their own profile.
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Only the user can read their own profile
+      allow get: if isOwner(userId);
+      // Writes are handled by Mother Bot (Admin SDK)
+      allow list: if false;
+    }
+
+    // Plans Cache
+    match /plans_cache/{planId} {
+      // Publicly readable for the bots to fetch
+      // But in this system, the bots run server-side with Admin SDK
+      // So we can keep this restricted or allow read if we build a frontend
+      allow read: if isSignedIn();
+    }
+
+    // Ledger
+    match /ledger/{entryId} {
+      // Only the related co-member can see their earnings
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}
