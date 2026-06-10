@@ -43,7 +43,7 @@ class MonnifyService {
         };
       }
       if (!this.accessToken) await this.authenticate();
-      
+
       const payload = {
         accountReference: `REF_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         accountName: customerName,
@@ -73,6 +73,104 @@ class MonnifyService {
       .update(JSON.stringify(payload))
       .digest('hex');
     return computedSignature === signature;
+  }
+
+  // ── Disbursement Methods ──────────────────────────────────
+
+  async getBanks() {
+    try {
+      if (config.mockMode) {
+        return [
+          { name: 'GTBank', code: '058', nipBankCode: '058' },
+          { name: 'Access Bank', code: '044', nipBankCode: '044' },
+          { name: 'UBA', code: '033', nipBankCode: '033' },
+          { name: 'First Bank', code: '011', nipBankCode: '011' },
+          { name: 'Zenith Bank', code: '057', nipBankCode: '057' },
+          { name: 'Kuda', code: '50211', nipBankCode: '50211' },
+          { name: 'OPay', code: '999992', nipBankCode: '999992' },
+          { name: 'Palmpay', code: '999991', nipBankCode: '999991' },
+          { name: 'Wema Bank', code: '035', nipBankCode: '035' },
+          { name: 'Fidelity Bank', code: '070', nipBankCode: '070' },
+          { name: 'Stanbic IBTC', code: '221', nipBankCode: '221' },
+        ];
+      }
+      if (!this.accessToken) await this.authenticate();
+      const response = await this.client.get('/api/v1/sdk/transactions/banks', {
+        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+      });
+      return response.data.responseBody || [];
+    } catch (error) {
+      logger.error('Error fetching banks:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async validateBankAccount(bankCode, accountNumber) {
+    try {
+      if (config.mockMode) {
+        logger.info(`MOCK: Validating account ${accountNumber} at bank ${bankCode}`);
+        return { accountName: 'MOCK JOHN DOE', accountNumber, bankCode };
+      }
+      if (!this.accessToken) await this.authenticate();
+      const response = await this.client.get(
+        `/api/v1/disbursements/account/validate?accountNumber=${accountNumber}&bankCode=${bankCode}`,
+        { headers: { 'Authorization': `Bearer ${this.accessToken}` } }
+      );
+      return response.data.responseBody;
+    } catch (error) {
+      logger.error('Error validating bank account:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async initiateTransfer(amount, bankCode, accountNumber, narration, reference) {
+    try {
+      if (config.mockMode) {
+        logger.info(`MOCK: Transferring ₦${amount} to ${accountNumber} (${bankCode})`);
+        return {
+          status: 'SUCCESS',
+          reference: reference || `MOCK_REF_${Date.now()}`,
+          amount
+        };
+      }
+      if (!this.accessToken) await this.authenticate();
+
+      const payload = {
+        amount,
+        reference: reference || `WDR_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        narration: narration || 'NYSC Bot Profit Withdrawal',
+        destinationBankCode: bankCode,
+        destinationAccountNumber: accountNumber,
+        currency: 'NGN',
+        sourceAccountNumber: config.monnify.walletAccountNumber || ''
+      };
+
+      const response = await this.client.post('/api/v2/disbursements/single', payload, {
+        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+      });
+
+      return response.data.responseBody;
+    } catch (error) {
+      logger.error('Error initiating transfer:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async getDisbursementStatus(reference) {
+    try {
+      if (config.mockMode) {
+        return { status: 'SUCCESS', reference };
+      }
+      if (!this.accessToken) await this.authenticate();
+      const response = await this.client.get(
+        `/api/v2/disbursements/single/summary?reference=${reference}`,
+        { headers: { 'Authorization': `Bearer ${this.accessToken}` } }
+      );
+      return response.data.responseBody;
+    } catch (error) {
+      logger.error('Error fetching disbursement status:', error.response?.data || error.message);
+      throw error;
+    }
   }
 }
 

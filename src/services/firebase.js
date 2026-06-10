@@ -14,8 +14,13 @@ if (fs.existsSync(configPath)) {
 if (!admin.apps.length) {
   try {
     if (config.firebaseCredentials) {
+      const creds = JSON.parse(config.firebaseCredentials);
+      // Fix escaped newlines in private_key (common .env issue)
+      if (creds.private_key) {
+        creds.private_key = creds.private_key.replace(/\\n/g, '\n');
+      }
       admin.initializeApp({
-        credential: admin.credential.cert(JSON.parse(config.firebaseCredentials))
+        credential: admin.credential.cert(creds)
       });
     } else {
       // Fallback to default if available (Cloud Run managed identity)
@@ -23,18 +28,29 @@ if (!admin.apps.length) {
     }
     logger.info('Firebase Admin initialized successfully');
   } catch (error) {
-    logger.error('Failed to initialize Firebase Admin:', error);
+    logger.error('Failed to initialize Firebase Admin:', error.message);
   }
 }
 
-const firestore = admin.firestore();
+let firestore;
+try {
+  firestore = admin.firestore();
+} catch (error) {
+  logger.warn('Firestore service unavailable (API might be disabled):', error.message);
+  firestore = null;
+}
 
 // Collection references
-export const db = {
+export const db = firestore ? {
   users: firestore.collection('users'),
   plansCache: firestore.collection('plans_cache'),
   ledger: firestore.collection('ledger'),
   sessions: firestore.collection('sessions')
+} : {
+  users: null,
+  plansCache: null,
+  ledger: null,
+  sessions: null
 };
 
 export default admin;

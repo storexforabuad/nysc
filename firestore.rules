@@ -39,11 +39,14 @@ service cloud.firestore {
       allow read: if isSignedIn();
     }
 
-    // Ledger
+    // Ledger & Transactions (Data, Withdrawals, Broadcasts)
     match /ledger/{entryId} {
-      // Only the related co-member can see their earnings
-      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      // Allows co-members to see their own history (sales, withdrawals, and broadcast batches)
+      // Admins (handled by Admin SDK) bypass this, but frontends are restricted.
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Writes are strictly server-side (Mother Bot)
+      allow write: if false;
     }
   }
 }

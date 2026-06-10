@@ -14,8 +14,7 @@ const requiredEnv = [
   'MONNIFY_API_KEY',
   'MONNIFY_SECRET_KEY',
   'MONNIFY_CONTRACT_CODE',
-  'PAYFLEX_API_KEY',
-  'PAYFLEX_SECRET_KEY'
+  'PAYFLEX_TOKEN'
 ];
 
 const config = {
@@ -28,9 +27,8 @@ const config = {
     baseUrl: process.env.MONNIFY_BASE_URL || 'https://api.monnify.com'
   },
   payflex: {
-    apiKey: process.env.PAYFLEX_API_KEY,
-    secretKey: process.env.PAYFLEX_SECRET_KEY,
-    baseUrl: process.env.PAYFLEX_BASE_URL || 'https://api.payflex.ng'
+    token: process.env.PAYFLEX_TOKEN,
+    baseUrl: process.env.PAYFLEX_BASE_URL || 'https://client.peyflex.com.ng'
   },
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   firebaseCredentials: process.env.FIREBASE_CREDENTIALS_JSON

@@ -7,6 +7,9 @@ import payflex from './services/payflex.js';
 import { db } from './services/firebase.js';
 import sessionManager from './bot/SessionManager.js';
 import mediaGen from './services/mediaGen.js';
+import wallet from './services/WalletService.js';
+import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
+import broadcastQueue from './services/BroadcastQueue.js';
 
 async function startServer() {
   const app = express();
@@ -29,7 +32,7 @@ async function startServer() {
 
     if (eventType === 'SUCCESSFUL_TRANSACTION' && eventData.paymentStatus === 'PAID') {
       logger.info(`Received successful payment: ${eventData.transactionReference}`);
-      
+
       try {
         const ledgerSnapshot = await db.ledger
           .where('type', '==', 'PENDING_DATA')
@@ -43,10 +46,11 @@ async function startServer() {
 
           await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId);
 
-          const netProfit = (eventData.amountPaid * 0.1); 
-          const coMemberShare = netProfit * 0.50;
-          const systemShare = netProfit * 0.30;
-          const cdsShare = netProfit * 0.20;
+          // Use tiered markup saved with the order; fallback for legacy records
+          const netProfit = order.markup ?? +(eventData.amountPaid - order.baseCost).toFixed(2);
+          const coMemberShare = +(netProfit * 0.50).toFixed(2); // Proxy Bot Owner
+          const systemShare = +(netProfit * 0.30).toFixed(2); // Platform
+          const cdsShare = +(netProfit * 0.20).toFixed(2); // CDS Group
 
           await db.ledger.doc(orderId).update({
             status: 'COMPLETED',
@@ -58,6 +62,20 @@ async function startServer() {
         }
       } catch (error) {
         logger.error('Webhook processing failed:', error);
+      }
+    } else if (eventType === 'SUCCESSFUL_DISBURSEMENT' || eventType === 'DISBURSEMENT_SUCCESS') {
+      logger.info(`Received successful disbursement: ${eventData.reference}`);
+      try {
+        await wallet.updateWithdrawalStatus(eventData.reference, 'SUCCESS');
+      } catch (err) {
+        logger.error('Error handling successful disbursement webhook', err);
+      }
+    } else if (eventType === 'FAILED_DISBURSEMENT' || eventType === 'DISBURSEMENT_FAILED' || eventType === 'REVERSED_DISBURSEMENT') {
+      logger.info(`Received failed/reversed disbursement: ${eventData.reference}`);
+      try {
+        await wallet.updateWithdrawalStatus(eventData.reference, 'FAILED');
+      } catch (err) {
+        logger.error('Error handling failed disbursement webhook', err);
       }
     }
     res.sendStatus(200);
@@ -80,35 +98,44 @@ async function startServer() {
 
   // Boot logic
   try {
-    await payflex.fetchPlans();
+    await payflex.getAvailablePlans();
 
     if (config.mockMode) {
-      const ledgerCheck = await db.ledger.limit(1).get();
-      if (ledgerCheck.empty) {
-        logger.info('MOCK: Seeding initial ledger data...');
-        await db.ledger.add({
-          type: 'COMPLETED_DATA',
-          userId: 'mock_user_1',
-          buyerPhone: '2348000000000@s.whatsapp.net',
-          planId: '1',
-          amount: 250,
-          status: 'COMPLETED',
-          settlement: { coMemberShare: 12.5, systemShare: 7.5, cdsShare: 5, totalProfit: 25 },
-          createdAt: new Date().toISOString()
-        });
+      try {
+        if (db.ledger) {
+          const ledgerCheck = await db.ledger.limit(1).get();
+          if (ledgerCheck.empty) {
+            logger.info('MOCK: Seeding initial ledger data...');
+            await db.ledger.add({
+              type: 'COMPLETED_DATA',
+              userId: 'mock_user_1',
+              buyerPhone: '2348000000000@s.whatsapp.net',
+              planId: '1',
+              amount: 290,          // 270 wholesale + 20 tiered markup
+              markup: 20,
+              baseCost: 270,
+              status: 'COMPLETED',
+              settlement: { coMemberShare: 10, systemShare: 6, cdsShare: 4, totalProfit: 20 },
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+      } catch (ledgerError) {
+        logger.warn('MOCK: Could not seed ledger (this is OK in mock mode):', ledgerError.message);
       }
     }
 
     app.listen(config.port, "0.0.0.0", () => {
       logger.info(`Server running on http://localhost:${config.port}`);
-      
+
       // Initialize Bots in the background so they don't block the preview
       (async () => {
         try {
           await sessionManager.initMotherBot();
-          await sessionManager.initProxyBots();
+          startWeeklyReportJob();
+          broadcastQueue.start();
         } catch (botError) {
-          logger.error('Background Bot Initialization failed:', botError);
+          logger.error({ err: botError }, 'Background Bot Initialization failed');
         }
       })();
     });
