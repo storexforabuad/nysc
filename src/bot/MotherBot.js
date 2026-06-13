@@ -235,6 +235,17 @@ export const handleMotherMessage = async (sock, msg) => {
         return sock.sendMessage(from, { text: msg });
       }
 
+      // ── SYNC PLANS command (admin only) ─────────────────────
+      else if (command.toLowerCase() === '.syncplans') {
+        await sock.sendMessage(from, { text: '⏳ Syncing plans from Peyflex API...' });
+        try {
+          const plans = await payflex.syncPlans();
+          return sock.sendMessage(from, { text: `✅ *Plans Synced Successfully!*\n\n${plans.length} plans updated in Firestore with the latest tiered pricing.\n\nMarkup tiers applied:\n• < ₦500 → +₦15\n• ₦500–₦999 → +₦20\n• ₦1000–₦2999 → +₦50\n• ₦3000+ → +₦100` });
+        } catch (err) {
+          return sock.sendMessage(from, { text: `❌ Sync failed: ${err.message}` });
+        }
+      }
+
       // ── WITHDRAW command (initiates flow) ──────────────────
       else if (command.toLowerCase().startsWith('withdraw')) {
         const amountStr = command.split(/\s+/)[1];

@@ -144,6 +144,10 @@ class SessionManager {
     }
     const myContacts = this.contactStores.get(sessionKey);
 
+    // Tracks whether this socket has ever reached "open" state.
+    // Used to prevent false "offline" alerts during the normal Baileys pairing handoff.
+    let hasEverConnected = false;
+
     sock.ev.on('contacts.upsert', (contacts) => {
       for (const contact of contacts) {
         if (contact.id && contact.id.endsWith('@s.whatsapp.net')) {
@@ -172,7 +176,32 @@ class SessionManager {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update;
+      const { connection, lastDisconnect, isNewLogin } = update;
+
+      if (isNewLogin) {
+        logger.info(`✅ Pairing payload accepted for ${user.uid} in Proxy Loop! Socket will restart.`);
+        if (db.users) {
+          const phoneNumber = user.phoneJid ? user.phoneJid.split('@')[0] : user.uid.split('@')[0];
+          const phoneJid = user.phoneJid || `${phoneNumber}@s.whatsapp.net`;
+          db.users.doc(user.uid).set({
+            state: 'AWAITING_BROADCAST_PERMISSION',
+            phoneJid,
+            phoneNumber,
+            pairedAt: new Date().toISOString()
+          }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
+
+          if (this.motherSock) {
+            const prompt = `✅ *LINK SUCCESSFUL!*\n\nYour Proxy Bot is now active and ready to sell data! 🚀\n\n*Final Configuration:*\nWould you like your Proxy Bot to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will send the messages in slow, safe batches so your account is protected.\n\nReply *YES* to begin the safe rollout or *NO* to skip.`;
+            this.motherSock.sendMessage(phoneJid, { text: prompt }).catch(() => { });
+          }
+        }
+      }
+
+      if (connection === 'open') {
+        hasEverConnected = true;
+        logger.info(`✅ Proxy Bot for ${user.uid} is fully connected.`);
+      }
+
       if (connection === 'close') {
         const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
         if (shouldReconnect) {
@@ -181,31 +210,37 @@ class SessionManager {
           logger.info(`[PROXY] Session permanently closed for ${user.uid}. Cleaning up.`);
           this.sessions.delete(sessionKey);
 
-          // Alert the user via Mother Bot (with basic 30-minute rate limiting)
-          const lastAlertKey = `last_alert_${user.uid}`;
-          const lastAlertTime = this.sessions.get(lastAlertKey) || 0;
-          const now = Date.now();
-          if (now - lastAlertTime > 30 * 60 * 1000) {
-            this.sessions.set(lastAlertKey, now);
+          // Only alert + wipe if this session had actually been alive before.
+          // This prevents false "offline" alerts during the normal Baileys pairing handoff,
+          // where the socket briefly closes before the companion link is established.
+          if (hasEverConnected) {
+            const lastAlertKey = `last_alert_${user.uid}`;
+            const lastAlertTime = this.sessions.get(lastAlertKey) || 0;
+            const now = Date.now();
+            if (now - lastAlertTime > 30 * 60 * 1000) {
+              this.sessions.set(lastAlertKey, now);
 
-            if (this.motherSock) {
-              const msg = `⚠️ *Critical Alert: Your Data Store is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reconnect a fresh session immediately. (e.g., *PAIR 08012345678*)`;
-              const phoneJid = user.phoneJid || user.uid;
-              try {
-                await this.motherSock.sendMessage(phoneJid, { text: msg });
-                logger.info(`Successfully alerted ${user.uid} about proxy drop.`);
-              } catch (e) {
-                logger.error(`Failed to send offline alert to ${user.uid}:`, e.message);
+              if (this.motherSock) {
+                const msg = `⚠️ *Critical Alert: Your Data Store is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reconnect a fresh session immediately. (e.g., *PAIR 08012345678*)`;
+                const phoneJid = user.phoneJid || user.uid;
+                try {
+                  await this.motherSock.sendMessage(phoneJid, { text: msg });
+                  logger.info(`Successfully alerted ${user.uid} about proxy drop.`);
+                } catch (e) {
+                  logger.error(`Failed to send offline alert to ${user.uid}:`, e.message);
+                }
               }
             }
-          }
 
-          // Wipe stale auth folder
-          try {
-            if (fs.existsSync(authPath)) {
-              fs.rmSync(authPath, { recursive: true, force: true });
-            }
-          } catch (e) { }
+            // Only wipe auth folder if it was a genuine established session dropout
+            try {
+              if (fs.existsSync(authPath)) {
+                fs.rmSync(authPath, { recursive: true, force: true });
+              }
+            } catch (e) { }
+          } else {
+            logger.info(`[PROXY] Socket closed before fully connecting for ${user.uid}. Skipping alert and cleanup — pairing likely in progress.`);
+          }
         }
       }
     });
@@ -224,19 +259,15 @@ class SessionManager {
   async requestPairingCodeForUser(user) {
     logger.info(`Requesting pairing code for ${user.uid}`);
 
-    // Close any existing pairing socket for this user
     const existing = this.pendingPairings.get(user.uid);
     if (existing) {
-      try {
-        existing.sock.end();
-      } catch (e) { }
+      try { existing.sock.end(); } catch (e) { }
       this.pendingPairings.delete(user.uid);
     }
 
-    // Delete stale session files from previous failed attempts
     const authPath = path.join(this.sessionsDir, `proxy_${user.uid}`);
     if (fs.existsSync(authPath)) {
-      fs.rmSync(authPath, { recursive: true, force: true });
+      try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
       logger.info(`[PAIR] Cleared stale session at: ${authPath}`);
     }
 
@@ -247,107 +278,86 @@ class SessionManager {
       version: this.baileysVersion || [6, 33, 0],
       auth: state,
       logger: pino({ level: 'silent' }),
-      printQRInTerminal: false
+      printQRInTerminal: false,
+      browser: Browsers.macOS('Chrome')
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Get phone number from JID (e.g. 234123456789@s.whatsapp.net -> 234123456789)
     const phoneNumber = user.uid.split('@')[0];
+    const phoneJid = `${phoneNumber}@s.whatsapp.net`;
 
-    try {
-      // Wait for the socket to stabilize before requesting a code
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Connection timeout waiting for socket stabilization')), 30000);
-        sock.ev.on('connection.update', (update) => {
-          if (update.qr || update.connection === 'connecting' || update.connection === 'open') {
-            clearTimeout(timeout);
-            // Wait 5 seconds to ensure Noise/WebSocket handshakes are complete
-            setTimeout(resolve, 5000);
-          } else if (update.connection === 'close') {
-            clearTimeout(timeout);
-            reject(new Error('Socket closed before ready'));
-          }
-        });
-      });
+    // Attach the post-pairing lifecycle listener BEFORE requesting the code.
+    // This handles what happens AFTER the user enters the code on their phone.
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, isNewLogin } = update;
 
-      const requestWithRetry = async (retries = 3) => {
+      if (isNewLogin) {
+        logger.info(`✅ Pairing payload accepted for ${user.uid}! Socket will restart.`);
+        if (db.users) {
+          db.users.doc(user.uid).set({
+            state: 'AWAITING_BROADCAST_PERMISSION',
+            phoneJid,
+            phoneNumber,
+            pairedAt: new Date().toISOString()
+          }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
+        }
+        if (this.motherSock) {
+          const prompt = `✅ *LINK SUCCESSFUL!*\n\nYour Proxy Bot is now active and ready to sell data! 🚀\n\n*Final Configuration:*\nWould you like your Proxy Bot to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will send the messages in slow, safe batches so your account is protected.\n\nReply *YES* to begin the safe rollout or *NO* to skip.`;
+          this.motherSock.sendMessage(phoneJid, { text: prompt }).catch(() => { });
+        }
+      }
+
+      if (connection === 'open') {
+        logger.info(`✅ Proxy Bot for ${user.uid} fully connected!`);
+        this.pendingPairings.delete(user.uid);
+        this.sessions.set(user.uid, sock);
+      } else if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        if (statusCode === DisconnectReason.loggedOut) {
+          logger.info(`[PAIR] Pairing was rejected or timed out for ${user.uid}`);
+          this.pendingPairings.delete(user.uid);
+        } else {
+          logger.info(`[PAIR] Socket connection closed (Reason: ${statusCode}). Handing off to proxy reconnect loop...`);
+          // Pass control to startProxyBot to continuously reconnect and wait for the user to enter the code!
+          this.pendingPairings.delete(user.uid);
+          setTimeout(() => this.startProxyBot(user), 2000);
+        }
+      }
+    });
+
+    sock.ev.on('messages.upsert', async (m) => {
+      if (m.type !== 'notify') return;
+      for (const msg of m.messages) {
+        await handleProxyMessage(sock, msg, user);
+      }
+    });
+
+    // === ULTRA-FAST POLLING PATTERN ===
+    // WhatsApp's Noise handshake race condition is extremely tight.
+    // We aggressively poll socket generation up to 25 times (~6 seconds).
+    if (!sock.authState.creds.registered) {
+      let code;
+      let attempt = 0;
+      while (attempt < 25) {
         try {
-          return await sock.requestPairingCode(phoneNumber);
-        } catch (err) {
-          if (retries > 0 && err.message.includes('Closed')) {
-            logger.warn(`Pairing code request failed (Connection Closed). Retrying... (${retries} left)`);
-            await new Promise(r => setTimeout(r, 3000));
-            return requestWithRetry(retries - 1);
+          attempt++;
+          logger.info(`[PAIR] Requesting pairing code for ${phoneNumber} (Attempt ${attempt})...`);
+          code = await sock.requestPairingCode(phoneNumber);
+          logger.info(`[PAIR] ✅ Pairing code generated for ${phoneNumber}: ${code}`);
+          this.pendingPairings.set(user.uid, { sock, authPath });
+          return code;
+        } catch (e) {
+          if (e.message && (e.message.includes('Closed') || e.message.includes('Connection'))) {
+            await new Promise(r => setTimeout(r, 250)); // Wait 250ms and try again
+            continue;
           }
-          throw err;
+          throw e; // Non-connection error, abort completely
         }
-      };
-
-      const code = await requestWithRetry();
-
-      // Store socket so it stays alive while user types code
-      this.pendingPairings.set(user.uid, { sock, authPath });
-
-      // Carry on with connection listeners so it actually links when user enters code
-      sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, isNewLogin } = update;
-        const phoneJid = `${phoneNumber}@s.whatsapp.net`;
-
-        if (isNewLogin) {
-          logger.info(`✅ Pairing payload accepted for ${user.uid}! Socket will now restart.`);
-
-          // Update database state with phoneJid
-          if (db.users) {
-            db.users.doc(user.uid).set({
-              state: 'AWAITING_BROADCAST_PERMISSION',
-              phoneJid,
-              phoneNumber,
-              pairedAt: new Date().toISOString()
-            }, { merge: true })
-              .then(() => logger.info(`Updated status to AWAITING_BROADCAST_PERMISSION for ${user.uid}`))
-              .catch(e => logger.error(`DB Update failed for ${user.uid}:`, e.message));
-          }
-
-          // Notify user via Mother Bot that the link is successful (using phoneJid)
-          if (this.motherSock) {
-            const prompt = `✅ *LINK SUCCESSFUL!*\n\nYour Proxy Bot is now active and ready to sell data! 🚀\n\n*Final Configuration:*\nWould you like your Proxy Bot to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will send the messages in slow, safe batches so your account is protected.\n\nReply *YES* to begin the safe rollout or *NO* to skip.`;
-            this.motherSock.sendMessage(phoneJid, { text: prompt })
-              .catch(e => logger.error('Failed to send success msg:', e.message));
-          }
-        }
-
-        if (connection === 'open') {
-          logger.info(`✅ Proxy Bot for ${user.name} (${user.uid}) pairing socket connected successfully!`);
-          this.pendingPairings.delete(user.uid);
-          this.sessions.set(user.uid, sock);
-        } else if (connection === 'close') {
-          const statusCode = lastDisconnect?.error?.output?.statusCode;
-          this.pendingPairings.delete(user.uid);
-
-          if (statusCode === DisconnectReason.loggedOut) {
-            logger.info(`[PAIR] Pairing was rejected or logged out for ${user.uid}`);
-          } else {
-            // Hand off the connection to the standard proxy bot starter
-            // This is required because Baileys intentionally drops the connection after successful pairing
-            logger.info(`[PAIR] Handing off to startProxyBot to complete Companion login for ${user.uid}...`);
-            setTimeout(() => this.startProxyBot(user), 2000);
-          }
-        }
-      });
-
-      sock.ev.on('messages.upsert', async (m) => {
-        if (m.type !== 'notify') return;
-        logger.info(`[PROXY EVENT] ${user.uid} received ${m.messages.length} message(s)`);
-        for (const msg of m.messages) {
-          await handleProxyMessage(sock, msg, user);
-        }
-      });
-
-      return code;
-    } catch (err) {
-      logger.error({ err, phoneNumber }, 'Baileys requestPairingCode failed');
-      throw err;
+      }
+      throw new Error('Timeout waiting for WhatsApp WebSocket to open. Please try again later.');
+    } else {
+      throw new Error('Device is already registered.');
     }
   }
 

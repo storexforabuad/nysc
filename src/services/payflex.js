@@ -3,11 +3,12 @@ import { config, logger } from '../config/env.js';
 import { db } from './firebase.js';
 
 // Tiered markup: single source of truth for all pricing.
-// Under ₦1000 → +₦20 | ₦1000–₦3000 → +₦50 | Over ₦3000 → +₦100
+// < ₦500 → +₦15 | ₦500–₦999 → +₦20 | ₦1000–₦2999 → +₦50 | ₦3000+ → +₦100
 const getTieredMarkup = (basePrice) => {
   if (basePrice >= 3000) return 100;
   if (basePrice >= 1000) return 50;
-  return 20;
+  if (basePrice >= 500) return 20;
+  return 15;
 };
 
 class PayflexService {
@@ -37,10 +38,10 @@ class PayflexService {
               ...p,
               id: `${net}_${p.plan_code}_${index}`,
               network: net,
-              basePrice: p.amount,       // Wholesale price paid to Peyflex
-              markup,                    // Our profit on this plan (tiered)
-              sellPrice: p.amount + markup, // What the end user pays
-              proxyCost: p.amount,       // System cost to fulfill (wholesale only)
+              basePrice: p.amount,              // Wholesale price paid to Peyflex
+              markup,                           // Our profit on this plan (tiered)
+              proxyCost: p.amount + markup,     // ✅ Fixed: actual sell price (no hidden split yet)
+              sellPrice: p.amount + markup,     // What the end customer pays
               name: p.label
             };
           });
