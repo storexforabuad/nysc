@@ -221,7 +221,7 @@ class SessionManager {
               this.sessions.set(lastAlertKey, now);
 
               if (this.motherSock) {
-                const msg = `⚠️ *Critical Alert: Your Data Store is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reconnect a fresh session immediately. (e.g., *PAIR 08012345678*)`;
+                const msg = `⚠️ *Critical Alert: Your Data Store is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reconnect — a fresh QR code will appear for you to scan. (e.g., *PAIR 08012345678*)`;
                 const phoneJid = user.phoneJid || user.uid;
                 try {
                   await this.motherSock.sendMessage(phoneJid, { text: msg });
@@ -256,39 +256,11 @@ class SessionManager {
     this.sessions.set(sessionKey, sock);
   }
 
-  async requestPairingCodeForUser(user) {
-    logger.info(`Requesting pairing code for ${user.uid}`);
-
-    const existing = this.pendingPairings.get(user.uid);
-    if (existing) {
-      try { existing.sock.end(); } catch (e) { }
-      this.pendingPairings.delete(user.uid);
-    }
-
-    const authPath = path.join(this.sessionsDir, `proxy_${user.uid}`);
-    if (fs.existsSync(authPath)) {
-      try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
-      logger.info(`[PAIR] Cleared stale session at: ${authPath}`);
-    }
-
-    const { state, saveCreds } = await useMultiFileAuthState(authPath);
-
-    const socketFunction = makeWASocket.default || makeWASocket;
-    const sock = socketFunction({
-      version: this.baileysVersion || [6, 33, 0],
-      auth: state,
-      logger: pino({ level: 'silent' }),
-      printQRInTerminal: false,
-      browser: Browsers.macOS('Chrome')
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
+  // ── Shared helper: wires the post-pairing lifecycle events onto any socket ──
+  _applyPostPairingLifecycle(sock, user, authPath) {
     const phoneNumber = user.uid.split('@')[0];
     const phoneJid = `${phoneNumber}@s.whatsapp.net`;
 
-    // Attach the post-pairing lifecycle listener BEFORE requesting the code.
-    // This handles what happens AFTER the user enters the code on their phone.
     sock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, isNewLogin } = update;
 
@@ -319,7 +291,6 @@ class SessionManager {
           this.pendingPairings.delete(user.uid);
         } else {
           logger.info(`[PAIR] Socket connection closed (Reason: ${statusCode}). Handing off to proxy reconnect loop...`);
-          // Pass control to startProxyBot to continuously reconnect and wait for the user to enter the code!
           this.pendingPairings.delete(user.uid);
           setTimeout(() => this.startProxyBot(user), 2000);
         }
@@ -332,16 +303,108 @@ class SessionManager {
         await handleProxyMessage(sock, msg, user);
       }
     });
+  }
+
+  // ── QR-based pairing (beta / in-person) ──────────────────────────────────
+  // Mirrors exactly how the Mother Bot pairs. The `onQRReady` callback is
+  // invoked the moment the QR code is printed in the terminal so MotherBot
+  // can send a WhatsApp "scan now" nudge to the co-member.
+  async startQRPairingForUser(user, onQRReady) {
+    logger.info(`[QR-PAIR] Starting QR pairing for ${user.uid}`);
+
+    // Kill any in-progress pairing for this user
+    const existing = this.pendingPairings.get(user.uid);
+    if (existing) {
+      try { existing.sock.end(); } catch (e) { }
+      this.pendingPairings.delete(user.uid);
+    }
+
+    // Always start fresh — wipe any stale session folder
+    const authPath = path.join(this.sessionsDir, `proxy_${user.uid}`);
+    if (fs.existsSync(authPath)) {
+      try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
+      logger.info(`[QR-PAIR] Cleared stale session at: ${authPath}`);
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(authPath);
+
+    const socketFunction = makeWASocket.default || makeWASocket;
+    const sock = socketFunction({
+      version: this.baileysVersion || [6, 33, 0],
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: true   // ← prints QR to terminal, same as Mother Bot
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    // Fire the "QR is live" callback exactly once
+    let qrFired = false;
+    sock.ev.on('connection.update', async (update) => {
+      const { qr } = update;
+      if (qr && !qrFired) {
+        qrFired = true;
+        // Manually render the QR — same as initMotherBot.
+        // printQRInTerminal:true alone is silenced by pino({ level:'silent' }).
+        logger.info('========================================');
+        logger.info(`[QR-PAIR] QR CODE FOR: ${user.uid.split('@')[0]}`);
+        qrcode.generate(qr, { small: true });
+        logger.info('Scan with WhatsApp > Settings > Linked Devices > Link a Device');
+        logger.info('========================================');
+        logger.info(`[QR-PAIR] ✅ QR rendered in terminal — tilt the laptop!`);
+        if (typeof onQRReady === 'function') {
+          try { await onQRReady(); } catch (e) { logger.warn('[QR-PAIR] onQRReady callback error:', e.message); }
+        }
+      }
+    });
+
+    // Wire shared post-pairing lifecycle (isNewLogin, open, close)
+    this._applyPostPairingLifecycle(sock, user, authPath);
+
+    this.pendingPairings.set(user.uid, { sock, authPath });
+    return 'QR_SHOWN';
+  }
+
+  // ── Pairing-code based pairing (kept intact for scale / future use) ───────
+  async requestPairingCodeForUser(user) {
+    logger.info(`Requesting pairing code for ${user.uid}`);
+
+    const existing = this.pendingPairings.get(user.uid);
+    if (existing) {
+      try { existing.sock.end(); } catch (e) { }
+      this.pendingPairings.delete(user.uid);
+    }
+
+    const authPath = path.join(this.sessionsDir, `proxy_${user.uid}`);
+    if (fs.existsSync(authPath)) {
+      try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
+      logger.info(`[PAIR] Cleared stale session at: ${authPath}`);
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(authPath);
+
+    const socketFunction = makeWASocket.default || makeWASocket;
+    const sock = socketFunction({
+      version: this.baileysVersion || [6, 33, 0],
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      browser: Browsers.macOS('Chrome')
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    // Wire shared post-pairing lifecycle
+    this._applyPostPairingLifecycle(sock, user, authPath);
 
     // === ULTRA-FAST POLLING PATTERN ===
-    // WhatsApp's Noise handshake race condition is extremely tight.
-    // We aggressively poll socket generation up to 25 times (~6 seconds).
     if (!sock.authState.creds.registered) {
       let code;
       let attempt = 0;
       while (attempt < 25) {
         try {
           attempt++;
+          const phoneNumber = user.uid.split('@')[0];
           logger.info(`[PAIR] Requesting pairing code for ${phoneNumber} (Attempt ${attempt})...`);
           code = await sock.requestPairingCode(phoneNumber);
           logger.info(`[PAIR] ✅ Pairing code generated for ${phoneNumber}: ${code}`);
@@ -349,10 +412,10 @@ class SessionManager {
           return code;
         } catch (e) {
           if (e.message && (e.message.includes('Closed') || e.message.includes('Connection'))) {
-            await new Promise(r => setTimeout(r, 250)); // Wait 250ms and try again
+            await new Promise(r => setTimeout(r, 250));
             continue;
           }
-          throw e; // Non-connection error, abort completely
+          throw e;
         }
       }
       throw new Error('Timeout waiting for WhatsApp WebSocket to open. Please try again later.');

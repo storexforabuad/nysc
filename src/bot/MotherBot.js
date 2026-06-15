@@ -119,7 +119,7 @@ export const handleMotherMessage = async (sock, msg) => {
         // Save phone number to DB immediately
         await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net` });
 
-        await sock.sendMessage(from, { text: `🔄 Requesting a real pairing code for *${targetNumber}*... Please wait.` });
+        await sock.sendMessage(from, { text: `⏳ Generating your QR code for *${targetNumber}*...\n\nPlease stand by — this only takes a few seconds!` });
       } else {
         // No manual number provided. Check if we have an LID which can't be used for pairing.
         const isLid = userData.uid.endsWith('@lid');
@@ -128,25 +128,25 @@ export const handleMotherMessage = async (sock, msg) => {
             text: `❌ *Phone Number Required*\n\nI detected that you are using an LID-based account. To generate a pairing code, I need your actual phone number.\n\nPlease type:\n*PAIR [your_phone_number]*\n(e.g., *PAIR 08012345678*)`
           });
         }
-        await sock.sendMessage(from, { text: '🔄 Requesting a real pairing code for you... Please wait.' });
+        await sock.sendMessage(from, { text: '⏳ Generating your QR code... Please stand by!' });
       }
 
       try {
-        const pairingCode = await sessionManager.requestPairingCodeForUser({
-          ...userData,
-          uid: targetNumber.includes('@') ? targetNumber : `${targetNumber}@s.whatsapp.net`
-        });
-
-        await sock.sendMessage(from, {
-          text: `🔑 *YOUR PAIRING CODE:* \n\n*${pairingCode}*\n\n*How to link:*\n1. Open WhatsApp on your phone.\n2. Go to *Settings > Linked Devices*.\n3. Click *Link a Device*.\n4. Click *Link with phone number instead*.\n5. Enter the 8-digit code above.`
-        });
+        await sessionManager.startQRPairingForUser(
+          {
+            ...userData,
+            uid: targetNumber.includes('@') ? targetNumber : `${targetNumber}@s.whatsapp.net`
+          },
+          async () => {
+            // Called the instant the QR appears in the terminal
+            await sock.sendMessage(from, {
+              text: `📱 *Your QR code is now live!*\n\nThe admin is turning the screen towards you right now.\n\n*How to scan:*\n1. Open WhatsApp on your phone\n2. Go to *Settings > Linked Devices*\n3. Tap *Link a Device*\n4. Point your camera at the QR code on the screen\n\n⏱️ You have about 60 seconds before it expires!`
+            });
+          }
+        );
       } catch (err) {
-        logger.error('Pairing Code Error:', err);
-        let errorMsg = '❌ Failed to generate pairing code. Please try again later.';
-        if (userData.uid.endsWith('@lid') && parts.length === 1) {
-          errorMsg = '❌ Automatic pairing failed (LID detected).\n\nPlease try again by typing: *PAIR [your_phone_number]* (with country code)\ne.g., *PAIR 2341234567890*';
-        }
-        await sock.sendMessage(from, { text: errorMsg });
+        logger.error('QR Pairing Error:', err);
+        await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try again by typing *PAIR [your_phone_number]*.' });
       }
     }
     else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
