@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=Space+Mono&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-emerald-green: #00FF66;
+  --color-sunset-orange: #FF6700;
+  --color-accent: #00FF66;
+  
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "Space Mono", monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-[#09090B] text-zinc-100 font-display;
+  }
+}
+
+@utility scanline {
+  background: linear-gradient(to bottom, transparent 50%, rgba(0, 255, 102, 0.02) 50%);
+  background-size: 100% 4px;
+}
+

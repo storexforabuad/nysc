@@ -23,7 +23,7 @@ class MediaGenerator {
       ctx.font = 'bold 80px Arial';
       ctx.textAlign = 'center';
       ctx.fillText('NYSC SUBSIDIZED DATA', width / 2, 150);
-      
+
       ctx.font = '40px Arial';
       ctx.fillText('Empowering Co-members via the African Idea Engine', width / 2, 220);
 
@@ -61,7 +61,7 @@ class MediaGenerator {
         ctx.fillText(row.std, 540, y);
         ctx.textAlign = 'right';
         ctx.fillText(row.our, 930, y);
-        
+
         // Line separator
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
         ctx.beginPath();
@@ -75,7 +75,7 @@ class MediaGenerator {
       ctx.font = 'italic 40px Arial';
       ctx.textAlign = 'center';
       ctx.fillText(`Managed by: ${coMemberName}`, width / 2, 1250);
-      
+
       ctx.fillStyle = '#FF6700';
       ctx.font = 'bold 50px Arial';
       ctx.fillText('TEXT ".data" TO START', width / 2, 1350);
