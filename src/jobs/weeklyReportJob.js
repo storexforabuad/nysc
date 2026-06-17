@@ -34,12 +34,12 @@ export function startWeeklyReportJob() {
                 const stats = await reportService.generateWeeklyStats(userId);
 
                 if (stats) {
-                    const msg = `📊 *Your Weekly Store Report*\n\n` +
-                        `Orders Processed: ${stats.totalOrders}\n` +
+                    const msg = `📈 *Weekly Enterprise Report: Clarion A.I.*\n\n` +
+                        `Total Orders: ${stats.totalOrders}\n` +
                         `Gross Revenue: ₦${stats.grossRevenue}\n` +
                         `Net Profit Earned: ₦${stats.netProfit}\n` +
-                        `Active Customers: ${stats.activeCustomers}\n\n` +
-                        `_Keep pushing! Have a highly profitable weekend._ 🚀`;
+                        `Active Customer Base: ${stats.activeCustomers}\n\n` +
+                        `_Keep scaling your digital enterprise! Have a highly profitable weekend._ 🚀`;
 
                     try {
                         await sock.sendMessage(userId, { text: msg });

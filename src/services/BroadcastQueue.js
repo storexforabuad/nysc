@@ -1,7 +1,8 @@
 import { db } from './firebase.js';
 import sessionManager from '../bot/SessionManager.js';
 import { logger } from '../config/env.js';
-
+import payflex from './payflex.js';
+import { detectNetwork } from '../utils/networkUtils.js';
 class BroadcastQueue {
     constructor() {
         this.checkInterval = 10 * 1000; // Check loop every 10 seconds
@@ -74,17 +75,36 @@ class BroadcastQueue {
                     const sock = sessionManager.sessions.get(batch.userId);
                     if (sock) {
                         try {
-                            const footerMsg = '\n\n_Reply "STOP" to opt out._';
-                            await sock.sendMessage(targetJid, { text: batch.messageTemplate + footerMsg });
-                            logger.info(`[BROADCAST] -> Sent to ${targetJid} on behalf of ${batch.userId}`);
+                            let customMenu = '';
+                            const detectedNetwork = detectNetwork(targetJid);
+
+                            if (detectedNetwork) {
+                                const plans = await payflex.getAvailablePlans();
+                                const filteredPlans = plans.filter(p => {
+                                    if (detectedNetwork === 'mtn') return p.network.includes('mtn');
+                                    return p.network.includes(detectedNetwork);
+                                });
+
+                                if (filteredPlans.length > 0) {
+                                    customMenu = `\n\n📶 *Your ${detectedNetwork.toUpperCase()} Plans:*\n`;
+                                    filteredPlans.forEach(plan => {
+                                        customMenu += `🔹 *${plan.name}* - ₦${plan.sellPrice}\n`;
+                                    });
+                                }
+                            }
+
+                            const footerMsg = '\n\n_Powered by Clarion A.I. Reply "STOP" to unsubscribe._';
+                            const finalMessage = batch.messageTemplate + customMenu + footerMsg;
+                            await sock.sendMessage(targetJid, { text: finalMessage });
+                            logger.info(`[CLARION-BROADCAST] -> Sent to ${targetJid} on behalf of ${batch.userId}`);
                         } catch (sendErr) {
                             logger.error(`Broadcast Failed for ${targetJid}`, sendErr.message);
                         }
                     } else {
-                        logger.warn(`Cannot broadcast. Proxy bot for ${batch.userId} is offline.`);
+                        logger.warn(`Clarion Store for ${batch.userId} is currently offline. Skipping segment.`);
                     }
                 } else {
-                    logger.info(`[BROADCAST] Skipped ${targetJid} (Opted out)`);
+                    logger.info(`[CLARION-BROADCAST] Skipping opted-out partner: ${targetJid}`);
                 }
 
                 await db.ledger.doc(batch.id).update({

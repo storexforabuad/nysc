@@ -19,7 +19,7 @@ class SessionManager {
 
   async initMotherBot() {
     try {
-      logger.info('Initializing Mother Bot...');
+      logger.info('Initializing Clarion Hub...');
       const authPath = path.join(this.sessionsDir, 'mother_bot');
 
       logger.info(`Using auth path: ${authPath}`);
@@ -67,7 +67,7 @@ class SessionManager {
             logger.info('Mother Bot logged out.');
           }
         } else if (connection === 'open') {
-          logger.info('✅ Mother Bot connected successfully!');
+          logger.info('✅ Clarion Hub connected successfully!');
           this.motherSock = sock;
           this.baileysVersion = version; // Store for use by proxy bots
           this.initProxyBots(); // Initialize proxy bots only after we have the version
@@ -103,14 +103,14 @@ class SessionManager {
   }
 
   async initProxyBots() {
-    logger.info('Initializing existing Proxy Bots...');
+    logger.info('Initializing Clarion Digital Stores...');
     try {
       if (!db.users) {
         logger.warn('Firestore not available, skipping Proxy Bot initialization.');
         return;
       }
       const usersSnapshot = await db.users.where('state', 'in', ['COMPLETED', 'PAIRED']).get();
-      logger.info(`Found ${usersSnapshot.size} potential Proxy Bots to initialize.`);
+      logger.info(`Found ${usersSnapshot.size} potential Clarion Stores to initialize.`);
 
       for (const doc of usersSnapshot.docs) {
         const userData = { uid: doc.id, ...doc.data() };
@@ -126,9 +126,9 @@ class SessionManager {
     // Prevent booting multiple sockets for the same proxy folder
     if (this.sessions.has(sessionKey)) return;
 
-    logger.info(`Starting Proxy Bot for ${user.name || 'Unknown'} (${user.uid || 'Unknown'})`);
+    logger.info(`Starting Clarion Store for ${user.name || 'Unknown'} (${user.uid || 'Unknown'})`);
     const authPath = path.join(this.sessionsDir, `proxy_${sessionKey}`);
-    logger.info(`[PROXY] Loading session from: proxy_${sessionKey}`);
+    logger.info(`[CLARION] Loading session from: proxy_${sessionKey}`);
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
 
     const socketFunction = makeWASocket.default || makeWASocket;
@@ -179,7 +179,7 @@ class SessionManager {
       const { connection, lastDisconnect, isNewLogin } = update;
 
       if (isNewLogin) {
-        logger.info(`✅ Pairing payload accepted for ${user.uid} in Proxy Loop! Socket will restart.`);
+        logger.info(`✅ Activation payload accepted for ${user.uid}! Clarion Store will restart.`);
         if (db.users) {
           const phoneNumber = user.phoneJid ? user.phoneJid.split('@')[0] : user.uid.split('@')[0];
           const phoneJid = user.phoneJid || `${phoneNumber}@s.whatsapp.net`;
@@ -191,7 +191,7 @@ class SessionManager {
           }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
 
           if (this.motherSock) {
-            const prompt = `✅ *LINK SUCCESSFUL!*\n\nYour Proxy Bot is now active and ready to sell data! 🚀\n\n*Final Configuration:*\nWould you like your Proxy Bot to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will send the messages in slow, safe batches so your account is protected.\n\nReply *YES* to begin the safe rollout or *NO* to skip.`;
+            const prompt = `✅ *ACTIVATION SUCCESSFUL!*\n\nYour Clarion Digital Store is now live and ready to generate revenue! 🚀\n\n*Final Configuration:*\nWould you like Clarion A.I. to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will dispatch the messages in slow, safe batches to ensure your account remains secure.\n\n_To exclude specific people from receiving this, simply type their phone numbers here now (e.g. 08012345678) or share their contact cards._\n\nWhen you are ready, reply *YES* to begin the safe rollout or *NO* to skip.`;
             this.motherSock.sendMessage(phoneJid, { text: prompt }).catch(() => { });
           }
         }
@@ -199,7 +199,7 @@ class SessionManager {
 
       if (connection === 'open') {
         hasEverConnected = true;
-        logger.info(`✅ Proxy Bot for ${user.uid} is fully connected.`);
+        logger.info(`✅ Clarion Digital Store for ${user.uid} is fully operational.`);
       }
 
       if (connection === 'close') {
@@ -207,7 +207,7 @@ class SessionManager {
         if (shouldReconnect) {
           this.startProxyBot(user);
         } else {
-          logger.info(`[PROXY] Session permanently closed for ${user.uid}. Cleaning up.`);
+          logger.info(`[CLARION] Enterprise session permanently closed for ${user.uid}. Cleaning up.`);
           this.sessions.delete(sessionKey);
 
           // Only alert + wipe if this session had actually been alive before.
@@ -221,11 +221,11 @@ class SessionManager {
               this.sessions.set(lastAlertKey, now);
 
               if (this.motherSock) {
-                const msg = `⚠️ *Critical Alert: Your Data Store is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reconnect — a fresh QR code will appear for you to scan. (e.g., *PAIR 08012345678*)`;
+                const msg = `⚠️ *Action Required: Your Digital Storefront is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reactivate your Clarion Store — a fresh activation code will be prepared for you.`;
                 const phoneJid = user.phoneJid || user.uid;
                 try {
                   await this.motherSock.sendMessage(phoneJid, { text: msg });
-                  logger.info(`Successfully alerted ${user.uid} about proxy drop.`);
+                  logger.info(`Successfully alerted ${user.uid} about enterprise downtime.`);
                 } catch (e) {
                   logger.error(`Failed to send offline alert to ${user.uid}:`, e.message);
                 }
@@ -239,7 +239,7 @@ class SessionManager {
               }
             } catch (e) { }
           } else {
-            logger.info(`[PROXY] Socket closed before fully connecting for ${user.uid}. Skipping alert and cleanup — pairing likely in progress.`);
+            logger.info(`[CLARION] Session closed before fully connecting for ${user.uid}. Skipping alert — activation likely in progress.`);
           }
         }
       }
@@ -247,7 +247,7 @@ class SessionManager {
 
     sock.ev.on('messages.upsert', async (m) => {
       if (m.type !== 'notify') return;
-      logger.info(`[PROXY EVENT] ${user.uid || 'Unknown'} received ${m.messages.length} message(s)`);
+      logger.info(`[CLARION EVENT] ${user.uid || 'Unknown'} received ${m.messages.length} communication(s)`);
       for (const msg of m.messages) {
         await handleProxyMessage(sock, msg, user);
       }
@@ -265,7 +265,7 @@ class SessionManager {
       const { connection, lastDisconnect, isNewLogin } = update;
 
       if (isNewLogin) {
-        logger.info(`✅ Pairing payload accepted for ${user.uid}! Socket will restart.`);
+        logger.info(`✅ Activation payload accepted for ${user.uid}! Enterprise link will restart.`);
         if (db.users) {
           db.users.doc(user.uid).set({
             state: 'AWAITING_BROADCAST_PERMISSION',
@@ -275,22 +275,22 @@ class SessionManager {
           }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
         }
         if (this.motherSock) {
-          const prompt = `✅ *LINK SUCCESSFUL!*\n\nYour Proxy Bot is now active and ready to sell data! 🚀\n\n*Final Configuration:*\nWould you like your Proxy Bot to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will send the messages in slow, safe batches so your account is protected.\n\nReply *YES* to begin the safe rollout or *NO* to skip.`;
+          const prompt = `✅ *ACTIVATION SUCCESSFUL!*\n\nYour Clarion Digital Store is now live and ready to generate revenue! 🚀\n\n*Final Configuration:*\nWould you like Clarion A.I. to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will dispatch the messages in slow, safe batches to ensure your account remains secure.\n\n_To exclude specific people from receiving this, simply type their phone numbers here now (e.g. 08012345678) or share their contact cards._\n\nWhen you are ready, reply *YES* to begin the safe rollout or *NO* to skip.`;
           this.motherSock.sendMessage(phoneJid, { text: prompt }).catch(() => { });
         }
       }
 
       if (connection === 'open') {
-        logger.info(`✅ Proxy Bot for ${user.uid} fully connected!`);
+        logger.info(`✅ Clarion Digital Store for ${user.uid} fully activated!`);
         this.pendingPairings.delete(user.uid);
         this.sessions.set(user.uid, sock);
       } else if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         if (statusCode === DisconnectReason.loggedOut) {
-          logger.info(`[PAIR] Pairing was rejected or timed out for ${user.uid}`);
+          logger.info(`[ACTIVATE] Activation was rejected or timed out for ${user.uid}`);
           this.pendingPairings.delete(user.uid);
         } else {
-          logger.info(`[PAIR] Socket connection closed (Reason: ${statusCode}). Handing off to proxy reconnect loop...`);
+          logger.info(`[ACTIVATE] Connection closed (Reason: ${statusCode}). Re-engaging activation loop...`);
           this.pendingPairings.delete(user.uid);
           setTimeout(() => this.startProxyBot(user), 2000);
         }
@@ -310,7 +310,7 @@ class SessionManager {
   // invoked the moment the QR code is printed in the terminal so MotherBot
   // can send a WhatsApp "scan now" nudge to the co-member.
   async startQRPairingForUser(user, onQRReady) {
-    logger.info(`[QR-PAIR] Starting QR pairing for ${user.uid}`);
+    logger.info(`[HUB-ACTIVATE] Starting activation for ${user.uid}`);
 
     // Kill any in-progress pairing for this user
     const existing = this.pendingPairings.get(user.uid);
@@ -323,7 +323,7 @@ class SessionManager {
     const authPath = path.join(this.sessionsDir, `proxy_${user.uid}`);
     if (fs.existsSync(authPath)) {
       try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
-      logger.info(`[QR-PAIR] Cleared stale session at: ${authPath}`);
+      logger.info(`[HUB-ACTIVATE] Cleared stale session at: ${authPath}`);
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
@@ -347,13 +347,13 @@ class SessionManager {
         // Manually render the QR — same as initMotherBot.
         // printQRInTerminal:true alone is silenced by pino({ level:'silent' }).
         logger.info('========================================');
-        logger.info(`[QR-PAIR] QR CODE FOR: ${user.uid.split('@')[0]}`);
+        logger.info(`[CLARION-ACTIVATE] ACTIVATION CODE FOR: ${user.uid.split('@')[0]}`);
         qrcode.generate(qr, { small: true });
         logger.info('Scan with WhatsApp > Settings > Linked Devices > Link a Device');
         logger.info('========================================');
-        logger.info(`[QR-PAIR] ✅ QR rendered in terminal — tilt the laptop!`);
+        logger.info(`[CLARION-ACTIVATE] ✅ Activation QR prepared and rendered!`);
         if (typeof onQRReady === 'function') {
-          try { await onQRReady(); } catch (e) { logger.warn('[QR-PAIR] onQRReady callback error:', e.message); }
+          try { await onQRReady(); } catch (e) { logger.warn('[ACTIVATE] onQRReady callback error:', e.message); }
         }
       }
     });

@@ -73,7 +73,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
     if (userData.state === STATES.START) {
       await sock.sendMessage(from, {
-        text: `🇳🇬 Welcome ${pushName} to the NYSC Data Bot System!\n\nI am the Mother Bot. I will help you setup your personal Data Proxy Bot.\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
+        text: `🎺 Welcome ${pushName} to Clarion A.I. — your NYSC SAED-inspired digital enterprise partner!\n\nI am the Clarion Hub. I'm here to help you activate your very own automated data storefront. Ready to blow your trumpet?\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
       });
       await saveUser({ ...userData, state: STATES.AWAITING_NYSC_CODE });
     }
@@ -97,7 +97,7 @@ export const handleMotherMessage = async (sock, msg) => {
       });
 
       await sock.sendMessage(from, {
-        text: `🎊 Onboarding Complete!\n\nYour Profit Wallet is active.\nBank: ${account.bankName}\nAcct: ${account.accountNumber}\n\n*Final Step:* Type *PAIR [your_phone_number]* to link your WhatsApp and activate your Proxy Bot.`
+        text: `🎊 Enterprise Setup Complete!\n\nYour Clarion Profit Wallet is now active.\nBank: ${account.bankName}\nAcct: ${account.accountNumber}\n\n*Final Step:* Type *PAIR [your_phone_number]* to link your WhatsApp and activate your Digital Storefront.`
       });
     }
     else if (command.toUpperCase().startsWith('PAIR')) {
@@ -119,7 +119,7 @@ export const handleMotherMessage = async (sock, msg) => {
         // Save phone number to DB immediately
         await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net` });
 
-        await sock.sendMessage(from, { text: `⏳ Generating your QR code for *${targetNumber}*...\n\nPlease stand by — this only takes a few seconds!` });
+        await sock.sendMessage(from, { text: `⏳ Generating your activation QR code for *${targetNumber}*...\n\nPlease stand by — the Clarion Hub is preparing your secure link!` });
       } else {
         // No manual number provided. Check if we have an LID which can't be used for pairing.
         const isLid = userData.uid.endsWith('@lid');
@@ -128,7 +128,7 @@ export const handleMotherMessage = async (sock, msg) => {
             text: `❌ *Phone Number Required*\n\nI detected that you are using an LID-based account. To generate a pairing code, I need your actual phone number.\n\nPlease type:\n*PAIR [your_phone_number]*\n(e.g., *PAIR 08012345678*)`
           });
         }
-        await sock.sendMessage(from, { text: '⏳ Generating your QR code... Please stand by!' });
+        await sock.sendMessage(from, { text: '⏳ Generating your activation QR code... Please stand by!' });
       }
 
       try {
@@ -151,8 +151,9 @@ export const handleMotherMessage = async (sock, msg) => {
     }
     else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
 
-      // ── AWAITING_BROADCAST_PERMISSION ─────────────────────
       if (userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
+        const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I. You can now get high-speed data at wholesale prices directly through my number!\n\nTo get started, simply reply to my number with the word *DATA*.`;
+
         if (command.toUpperCase() === 'YES') {
           await sock.sendMessage(from, { text: '⏳ Fetching your contact list... Please wait.' });
 
@@ -166,16 +167,67 @@ export const handleMotherMessage = async (sock, msg) => {
             return sock.sendMessage(from, { text: '❌ We could not securely fetch your contacts right now. The broadcast has been cancelled.\n\nYou are fully set up! Type *BALANCE* or *HISTORY* anytime to check your store.' });
           }
 
-          const template = `Hi! I've just launched my automated cheap data store. You can now buy data automatically from me 24/7 at very cheap prices.\n\nTo get started, simply reply to my number with the word *DATA*.`;
-
           await broadcastQueue.queueBroadcast(userPhoneJid, template, contacts);
           await saveUser({ ...userData, state: STATES.COMPLETED });
-          return sock.sendMessage(from, { text: `✅ *Broadcast queued to ${contacts.length} contacts!*\n\nMessages will trickle out slowly to keep your account safe.\n\nYou are fully set up! Type *BALANCE* or *HISTORY* anytime to check your store.` });
+          return sock.sendMessage(from, { text: `✅ *Broadcast queued to ${contacts.length} partners!*\n\nCommunications will be dispatched in safe batches.\n\nYour enterprise is fully active! Type *BALANCE* or *HISTORY* anytime to check your store performance.` });
         } else if (command.toUpperCase() === 'NO') {
           await saveUser({ ...userData, state: STATES.COMPLETED });
-          return sock.sendMessage(from, { text: '✅ Skipped launch broadcast.\n\nYou are fully set up! Type *BALANCE* or *HISTORY* anytime to check your store.' });
+          const msg = `✅ Enterprise launch broadcast skipped.\n\nIf you prefer to announce your store manually, you can copy and paste this message to your contacts or status:\n\n*Clarion Enterprise Template:*\n${template}\n\nYour digital storefront is fully set up! Type *BALANCE* or *HISTORY* anytime to manage your enterprise.`;
+          return sock.sendMessage(from, { text: msg });
         } else {
-          return sock.sendMessage(from, { text: 'Please reply *YES* or *NO* to continue the setup.' });
+          let extractedNumbers = [];
+
+          // Look for vCards
+          const contactMsg = msg.message?.contactMessage;
+          const contactsArray = msg.message?.contactsArrayMessage?.contacts;
+
+          if (contactMsg) {
+            const vcard = contactMsg.vcard;
+            const jidMatch = vcard?.match(/waid=(\d+)/i);
+            const numMatch = vcard?.match(/TEL.*?:(.*)/i);
+            if (jidMatch) extractedNumbers.push(jidMatch[1]);
+            else if (numMatch) extractedNumbers.push(numMatch[1]);
+          } else if (contactsArray) {
+            contactsArray.forEach(c => {
+              const vcard = c.vcard;
+              const jidMatch = vcard?.match(/waid=(\d+)/i);
+              const numMatch = vcard?.match(/TEL.*?:(.*)/i);
+              if (jidMatch) extractedNumbers.push(jidMatch[1]);
+              else if (numMatch) extractedNumbers.push(numMatch[1]);
+            });
+          }
+
+          if (command && extractedNumbers.length === 0) {
+            // They typed numbers like 08012345678 or +234 801 234 5678
+            const digitSequences = command.match(/(?:\+?\d[\d\-\s]{7,}\d)/g);
+            if (digitSequences) {
+              extractedNumbers.push(...digitSequences);
+            }
+          }
+
+          if (extractedNumbers.length > 0) {
+            const added = [];
+            for (let rawNum of extractedNumbers) {
+              // Auto-normalize parser: Strip everything except digits
+              let clean = rawNum.replace(/\D/g, '');
+              if (!clean) continue;
+
+              // Normalise local 080... to 23480...
+              if (clean.length === 11 && clean.startsWith('0')) {
+                clean = '234' + clean.substring(1);
+              }
+
+              const targetJid = clean + '@s.whatsapp.net';
+              await broadcastQueue.setOptOut(userData.uid, targetJid);
+              added.push(clean);
+            }
+
+            if (added.length > 0) {
+              return sock.sendMessage(from, { text: `✅ Added ${added.length} number(s) to the exclusion list.\n\nSend more contacts to exclude, or reply *YES* to begin the broadcast.` });
+            }
+          }
+
+          return sock.sendMessage(from, { text: 'Please reply *YES* or *NO* to continue the setup, or send a contact card to exclude them.' });
         }
       }
 
@@ -225,12 +277,12 @@ export const handleMotherMessage = async (sock, msg) => {
           return sock.sendMessage(from, { text: '📭 Cannot generate test report: You have absolutely zero activity in the last 7 days.' });
         }
 
-        const msg = `🧪 *TEST: Your Weekly Store Report*\n\n` +
-          `Orders Processed: ${stats.totalOrders}\n` +
+        const msg = `📈 *Weekly Enterprise Report: Clarion A.I.*\n\n` +
+          `Total Orders: ${stats.totalOrders}\n` +
           `Gross Revenue: ₦${stats.grossRevenue}\n` +
           `Net Profit Earned: ₦${stats.netProfit}\n` +
-          `Active Customers: ${stats.activeCustomers}\n\n` +
-          `_Keep pushing! Have a highly profitable weekend._ 🚀`;
+          `Active Customer Base: ${stats.activeCustomers}\n\n` +
+          `_Keep scaling your digital enterprise! Have a highly profitable weekend._ 🚀`;
 
         return sock.sendMessage(from, { text: msg });
       }
@@ -408,9 +460,9 @@ export const handleMotherMessage = async (sock, msg) => {
       // ── Existing COMPLETED state commands ──────────────────
       else if (command.toLowerCase() === 'menu' || command.toLowerCase() === '.data') {
         const plans = await payflex.getAvailablePlans();
-        let menuText = `🛒 *Your Simulated Data Store*\n\nAvailable Plans:\n`;
+        let menuText = `🛍️ *Clarion A.I. Digital Storefront*\n\nAvailable Enterprise Plans:\n`;
         plans.forEach(plan => {
-          menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *SUB ${plan.serial}* to test buy.`;
+          menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *SUB ${plan.serial}* to test your store.`;
         });
         await sock.sendMessage(from, { text: menuText });
       }
