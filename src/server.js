@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { config, logger } from './config/env.js';
-import monnify from './services/monnify.js';
+import squad from './services/SquadService.js';
 import payflex from './services/payflex.js';
 import { db } from './services/firebase.js';
 import sessionManager from './bot/SessionManager.js';
@@ -18,25 +18,25 @@ async function startServer() {
   // API routes go here FIRST
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  // Monnify Webhook
-  app.post('/monnify-webhook', async (req, res) => {
-    const signature = req.headers['monnify-signature'];
+  // Squad Webhook
+  app.post('/webhook/squad', async (req, res) => {
+    const signature = req.headers['x-squad-signature'];
     const payload = req.body;
 
-    if (!monnify.verifyWebhook(payload, signature)) {
-      logger.warn('Invalid signature received for Monnify Webhook');
+    if (!squad.verifyWebhook(payload, signature)) {
+      logger.warn('Invalid signature received for Squad Webhook');
       return res.status(400).send('Invalid signature');
     }
 
-    const { eventType, eventData } = payload;
+    const { Event, TransactionRef, Body } = payload;
 
-    if (eventType === 'SUCCESSFUL_TRANSACTION' && eventData.paymentStatus === 'PAID') {
-      logger.info(`Received successful payment: ${eventData.transactionReference}`);
+    if (Event === 'charge_successful') {
+      logger.info(`Received successful payment: ${TransactionRef}`);
 
       try {
         const ledgerSnapshot = await db.ledger
           .where('type', '==', 'PENDING_DATA')
-          .where('amount', '==', eventData.amountPaid)
+          .where('amount', '==', Body.amount)
           .limit(1)
           .get();
 
@@ -47,7 +47,7 @@ async function startServer() {
           await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId);
 
           // Use tiered markup saved with the order; fallback for legacy records
-          const netProfit = order.markup ?? +(eventData.amountPaid - order.baseCost).toFixed(2);
+          const netProfit = order.markup ?? +(Body.amount - order.baseCost).toFixed(2);
           const coMemberShare = +(netProfit * 0.50).toFixed(2); // Proxy Bot Owner
           const systemShare = +(netProfit * 0.30).toFixed(2); // Platform
           const cdsShare = +(netProfit * 0.20).toFixed(2); // CDS Group
@@ -63,17 +63,17 @@ async function startServer() {
       } catch (error) {
         logger.error('Webhook processing failed:', error);
       }
-    } else if (eventType === 'SUCCESSFUL_DISBURSEMENT' || eventType === 'DISBURSEMENT_SUCCESS') {
-      logger.info(`Received successful disbursement: ${eventData.reference}`);
+    } else if (Event === 'transfer_successful') {
+      logger.info(`Received successful disbursement: ${TransactionRef}`);
       try {
-        await wallet.updateWithdrawalStatus(eventData.reference, 'SUCCESS');
+        await wallet.updateWithdrawalStatus(TransactionRef, 'SUCCESS');
       } catch (err) {
         logger.error('Error handling successful disbursement webhook', err);
       }
-    } else if (eventType === 'FAILED_DISBURSEMENT' || eventType === 'DISBURSEMENT_FAILED' || eventType === 'REVERSED_DISBURSEMENT') {
-      logger.info(`Received failed/reversed disbursement: ${eventData.reference}`);
+    } else if (Event === 'transfer_failed' || Event === 'transfer_reversed') {
+      logger.info(`Received failed/reversed disbursement: ${TransactionRef}`);
       try {
-        await wallet.updateWithdrawalStatus(eventData.reference, 'FAILED');
+        await wallet.updateWithdrawalStatus(TransactionRef, 'FAILED');
       } catch (err) {
         logger.error('Error handling failed disbursement webhook', err);
       }

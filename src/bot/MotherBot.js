@@ -1,6 +1,6 @@
 import { logger } from '../config/env.js';
 import { db } from '../services/firebase.js';
-import monnify from '../services/monnify.js';
+import squad from '../services/SquadService.js';
 import payflex from '../services/payflex.js';
 import sessionManager from './SessionManager.js';
 import wallet, { WITHDRAWAL_FEES } from '../services/WalletService.js';
@@ -85,8 +85,8 @@ export const handleMotherMessage = async (sock, msg) => {
 
       await sock.sendMessage(from, { text: '✅ Verified! Now creating your business wallet...' });
 
-      // Create Monnify Virtual Account
-      const account = await monnify.createVirtualAccount(pushName, `${from.split('@')[0]}@nyscbot.com`);
+      // Create Squad Virtual Account
+      const account = await squad.createVirtualAccount(pushName, `${from.split('@')[0]}@nyscbot.com`, from.split('@')[0]);
 
       await saveUser({
         ...userData,
@@ -360,7 +360,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
         // Look up the bank code from the bank list
         await sock.sendMessage(from, { text: '🔍 Looking up your bank details...' });
-        const banks = await monnify.getBanks();
+        const banks = await squad.getBanks();
         const matchedBank = banks.find(b =>
           b.name.toLowerCase().replace(/\s+/g, '') === bankName.toLowerCase().replace(/\s+/g, '')
         );
@@ -374,7 +374,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
         // Validate the account with Monnify
         try {
-          const accountInfo = await monnify.validateBankAccount(matchedBank.code, accountNumber);
+          const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
 
           const amount = userData.pendingWithdrawAmount;
           const netPayout = +(amount - WITHDRAWAL_FEES.TOTAL).toFixed(2);
@@ -391,7 +391,7 @@ export const handleMotherMessage = async (sock, msg) => {
           });
 
           return sock.sendMessage(from, {
-            text: `🔍 *Account Verified!*\n\n👤 Name: *${accountInfo.accountName}*\n🏦 Bank: *${matchedBank.name}*\n🔢 Account: *${accountNumber}*\n\n💰 Requested: *₦${amount.toFixed(2)}*\n🏦 Bank Fee: *₦${WITHDRAWAL_FEES.MONNIFY_FEE}*\n⚙️ Service Fee: *₦${WITHDRAWAL_FEES.SERVICE_FEE}*\n💵 You will receive: *₦${netPayout.toFixed(2)}*\n\nReply *YES* to confirm transfer or *CANCEL* to abort.`
+            text: `🔍 *Account Verified!*\n\n👤 Name: *${accountInfo.accountName}*\n🏦 Bank: *${matchedBank.name}*\n🔢 Account: *${accountNumber}*\n\n💰 Requested: *₦${amount.toFixed(2)}*\n🏦 Bank Fee: *₦${WITHDRAWAL_FEES.SQUAD_FEE}*\n⚙️ Service Fee: *₦${WITHDRAWAL_FEES.SERVICE_FEE}*\n💵 You will receive: *₦${netPayout.toFixed(2)}*\n\nReply *YES* to confirm transfer or *CANCEL* to abort.`
           });
         } catch (err) {
           logger.error('Bank validation failed:', err.message);
@@ -433,7 +433,7 @@ export const handleMotherMessage = async (sock, msg) => {
           // Record as pending before calling Monnify to prevent double spend
           await wallet.recordWithdrawal(from, amount, bank, transferRef);
 
-          const result = await monnify.initiateTransfer(
+          const result = await squad.initiateTransfer(
             netPayout,
             bank.bankCode,
             bank.accountNumber,

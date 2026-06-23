@@ -3,9 +3,9 @@ import { logger } from '../config/env.js';
 
 // Fee constants — single source of truth
 export const WITHDRAWAL_FEES = {
-    MONNIFY_FEE: 52.50,    // Monnify's bank transfer charge
+    SQUAD_FEE: 50.00,      // Squad's bank transfer charge
     SERVICE_FEE: 50.00,    // Platform processing fee (our profit)
-    get TOTAL() { return this.MONNIFY_FEE + this.SERVICE_FEE; },
+    get TOTAL() { return this.SQUAD_FEE + this.SERVICE_FEE; },
     MIN_WITHDRAWAL: 1000   // Minimum withdrawal amount
 };
 
@@ -66,7 +66,7 @@ class WalletService {
                 amount,                              // Gross amount debited from balance
                 netPayout: +(amount - WITHDRAWAL_FEES.TOTAL).toFixed(2),
                 fees: {
-                    monnifyFee: WITHDRAWAL_FEES.MONNIFY_FEE,
+                    squadFee: WITHDRAWAL_FEES.SQUAD_FEE,
                     serviceFee: WITHDRAWAL_FEES.SERVICE_FEE,
                     total: WITHDRAWAL_FEES.TOTAL
                 },

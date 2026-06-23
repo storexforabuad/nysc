@@ -11,20 +11,16 @@ const logger = pino({
 });
 
 const requiredEnv = [
-  'MONNIFY_API_KEY',
-  'MONNIFY_SECRET_KEY',
-  'MONNIFY_CONTRACT_CODE',
+  'SQUAD_SECRET_KEY',
   'PAYFLEX_TOKEN'
 ];
 
 const config = {
   port: process.env.PORT || 3000,
   mockMode: process.env.MOCK_MODE === 'true',
-  monnify: {
-    apiKey: process.env.MONNIFY_API_KEY,
-    secretKey: process.env.MONNIFY_SECRET_KEY,
-    contractCode: process.env.MONNIFY_CONTRACT_CODE,
-    baseUrl: process.env.MONNIFY_BASE_URL || 'https://api.monnify.com'
+  squad: {
+    secretKey: process.env.SQUAD_SECRET_KEY,
+    baseUrl: process.env.SQUAD_BASE_URL || 'https://sandbox-api-d.squadco.com'
   },
   payflex: {
     token: process.env.PAYFLEX_TOKEN,
