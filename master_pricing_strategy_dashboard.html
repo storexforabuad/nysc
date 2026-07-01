@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MG💯 Master VTU Pricing Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts & Material Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Icons" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+
+    <script>
+        // Full database mapping of all 85 data plans
+        const INITIAL_PLANS = [
+            // --- MTN DATA SHARE ---
+            { id: "SUB 1", network: "MTN", name: "500MB (7 Days)", costPrice: 350, sellPrice: 370, officialPrice: 500, type: "Data Share" },
+            { id: "SUB 2", network: "MTN", name: "1GB (7 Days)", costPrice: 480, sellPrice: 500, officialPrice: 800, type: "Data Share" },
+            { id: "SUB 3", network: "MTN", name: "2GB (7 Days)", costPrice: 850, sellPrice: 870, officialPrice: 1000, type: "Data Share" },
+            { id: "SUB 4", network: "MTN", name: "3GB (7 Days)", costPrice: 1200, sellPrice: 1220, officialPrice: 1500, type: "Data Share" },
+            { id: "SUB 5", network: "MTN", name: "1GB (30 Days)", costPrice: 580, sellPrice: 600, officialPrice: 1000, type: "Data Share" },
+            { id: "SUB 6", network: "MTN", name: "2GB (30 Days)", costPrice: 950, sellPrice: 970, officialPrice: 1500, type: "Data Share" },
+            { id: "SUB 7", network: "MTN", name: "3GB (30 Days)", costPrice: 1250, sellPrice: 1270, officialPrice: 2000, type: "Data Share" },
+            { id: "SUB 8", network: "MTN", name: "5GB (30 Days)", costPrice: 1800, sellPrice: 1820, officialPrice: 3000, type: "Data Share" },
+            
+            // --- MTN GIFTING DATA ---
+            { id: "SUB 9", network: "MTN", name: "110MB (1 Day)", costPrice: 99, sellPrice: 119, officialPrice: 100, type: "Gifting" },
+            { id: "SUB 10", network: "MTN", name: "1.2GB Social (30 Days)", costPrice: 495, sellPrice: 515, officialPrice: 500, type: "Gifting" },
+            { id: "SUB 11", network: "MTN", name: "2.5GB YT (2 Days)", costPrice: 650, sellPrice: 670, officialPrice: 600, type: "Gifting" },
+            { id: "SUB 12", network: "MTN", name: "2.5GB (2 Days)", costPrice: 893, sellPrice: 913, officialPrice: 900, type: "Gifting" },
+            { id: "SUB 13", network: "MTN", name: "2GB (2 Days)", costPrice: 745, sellPrice: 765, officialPrice: 750, type: "Gifting" },
+            { id: "SUB 14", network: "MTN", name: "3.2GB (2 Days)", costPrice: 990, sellPrice: 1010, officialPrice: 1000, type: "Gifting" },
+            { id: "SUB 15", network: "MTN", name: "1GB (7 Days)", costPrice: 796, sellPrice: 816, officialPrice: 800, type: "Gifting" },
+            { id: "SUB 16", network: "MTN", name: "2GB (1 Month)", costPrice: 1480, sellPrice: 1500, officialPrice: 1500, type: "Gifting" },
+            { id: "SUB 17", network: "MTN", name: "2.5GB (1 Month)", costPrice: 2480, sellPrice: 2500, officialPrice: 2500, type: "Gifting" },
+            { id: "SUB 18", network: "MTN", name: "2.7GB (1 Month)", costPrice: 1990, sellPrice: 2010, officialPrice: 2000, type: "Gifting" },
+            { id: "SUB 19", network: "MTN", name: "3.5GB (1 Month)", costPrice: 2480, sellPrice: 2500, officialPrice: 2500, type: "Gifting" },
+            { id: "SUB 20", network: "MTN", name: "6GB (Weekly)", costPrice: 2480, sellPrice: 2500, officialPrice: 2500, type: "Gifting" },
+            { id: "SUB 21", network: "MTN", name: "7GB (1 Month)", costPrice: 3450, sellPrice: 3470, officialPrice: 3500, type: "Gifting" },
+            { id: "SUB 22", network: "MTN", name: "11GB (Weekly)", costPrice: 3500, sellPrice: 3520, officialPrice: 3500, type: "Gifting" },
+            { id: "SUB 23", network: "MTN", name: "12.5GB (1 Month)", costPrice: 5435, sellPrice: 5455, officialPrice: 5500, type: "Gifting" },
+            { id: "SUB 24", network: "MTN", name: "14.5GB (1 Month)", costPrice: 4950, sellPrice: 4970, officialPrice: 5000, type: "Gifting" },
+            { id: "SUB 25", network: "MTN", name: "20GB (1 Month)", costPrice: 7380, sellPrice: 7400, officialPrice: 7500, type: "Gifting" },
+            { id: "SUB 26", network: "MTN", name: "25GB (1 Month)", costPrice: 8850, sellPrice: 8870, officialPrice: 9000, type: "Gifting" },
+            { id: "SUB 27", network: "MTN", name: "36GB (1 Month)", costPrice: 10850, sellPrice: 10870, officialPrice: 11000, type: "Gifting" },
+            { id: "SUB 28", network: "MTN", name: "65GB (1 Month)", costPrice: 15800, sellPrice: 15820, officialPrice: 16000, type: "Gifting" },
+            { id: "SUB 29", network: "MTN", name: "75GB (1 Month)", costPrice: 17700, sellPrice: 17720, officialPrice: 18000, type: "Gifting" },
+            { id: "SUB 30", network: "MTN", name: "90GB (2 Months)", costPrice: 24650, sellPrice: 24670, officialPrice: 25000, type: "Gifting" },
+            { id: "SUB 31", network: "MTN", name: "150GB (2 Months)", costPrice: 39500, sellPrice: 39520, officialPrice: 40000, type: "Gifting" },
+            { id: "SUB 32", network: "MTN", name: "165GB (1 Month)", costPrice: 34500, sellPrice: 34520, officialPrice: 35000, type: "Gifting" },
+            { id: "SUB 33", network: "MTN", name: "200GB (2 Months)", costPrice: 49200, sellPrice: 49220, officialPrice: 50000, type: "Gifting" },
+            { id: "SUB 34", network: "MTN", name: "250GB (1 Month)", costPrice: 54500, sellPrice: 54520, officialPrice: 55000, type: "Gifting" },
+            { id: "SUB 35", network: "MTN", name: "800GB (1 Year)", costPrice: 123500, sellPrice: 123520, officialPrice: 125000, type: "Gifting" },
+
+            // --- AIRTEL DATA ---
+            { id: "SUB 36", network: "Airtel", name: "200MB (2 Days)", costPrice: 199, sellPrice: 219, officialPrice: 200, type: "Gifting" },
+            { id: "SUB 37", network: "Airtel", name: "300MB (2 Days)", costPrice: 298, sellPrice: 318, officialPrice: 300, type: "Gifting" },
+            { id: "SUB 38", network: "Airtel", name: "1GB Social (3 Days)", costPrice: 338, sellPrice: 358, officialPrice: 350, type: "Gifting" },
+            { id: "SUB 39", network: "Airtel", name: "2GB (2 Days)", costPrice: 782, sellPrice: 802, officialPrice: 800, type: "Gifting" },
+            { id: "SUB 40", network: "Airtel", name: "3.2GB (2 Days)", costPrice: 980, sellPrice: 1000, officialPrice: 1000, type: "Gifting" },
+            { id: "SUB 41", network: "Airtel", name: "5GB (2 Days)", costPrice: 1475, sellPrice: 1495, officialPrice: 1500, type: "Gifting" },
+            { id: "SUB 42", network: "Airtel", name: "1GB (7 Days)", costPrice: 830, sellPrice: 850, officialPrice: 800, type: "Gifting" },
+            { id: "SUB 43", network: "Airtel", name: "1.5GB (7 Days)", costPrice: 530, sellPrice: 550, officialPrice: 1000, type: "Gifting" },
+            { id: "SUB 44", network: "Airtel", name: "3.5GB (7 Days)", costPrice: 1513, sellPrice: 1533, officialPrice: 1500, type: "Gifting" },
+            { id: "SUB 45", network: "Airtel", name: "6GB (7 Days)", costPrice: 2475, sellPrice: 2495, officialPrice: 2500, type: "Gifting" },
+            { id: "SUB 46", network: "Airtel", name: "10GB (7 Days)", costPrice: 2975, sellPrice: 2995, officialPrice: 3000, type: "Gifting" },
+            { id: "SUB 47", network: "Airtel", name: "18GB (7 Days)", costPrice: 4955, sellPrice: 4975, officialPrice: 5000, type: "Gifting" },
+            { id: "SUB 48", network: "Airtel", name: "35GB (7 Days Router)", costPrice: 9900, sellPrice: 9920, officialPrice: 10000, type: "Gifting" },
+            { id: "SUB 49", network: "Airtel", name: "2GB (30 Days)", costPrice: 1478, sellPrice: 1498, officialPrice: 1500, type: "Gifting" },
+            { id: "SUB 50", network: "Airtel", name: "3GB (30 Days)", costPrice: 1975, sellPrice: 1995, officialPrice: 2000, type: "Gifting" },
+            { id: "SUB 51", network: "Airtel", name: "4GB (30 Days)", costPrice: 2477, sellPrice: 2497, officialPrice: 2500, type: "Gifting" },
+            { id: "SUB 52", network: "Airtel", name: "8GB (30 Days)", costPrice: 2975, sellPrice: 2995, officialPrice: 3000, type: "Gifting" },
+            { id: "SUB 53", network: "Airtel", name: "10GB (30 Days)", costPrice: 3950, sellPrice: 3970, officialPrice: 4000, type: "Gifting" },
+            { id: "SUB 54", network: "Airtel", name: "13GB (30 Days)", costPrice: 4955, sellPrice: 4975, officialPrice: 5000, type: "Gifting" },
+            { id: "SUB 55", network: "Airtel", name: "18GB (30 Days)", costPrice: 5940, sellPrice: 5960, officialPrice: 6000, type: "Gifting" },
+            { id: "SUB 56", network: "Airtel", name: "25GB (30 Days)", costPrice: 7900, sellPrice: 7920, officialPrice: 8000, type: "Gifting" },
+            { id: "SUB 57", network: "Airtel", name: "60GB (30 Days)", costPrice: 14900, sellPrice: 14920, officialPrice: 15000, type: "Gifting" },
+            { id: "SUB 58", network: "Airtel", name: "75GB (30 Days)", costPrice: 14980, sellPrice: 15000, officialPrice: 15000, type: "Gifting" },
+            { id: "SUB 59", network: "Airtel", name: "100GB (30 Days)", costPrice: 19800, sellPrice: 19820, officialPrice: 20000, type: "Gifting" },
+            { id: "SUB 60", network: "Airtel", name: "160GB (30 Days)", costPrice: 29750, sellPrice: 29770, officialPrice: 30000, type: "Gifting" },
+
+            // --- GLO DATA ---
+            { id: "SUB 61", network: "Glo", name: "500MB (30 Days)", costPrice: 245, sellPrice: 265, officialPrice: 250, type: "Corporate" },
+            { id: "SUB 62", network: "Glo", name: "1GB (3 Days)", costPrice: 270, sellPrice: 290, officialPrice: 300, type: "Corporate" },
+            { id: "SUB 63", network: "Glo", name: "3GB (3 Days)", costPrice: 850, sellPrice: 870, officialPrice: 800, type: "Corporate" },
+            { id: "SUB 64", network: "Glo", name: "5GB (3 Days)", costPrice: 1380, sellPrice: 1400, officialPrice: 1400, type: "Corporate" },
+            { id: "SUB 65", network: "Glo", name: "1GB (7 Days)", costPrice: 330, sellPrice: 350, officialPrice: 350, type: "Corporate" },
+            { id: "SUB 66", network: "Glo", name: "3GB (7 Days)", costPrice: 990, sellPrice: 1010, officialPrice: 1000, type: "Corporate" },
+            { id: "SUB 67", network: "Glo", name: "5GB (7 Days)", costPrice: 1580, sellPrice: 1600, officialPrice: 1500, type: "Corporate" },
+            { id: "SUB 68", network: "Glo", name: "1GB Night (14 Days)", costPrice: 330, sellPrice: 350, officialPrice: null, type: "Special/Night" },
+            { id: "SUB 69", network: "Glo", name: "5GB Night (14 Days)", costPrice: 1640, sellPrice: 1660, officialPrice: null, type: "Special/Night" },
+            { id: "SUB 70", network: "Glo", name: "10GB Night (14 Days)", costPrice: 3300, sellPrice: 3320, officialPrice: null, type: "Special/Night" },
+            { id: "SUB 71", network: "Glo", name: "1GB (30 Days)", costPrice: 450, sellPrice: 470, officialPrice: 500, type: "Corporate" },
+            { id: "SUB 72", network: "Glo", name: "2GB (30 Days)", costPrice: 900, sellPrice: 920, officialPrice: 1000, type: "Corporate" },
+            { id: "SUB 73", network: "Glo", name: "3GB (30 Days)", costPrice: 1350, sellPrice: 1370, officialPrice: 1300, type: "Corporate" },
+            { id: "SUB 74", network: "Glo", name: "5GB (30 Days)", costPrice: 2200, sellPrice: 2220, officialPrice: 2200, type: "Corporate" },
+            { id: "SUB 75", network: "Glo", name: "10GB (30 Days)", costPrice: 4250, sellPrice: 4270, officialPrice: 4500, type: "Corporate" },
+
+            // --- 9MOBILE DATA ---
+            { id: "SUB 76", network: "9mobile", name: "300MB (30 Days)", costPrice: 200, sellPrice: 220, officialPrice: 200, type: "Gifting" },
+            { id: "SUB 77", network: "9mobile", name: "500MB (30 Days)", costPrice: 300, sellPrice: 320, officialPrice: 300, type: "Gifting" },
+            { id: "SUB 78", network: "9mobile", name: "1GB (30 Days)", costPrice: 500, sellPrice: 520, officialPrice: 500, type: "Gifting" },
+            { id: "SUB 79", network: "9mobile", name: "2GB (30 Days)", costPrice: 980, sellPrice: 1000, officialPrice: 1000, type: "Gifting" },
+            { id: "SUB 80", network: "9mobile", name: "3GB (30 Days)", costPrice: 1500, sellPrice: 1520, officialPrice: 1500, type: "Gifting" },
+            { id: "SUB 81", network: "9mobile", name: "5GB (30 Days)", costPrice: 2500, sellPrice: 2520, officialPrice: 2500, type: "Gifting" },
+            { id: "SUB 82", network: "9mobile", name: "10GB (30 Days)", costPrice: 5000, sellPrice: 5020, officialPrice: 5000, type: "Gifting" },
+            { id: "SUB 83", network: "9mobile", name: "15GB Gifting (30 Days)", costPrice: 6950, sellPrice: 6970, officialPrice: 7000, type: "Gifting" },
+            { id: "SUB 84", network: "9mobile", name: "20GB (30 Days)", costPrice: 9500, sellPrice: 9520, officialPrice: 9500, type: "Gifting" },
+            { id: "SUB 85", network: "9mobile", name: "40GB (30 Days)", costPrice: 18800, sellPrice: 18820, officialPrice: 19000, type: "Gifting" }
+        ];
+    </script>
+
+    <div class="container mx-auto p-4 md:p-8 max-w-7xl">
+        <header class="mb-8 border-b border-slate-800 pb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">MG💯's Store Controller</span>
+                    <span class="px-2 py-1 text-xs font-semibold bg-cyan-500/20 text-cyan-400 rounded-full">Automated Margin Strategy</span>
+                </div>
+                <p class="text-slate-400 text-sm">SquadCo fee: <span class="text-cyan-400 font-bold">1.2%</span>. Safeguarding margins and mapping against standard network ceilings.</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="applySmartPricing()" class="px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-sm font-semibold rounded-lg shadow-lg flex items-center gap-2 transition-all">
+                    <span class="material-icons text-sm">auto_awesome</span> Smart Pricing
+                </button>
+                <button onclick="exportToJSON()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold rounded-lg flex items-center gap-2 transition-all">
+                    <span class="material-icons text-sm">code</span> Export JSON
+                </button>
+            </div>
+        </header>
+
+        <!-- Dynamic Indicator Row -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-400 font-medium">Safe to Promo (Headroom &gt; ₦50)</div>
+                    <div id="stat-high" class="text-2xl font-bold text-emerald-400">0</div>
+                </div>
+                <div class="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                    <span class="material-icons">verified</span>
+                </div>
+            </div>
+            <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-400 font-medium">Tight Margins (₦1 - ₦49 Headroom)</div>
+                    <div id="stat-warning" class="text-2xl font-bold text-yellow-400">0</div>
+                </div>
+                <div class="p-2 bg-yellow-500/10 text-yellow-400 rounded-lg">
+                    <span class="material-icons">warning_amber</span>
+                </div>
+            </div>
+            <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-400 font-medium">Above Retail Ceiling (CRITICAL)</div>
+                    <div id="stat-danger" class="text-2xl font-bold text-rose-400">0</div>
+                </div>
+                <div class="p-2 bg-rose-500/10 text-rose-400 rounded-lg">
+                    <span class="material-icons">gpp_maybe</span>
+                </div>
+            </div>
+            <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-400 font-medium">Wholesale/Gifting Custom Tiers</div>
+                    <div id="stat-na" class="text-2xl font-bold text-blue-400">0</div>
+                </div>
+                <div class="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
+                    <span class="material-icons">sell</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Filter Panel -->
+            <div class="lg:col-span-2 space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-4 bg-slate-800/30 p-4 rounded-xl border border-slate-800">
+                    <div class="flex gap-2">
+                        <button onclick="filterBy('ALL')" id="filter-all" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-700 text-white">All Plans</button>
+                        <button onclick="filterBy('HIGH_MARGIN')" id="filter-high" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-transparent text-slate-400 hover:text-white">High Headroom</button>
+                        <button onclick="filterBy('DANGER')" id="filter-danger" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-transparent text-slate-400 hover:text-white">Above Market</button>
+                        <button onclick="filterBy('BREAK_EVEN')" id="filter-break" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-transparent text-slate-400 hover:text-white">Break-even</button>
+                    </div>
+                    <div class="relative w-full sm:w-64">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">
+                            <span class="material-icons text-sm">search</span>
+                        </span>
+                        <input type="text" id="search-input" onkeyup="searchPlans()" placeholder="Search SUB or name..." class="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 pl-9 pr-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-all">
+                    </div>
+                </div>
+
+                <!-- Table Area -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+                    <div class="overflow-x-auto max-h-[600px]">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-950 text-slate-400 uppercase text-xs tracking-wider sticky top-0 z-10">
+                                <tr>
+                                    <th class="py-3.5 px-4">Code / Network</th>
+                                    <th class="py-3.5 px-4">Plan Description</th>
+                                    <th class="py-3.5 px-4 text-right">Cost (₦)</th>
+                                    <th class="py-3.5 px-4 text-right">Sell Price (₦)</th>
+                                    <th class="py-3.5 px-4 text-right">Official Price (₦)</th>
+                                    <th class="py-3.5 px-4 text-center">Net Margin</th>
+                                </tr>
+                            </thead>
+                            <tbody id="plans-table-body" class="divide-y divide-slate-800/50">
+                                <!-- Data injected via JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration & Copy Panel -->
+            <div class="space-y-6">
+                <div class="bg-slate-800/50 rounded-xl border border-slate-700 p-6 shadow-xl relative overflow-hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                            <span class="material-icons text-cyan-400 text-sm">data_object</span> Antigravity Compiler
+                        </h2>
+                        <button onclick="copyJSONToClipboard()" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs font-semibold rounded text-cyan-400 flex items-center gap-1 transition-all">
+                            <span class="material-icons text-xs">content_copy</span> Copy
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-400 mb-4 leading-relaxed">This JSON block dynamically updates based on your customized changes. You can copy and paste this direct block into Google Antigravity.</p>
+                    <div class="relative bg-slate-950 rounded-lg border border-slate-800 p-3 h-[420px] overflow-auto">
+                        <pre id="json-viewer" class="text-xs font-mono text-cyan-300 whitespace-pre-wrap"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentFilter = 'ALL';
+        let searchQuery = '';
+        let plans = [...INITIAL_PLANS];
+
+        // Format Currency values
+        const fmtNaira = (v) => v !== null && v !== undefined ? `₦${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0 })}` : 'N/A';
+
+        // Custom function to calculate actual markup with SquadCo fee subtracted
+        function calculateNetMargin(sell, cost) {
+            const fee = sell * 0.012; // Standard 1.2% SquadCo fee
+            return Math.floor((sell - cost) - fee);
+        }
+
+        // Determine margin categorization
+        function computeStatus(plan) {
+            if (plan.officialPrice !== null && plan.sellPrice > plan.officialPrice) {
+                return 'ABOVE_MARKET';
+            }
+            if (plan.officialPrice !== null && plan.sellPrice === plan.officialPrice) {
+                return 'BREAK_EVEN';
+            }
+            
+            const headroom = plan.officialPrice !== null ? (plan.officialPrice - plan.sellPrice) : null;
+            if (headroom !== null && headroom >= 50) {
+                return 'HIGH_MARGIN';
+            }
+            if (headroom !== null && headroom < 50) {
+                return 'DANGER';
+            }
+            return 'N/A';
+        }
+
+        // Apply automatic margin algorithm to make everything safe
+        function applySmartPricing() {
+            plans = plans.map(p => {
+                let optimalPrice = p.sellPrice;
+                // If it sells above official price, pull it down to official price minus ₦5
+                if (p.officialPrice !== null && p.sellPrice >= p.officialPrice) {
+                    optimalPrice = p.officialPrice - 5;
+                }
+                
+                // Ensure a safe markup cushion of at least ₦45 above cost if headroom allows
+                if (p.officialPrice !== null && (optimalPrice - p.costPrice < 45)) {
+                    // Try to raise price safely but keep it under official limit
+                    const targetPrice = p.costPrice + 50;
+                    if (targetPrice < p.officialPrice) {
+                        optimalPrice = targetPrice;
+                    }
+                }
+
+                return {
+                    ...p,
+                    sellPrice: optimalPrice
+                };
+            });
+            render();
+        }
+
+        // Rendering main table items
+        function render() {
+            const tbody = document.getElementById('plans-table-body');
+            tbody.innerHTML = '';
+
+            let highCount = 0;
+            let warningCount = 0;
+            let dangerCount = 0;
+            let naCount = 0;
+
+            const filteredPlans = plans.filter(p => {
+                const headroom = p.officialPrice !== null ? (p.officialPrice - p.sellPrice) : null;
+                const matchesSearch = p.id.toLowerCase().includes(searchQuery) || p.name.toLowerCase().includes(searchQuery);
+                const status = computeStatus(p);
+
+                // Update Counter Stats
+                if (status === 'HIGH_MARGIN') highCount++;
+                if (status === 'DANGER') warningCount++;
+                if (status === 'ABOVE_MARKET') dangerCount++;
+                if (status === 'BREAK_EVEN') warningCount++;
+                if (status === 'N/A') naCount++;
+
+                if (!matchesSearch) return false;
+
+                if (currentFilter === 'HIGH_MARGIN' && status !== 'HIGH_MARGIN') return false;
+                if (currentFilter === 'DANGER' && status !== 'ABOVE_MARKET') return false;
+                if (currentFilter === 'BREAK_EVEN' && (status !== 'BREAK_EVEN' && status !== 'DANGER')) return false;
+
+                return true;
+            });
+
+            // Update DOM counters
+            document.getElementById('stat-high').textContent = highCount;
+            document.getElementById('stat-warning').textContent = warningCount;
+            document.getElementById('stat-danger').textContent = dangerCount;
+            document.getElementById('stat-na').textContent = naCount;
+
+            filteredPlans.forEach(p => {
+                const margin = calculateNetMargin(p.sellPrice, p.costPrice);
+                const status = computeStatus(p);
+                const headroom = p.officialPrice !== null ? (p.officialPrice - p.sellPrice) : null;
+
+                let rowClass = "hover:bg-slate-800/30 transition-colors";
+                let badgeHTML = '';
+
+                if (status === 'ABOVE_MARKET') {
+                    rowClass += " bg-rose-950/10";
+                    badgeHTML = `<span class="px-2 py-0.5 text-xs font-semibold bg-rose-500/10 text-rose-400 rounded-full flex items-center gap-1 w-max">Above Retail</span>`;
+                } else if (status === 'BREAK_EVEN') {
+                    rowClass += " bg-yellow-950/10";
+                    badgeHTML = `<span class="px-2 py-0.5 text-xs font-semibold bg-yellow-500/10 text-yellow-400 rounded-full flex items-center gap-1 w-max">At Parity</span>`;
+                } else if (status === 'HIGH_MARGIN') {
+                    badgeHTML = `<span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/10 text-emerald-400 rounded-full flex items-center gap-1 w-max">₦${headroom} Off Ceiling</span>`;
+                } else {
+                    badgeHTML = `<span class="px-2 py-0.5 text-xs font-semibold bg-slate-800 text-slate-400 rounded-full flex items-center gap-1 w-max">Custom</span>`;
+                }
+
+                tbody.innerHTML += `
+                    <tr class="${rowClass}">
+                        <td class="py-3 px-4 font-semibold text-slate-100">
+                            <div class="text-xs text-cyan-400 font-mono">${p.id}</div>
+                            <div class="text-xs text-slate-500">${p.network}</div>
+                        </td>
+                        <td class="py-3 px-4">
+                            <div class="font-medium text-slate-200">${p.name}</div>
+                            <div class="text-xs text-slate-500">${p.type}</div>
+                        </td>
+                        <td class="py-3 px-4 text-right font-mono text-slate-400">${fmtNaira(p.costPrice)}</td>
+                        <td class="py-3 px-4 text-right">
+                            <input type="number" value="${p.sellPrice}" onchange="updatePrice('${p.id}', this.value)" class="w-20 bg-slate-950 border border-slate-800 rounded py-1 px-2 text-right text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono">
+                        </td>
+                        <td class="py-3 px-4 text-right font-mono text-slate-400">${fmtNaira(p.officialPrice)}</td>
+                        <td class="py-3 px-4 text-center">
+                            <div class="flex flex-col items-center">
+                                <span class="font-bold font-mono text-sm ${margin > 50 ? 'text-emerald-400' : margin > 20 ? 'text-yellow-400' : 'text-rose-400'}">${fmtNaira(margin)}</span>
+                                ${badgeHTML}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            // Update raw JSON previewer
+            updateJSONDisplay();
+        }
+
+        // Handle inline cell updates
+        function updatePrice(id, val) {
+            const index = plans.findIndex(p => p.id === id);
+            if (index !== -1) {
+                plans[index].sellPrice = Number(val);
+                render();
+            }
+        }
+
+        // Interactive search
+        function searchPlans() {
+            searchQuery = document.getElementById('search-input').value.toLowerCase();
+            render();
+        }
+
+        // Segmented filter tabs
+        function filterBy(type) {
+            currentFilter = type;
+            
+            // Reset UI states
+            ['filter-all', 'filter-high', 'filter-danger', 'filter-break'].forEach(id => {
+                document.getElementById(id).className = "px-3 py-1.5 rounded-lg text-sm font-semibold bg-transparent text-slate-400 hover:text-white";
+            });
+
+            const activeTab = type === 'ALL' ? 'filter-all' : 
+                             type === 'HIGH_MARGIN' ? 'filter-high' : 
+                             type === 'DANGER' ? 'filter-danger' : 'filter-break';
+            document.getElementById(activeTab).className = "px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-700 text-white";
+            
+            render();
+        }
+
+        // Export system configurations to local views
+        function updateJSONDisplay() {
+            const formatted = plans.map(p => ({
+                id: p.id,
+                network: p.network,
+                plan: p.name,
+                cost: p.costPrice,
+                sell: p.sellPrice,
+                official: p.officialPrice,
+                netProfit: calculateNetMargin(p.sellPrice, p.costPrice),
+                category: computeStatus(p)
+            }));
+            document.getElementById('json-viewer').textContent = JSON.stringify(formatted, null, 2);
+        }
+
+        // Action handles for copying database schema
+        function copyJSONToClipboard() {
+            const jsonText = document.getElementById('json-viewer').textContent;
+            
+            // Safe execution across sandbox and frame blocks
+            const textarea = document.createElement('textarea');
+            textarea.value = jsonText;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            alert("Master Configuration JSON copied successfully! Ready to paste into Firestore or Google Antigravity config file.");
+        }
+
+        // Initialize display
+        window.onload = function() {
+            render();
+        }
+    </script>
+</body>
+</html>

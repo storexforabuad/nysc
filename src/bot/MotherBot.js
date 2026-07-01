@@ -152,7 +152,7 @@ export const handleMotherMessage = async (sock, msg) => {
     else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
 
       if (userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
-        const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I. You can now get high-speed data at wholesale prices directly through my number!\n\nTo get started, simply reply to my number with the word *DATA*.`;
+        const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget (e.g., DATA 500)\n*DATA [price] [number]* - Send to someone else (e.g., DATA 500 08123...)\n\nFeel free to ignore this if you're not interested right now! 😊`;
 
         if (command.toUpperCase() === 'YES') {
           await sock.sendMessage(from, { text: '⏳ Fetching your contact list... Please wait.' });

@@ -53,6 +53,54 @@ class ReportService {
             return null;
         }
     }
+
+    /**
+     * Aggregates completed order metrics to find top 3 VIP customers.
+     */
+    async getVIPCustomers(userId) {
+        if (!db.ledger) return null;
+
+        try {
+            const snap = await db.ledger
+                .where('userId', '==', userId)
+                .where('type', '==', 'COMPLETED_DATA')
+                .get();
+
+            const customerStats = {};
+
+            snap.forEach(doc => {
+                const data = doc.data();
+                if (data.buyerPhone) {
+                    if (!customerStats[data.buyerPhone]) {
+                        customerStats[data.buyerPhone] = { amount: 0, orders: 0 };
+                    }
+                    customerStats[data.buyerPhone].amount += (data.amount || 0);
+                    customerStats[data.buyerPhone].orders += 1;
+                }
+            });
+
+            const sortedCustomers = Object.entries(customerStats)
+                .map(([phone, stats]) => ({ phone, ...stats }))
+                .sort((a, b) => b.amount - a.amount)
+                .slice(0, 3); // Top 3
+
+            let totalRevenue = 0;
+            let totalOrders = 0;
+            Object.values(customerStats).forEach(s => {
+                totalRevenue += s.amount;
+                totalOrders += s.orders;
+            });
+
+            return {
+                list: sortedCustomers,
+                totalRevenue,
+                totalOrders
+            };
+        } catch (error) {
+            logger.error(`Error generating VIP customers for ${userId}:`, error.message);
+            return null;
+        }
+    }
 }
 
 export default new ReportService();

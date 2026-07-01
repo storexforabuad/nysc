@@ -191,8 +191,7 @@ class SessionManager {
           }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
 
           if (this.motherSock) {
-            const prompt = `✅ *ACTIVATION SUCCESSFUL!*\n\nYour Clarion Digital Store is now live and ready to generate revenue! 🚀\n\n*Final Configuration:*\nWould you like Clarion A.I. to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will dispatch the messages in slow, safe batches to ensure your account remains secure.\n\n_To exclude specific people from receiving this, simply type their phone numbers here now (e.g. 08012345678) or share their contact cards._\n\nWhen you are ready, reply *YES* to begin the safe rollout or *NO* to skip.`;
-            this.motherSock.sendMessage(phoneJid, { text: prompt }).catch(() => { });
+            this._sendActivationSuccessMessages(phoneJid);
           }
         }
       }
@@ -275,8 +274,7 @@ class SessionManager {
           }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
         }
         if (this.motherSock) {
-          const prompt = `✅ *ACTIVATION SUCCESSFUL!*\n\nYour Clarion Digital Store is now live and ready to generate revenue! 🚀\n\n*Final Configuration:*\nWould you like Clarion A.I. to safely announce your new automated store to your WhatsApp contacts?\n\nOur system will dispatch the messages in slow, safe batches to ensure your account remains secure.\n\n_To exclude specific people from receiving this, simply type their phone numbers here now (e.g. 08012345678) or share their contact cards._\n\nWhen you are ready, reply *YES* to begin the safe rollout or *NO* to skip.`;
-          this.motherSock.sendMessage(phoneJid, { text: prompt }).catch(() => { });
+          this._sendActivationSuccessMessages(phoneJid);
         }
       }
 
@@ -431,6 +429,24 @@ class SessionManager {
       return [];
     }
     return Array.from(store);
+  }
+
+  async _sendActivationSuccessMessages(phoneJid) {
+    if (!this.motherSock) return;
+
+    const msg1 = `🥳 *ACTIVATION SUCCESSFUL!*\n\nYour Clarion Digital Store is now live and ready to generate revenue! 🚀\n\n*How to manage your store:*\nSimply text me these keywords anytime:\n\n💰 *BALANCE* - Check your earnings\n📜 *HISTORY* - View recent orders & payouts\n💸 *WITHDRAW [amount]* - Cash out your profits`;
+
+    const broadcastTemplate = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget\n*DATA [price] [number]* - Send to a friend\n\nFeel free to ignore this if you're not interested right now! 😊`;
+
+    const msg2 = `📢 *Launch your automated store!*\n\nWould you like Clarion A.I. to safely announce your new enterprise to your WhatsApp contacts?\n\n*Here is a preview of what they will see:*\n---\n${broadcastTemplate}\n---\n\n*Pro-Tip:* To exclude specific people, simply type their phone numbers here (e.g. 08012345678) or share their contact cards.\n\nWhen you are ready, reply *YES* to begin the safe rollout or *NO* to skip.`;
+
+    try {
+      await this.motherSock.sendMessage(phoneJid, { text: msg1 });
+      await new Promise(r => setTimeout(r, 1500)); // Brief delay for readability
+      await this.motherSock.sendMessage(phoneJid, { text: msg2 });
+    } catch (err) {
+      logger.error(`Failed to send activation success messages to ${phoneJid}:`, err.message);
+    }
   }
 }
 

@@ -1,0 +1,90 @@
+# Local Deployment & Cloudflare Tunnels Guide (Windows)
+
+This guide provides step-by-step instructions on how to host Clarion A.I. fully from your Windows machine. It uses PM2 to ensure the bot runs reliably in the background without tying up a command window, and Cloudflare Tunnels (or Ngrok) to expose it securely to the internet.
+
+## 1. Prepare Your Windows Environment
+
+Before exposing your server, we need to build the production version of the platform and set it to run in the background.
+
+1. **Open PowerShell as Administrator**.
+2. **Navigate to your project directory**:
+   ```powershell
+   cd C:\Users\m\Downloads\nysc
+   ```
+3. **Install PM2 globally** (This manages the Node.js process so you can close the terminal without killing the bot):
+   ```powershell
+   npm install -g pm2
+   ```
+4. **Build the production frontend** (This compiles your Vite/React code into the `dist/` folder):
+   ```powershell
+   npm run build
+   ```
+
+## 2. Start the Server in the Background
+
+We will start the server using PM2 with specific memory constraints just to be safe, although your local machine likely has plenty of RAM.
+
+1. **Start the Express/Bot Server**:
+   ```powershell
+   pm2 start dist/server.js --name "clarion-bot" --env production
+   ```
+2. **Setup Auto-Restart** (Optional but recommended so it starts if your computer reboots):
+   ```powershell
+   npm install pm2-windows-startup -g
+   pm2-startup install
+   pm2 save
+   ```
+
+> [!TIP]
+> **Helpful PM2 Commands:**
+> - `pm2 logs clarion-bot` (See live logs, scan WhatsApp QR codes)
+> - `pm2 status` (Check if the bot is running)
+> - `pm2 restart clarion-bot` (Apply new changes)
+
+## 3. Expose the Server to the Internet ($0)
+
+Since SquadCo needs to send payment webhooks to your server, your local port `3000` must have a public HTTPS URL. 
+
+### Option A: Cloudflare Tunnels (Best for quick, temporary testing)
+Cloudflare allows you to instantly generate a secure URL without an account.
+1. Download [cloudflared.exe for Windows](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe).
+2. Move the downloaded `cloudflared.exe` into your `C:\Users\m\Downloads\nysc\` folder.
+3. Open a new PowerShell window in your project folder and run:
+   ```powershell
+   .\cloudflared.exe tunnel --url http://localhost:3000
+   ```
+4. Look for the line in the logs that says exactly:
+   *`Your quick Tunnel has been created! Visit it at (https://some-random-words.trycloudflare.com)`*
+
+### Option B: Ngrok (Best for a permanent, unchanging URL)
+Unlike Quick Tunnels, Ngrok gives you one **free permanent static domain**. This is better for SquadCo so you don't have to keep updating the dashboard URL every time you restart your PC.
+1. Sign up at [ngrok.com](https://ngrok.com/) for a free account.
+2. Follow their dashboard instructions to download Ngrok for Windows.
+3. Authenticate your terminal:
+   ```powershell
+   ngrok config add-authtoken <YOUR_TOKEN>
+   ```
+4. Claim your free static domain in the dashboard (e.g., `upward-marmot.ngrok-free.app`).
+5. Run the tunnel:
+   ```powershell
+   ngrok http --domain=upward-marmot.ngrok-free.app 3000
+   ```
+
+## 4. Final Updates (Crucial)
+
+Once you have your public URL (whether from Cloudflare or Ngrok):
+
+1. **Update your `.env` File**:
+   Open `C:\Users\m\Downloads\nysc\.env` and change your `APP_URL`:
+   ```env
+   APP_URL="https://your-tunnel-url.com"
+   ```
+2. **Restart the Bot**:
+   ```powershell
+   pm2 restart clarion-bot --update-env
+   ```
+3. **Update SquadCo Dashboard**:
+   Log into your SquadCo Merchant Dashboard. Navigate to **Developers/API** -> **Webhook URL** and paste:
+   `https://your-tunnel-url.com/webhook/squad`
+
+You are now successfully hosting Clarion A.I. entirely locally, securely, and completely for free!

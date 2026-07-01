@@ -45,9 +45,16 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     // Handle Data/Menu request
-    if (command === 'menu' || command === '.data' || command === 'data' || command === 'start') {
+    const dataCommandRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
+    const isDataMatch = dataCommandRegex.test(command);
+
+    if (command === 'menu' || command === 'start' || isDataMatch) {
+      const match = isDataMatch ? command.match(dataCommandRegex) : null;
+      const targetPrice = match && match[1] ? parseInt(match[1]) : null;
+      const targetPhone = match && match[2] ? match[2] : null;
+
       const plans = await payflex.getAvailablePlans();
-      const detectedNet = detectNetwork(actionableJid);
+      const detectedNet = detectNetwork(targetPhone || actionableJid);
 
       let filteredPlans = plans;
       if (detectedNet) {
@@ -57,17 +64,34 @@ export const handleProxyMessage = async (sock, msg, user) => {
         });
       }
 
-      let menuText = `👋 Welcome to *${user.name || 'our'}* Digital Hub!\nPowered by *Clarion A.I.*\n\n`;
-
-      if (detectedNet) {
-        menuText += `🔎 Network Detected: *${detectedNet.toUpperCase()}*\n\n*Available ${detectedNet.toUpperCase()} Enterprise Plans:*\n`;
-      } else {
-        menuText += `*Available Digital Enterprise Plans:*\n`;
+      if (targetPrice) {
+        filteredPlans.sort((a, b) => Math.abs(a.sellPrice - targetPrice) - Math.abs(b.sellPrice - targetPrice));
+        filteredPlans = filteredPlans.slice(0, 4);
+        filteredPlans.sort((a, b) => a.sellPrice - b.sellPrice);
       }
 
-      filteredPlans.forEach(plan => {
-        menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.`;
-      });
+      let menuText = `👋 Welcome to *${user.name || 'our'}* Digital Hub!\nPowered by *Clarion A.I.*\n\n`;
+
+      let networkStr = detectedNet ? detectedNet.toUpperCase() : 'Digital';
+      if (detectedNet && targetPhone) {
+        menuText += `🔎 Network Detected: *${networkStr}* for ${targetPhone}\n\n`;
+      } else if (detectedNet) {
+        menuText += `🔎 Network Detected: *${networkStr}*\n\n`;
+      }
+
+      if (targetPrice) {
+        menuText += `*Available ${networkStr} Plans around ₦${targetPrice}:*\n`;
+      } else {
+        menuText += `*Available ${networkStr} Enterprise Plans:*\n`;
+      }
+
+      if (filteredPlans.length === 0) {
+        menuText += `\n❌ No plans found matching your criteria.`;
+      } else {
+        filteredPlans.forEach(plan => {
+          menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.`;
+        });
+      }
 
       menuText += '\n\n_Transfer exact amount and data will be vended instantly._';
       return sock.sendMessage(from, { text: menuText });
