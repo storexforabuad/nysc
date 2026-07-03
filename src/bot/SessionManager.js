@@ -184,7 +184,7 @@ class SessionManager {
           const phoneNumber = user.phoneJid ? user.phoneJid.split('@')[0] : user.uid.split('@')[0];
           const phoneJid = user.phoneJid || `${phoneNumber}@s.whatsapp.net`;
           db.users.doc(user.uid).set({
-            state: 'AWAITING_BROADCAST_PERMISSION',
+            state: 'AWAITING_BROADCAST_CONTACTS',
             phoneJid,
             phoneNumber,
             pairedAt: new Date().toISOString()
@@ -267,7 +267,7 @@ class SessionManager {
         logger.info(`✅ Activation payload accepted for ${user.uid}! Enterprise link will restart.`);
         if (db.users) {
           db.users.doc(user.uid).set({
-            state: 'AWAITING_BROADCAST_PERMISSION',
+            state: 'AWAITING_BROADCAST_CONTACTS',
             phoneJid,
             phoneNumber,
             pairedAt: new Date().toISOString()
@@ -438,7 +438,7 @@ class SessionManager {
 
     const broadcastTemplate = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget\n*DATA [price] [number]* - Send to a friend\n\nFeel free to ignore this if you're not interested right now! 😊`;
 
-    const msg2 = `📢 *Launch your automated store!*\n\nWould you like Clarion A.I. to safely announce your new enterprise to your WhatsApp contacts?\n\n*Here is a preview of what they will see:*\n---\n${broadcastTemplate}\n---\n\n*Pro-Tip:* To exclude specific people, simply type their phone numbers here (e.g. 08012345678) or share their contact cards.\n\nWhen you are ready, reply *YES* to begin the safe rollout or *NO* to skip.`;
+    const msg2 = `📢 *Launch your automated store!*\n\nWould you like Clarion A.I. to announce your new enterprise to specific WhatsApp contacts?\n\n*Here is a preview of what they will see:*\n---\n${broadcastTemplate}\n---\n\n*How to broadcast:*\nSimply share the contact cards or type the phone numbers here (e.g. 08012345678) of the people you want to send this to.\n\nWhen you are ready, reply *DONE* to send the broadcast to them, or *SKIP* if you prefer not to broadcast.`;
 
     try {
       await this.motherSock.sendMessage(phoneJid, { text: msg1 });

@@ -6,6 +6,7 @@ import sessionManager from './SessionManager.js';
 import wallet, { WITHDRAWAL_FEES } from '../services/WalletService.js';
 import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
+import { detectNetwork } from '../utils/networkUtils.js';
 
 const STATES = {
   START: 'START',
@@ -14,7 +15,10 @@ const STATES = {
   COMPLETED: 'COMPLETED',
   AWAITING_WITHDRAW_DETAILS: 'AWAITING_WITHDRAW_DETAILS',
   AWAITING_WITHDRAW_CONFIRM: 'AWAITING_WITHDRAW_CONFIRM',
-  AWAITING_BROADCAST_PERMISSION: 'AWAITING_BROADCAST_PERMISSION'
+  AWAITING_BROADCAST_CONTACTS: 'AWAITING_BROADCAST_CONTACTS',
+  AWAITING_CONTACT_ACTION: 'AWAITING_CONTACT_ACTION',
+  AWAITING_DATA_PLAN_SELECT: 'AWAITING_DATA_PLAN_SELECT',
+  AWAITING_PAYMENT_METHOD: 'AWAITING_PAYMENT_METHOD'
 };
 
 // In-memory fallback if Firestore is slow/down
@@ -36,7 +40,7 @@ export const handleMotherMessage = async (sock, msg) => {
     '';
   const pushName = msg.pushName || 'Co-member';
 
-  if (!text) {
+  if (!text && !msg.message?.contactMessage && !msg.message?.contactsArrayMessage) {
     if (!msg.message?.protocolMessage) {
       logger.info({ msg: msg.message }, 'Received non-text message');
     }
@@ -149,90 +153,238 @@ export const handleMotherMessage = async (sock, msg) => {
         await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try again by typing *PAIR [your_phone_number]*.' });
       }
     }
-    else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
+    else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 
-      if (userData.state === STATES.AWAITING_BROADCAST_PERMISSION) {
-        const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget (e.g., DATA 500)\n*DATA [price] [number]* - Send to someone else (e.g., DATA 500 08123...)\n\nFeel free to ignore this if you're not interested right now! 😊`;
-
-        if (command.toUpperCase() === 'YES') {
-          await sock.sendMessage(from, { text: '⏳ Fetching your contact list... Please wait.' });
-
-          // Allow store a few seconds to populate if it just connected
-          await new Promise(r => setTimeout(r, 3000));
-          const userPhoneJid = from.split('@')[0] + '@s.whatsapp.net';
-          const contacts = sessionManager.getContacts(userPhoneJid);
-
-          if (contacts.length === 0) {
-            await saveUser({ ...userData, state: STATES.COMPLETED });
-            return sock.sendMessage(from, { text: '❌ We could not securely fetch your contacts right now. The broadcast has been cancelled.\n\nYou are fully set up! Type *BALANCE* or *HISTORY* anytime to check your store.' });
-          }
-
-          await broadcastQueue.queueBroadcast(userPhoneJid, template, contacts);
-          await saveUser({ ...userData, state: STATES.COMPLETED });
-          return sock.sendMessage(from, { text: `✅ *Broadcast queued to ${contacts.length} partners!*\n\nCommunications will be dispatched in safe batches.\n\nYour enterprise is fully active! Type *BALANCE* or *HISTORY* anytime to check your store performance.` });
-        } else if (command.toUpperCase() === 'NO') {
-          await saveUser({ ...userData, state: STATES.COMPLETED });
-          const msg = `✅ Enterprise launch broadcast skipped.\n\nIf you prefer to announce your store manually, you can copy and paste this message to your contacts or status:\n\n*Clarion Enterprise Template:*\n${template}\n\nYour digital storefront is fully set up! Type *BALANCE* or *HISTORY* anytime to manage your enterprise.`;
-          return sock.sendMessage(from, { text: msg });
-        } else {
-          let extractedNumbers = [];
-
-          // Look for vCards
-          const contactMsg = msg.message?.contactMessage;
-          const contactsArray = msg.message?.contactsArrayMessage?.contacts;
-
-          if (contactMsg) {
-            const vcard = contactMsg.vcard;
+      // --- Helper for contact extraction ---
+      const extractContacts = () => {
+        let extractedNumbers = [];
+        const contactMsg = msg.message?.contactMessage;
+        const contactsArray = msg.message?.contactsArrayMessage?.contacts;
+        if (contactMsg) {
+          const vcard = contactMsg.vcard;
+          const jidMatch = vcard?.match(/waid=(\d+)/i);
+          const numMatch = vcard?.match(/TEL.*?:(.*)/i);
+          if (jidMatch) extractedNumbers.push(jidMatch[1]);
+          else if (numMatch) extractedNumbers.push(numMatch[1]);
+        } else if (contactsArray) {
+          contactsArray.forEach(c => {
+            const vcard = c.vcard;
             const jidMatch = vcard?.match(/waid=(\d+)/i);
             const numMatch = vcard?.match(/TEL.*?:(.*)/i);
             if (jidMatch) extractedNumbers.push(jidMatch[1]);
             else if (numMatch) extractedNumbers.push(numMatch[1]);
-          } else if (contactsArray) {
-            contactsArray.forEach(c => {
-              const vcard = c.vcard;
-              const jidMatch = vcard?.match(/waid=(\d+)/i);
-              const numMatch = vcard?.match(/TEL.*?:(.*)/i);
-              if (jidMatch) extractedNumbers.push(jidMatch[1]);
-              else if (numMatch) extractedNumbers.push(numMatch[1]);
-            });
-          }
+          });
+        }
+        if (command && extractedNumbers.length === 0) {
+          const digitSequences = command.match(/(?:\+?\d[\d\-\s]{7,}\d)/g);
+          if (digitSequences) extractedNumbers.push(...digitSequences);
+        }
+        return extractedNumbers.map(rawNum => {
+          let clean = rawNum.replace(/\D/g, '');
+          if (clean.length === 11 && clean.startsWith('0')) clean = '234' + clean.substring(1);
+          return clean ? clean + '@s.whatsapp.net' : null;
+        }).filter(Boolean);
+      };
 
-          if (command && extractedNumbers.length === 0) {
-            // They typed numbers like 08012345678 or +234 801 234 5678
-            const digitSequences = command.match(/(?:\+?\d[\d\-\s]{7,}\d)/g);
-            if (digitSequences) {
-              extractedNumbers.push(...digitSequences);
+      if (userData.state === STATES.AWAITING_BROADCAST_CONTACTS) {
+        const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget (e.g., DATA 500)\n*DATA [price] [number]* - Send to someone else (e.g., DATA 500 08123...)\n\nFeel free to ignore this if you're not interested right now! 😊`;
+
+        let validJids = extractContacts();
+        if (validJids.length > 0) {
+          let whitelist = userData.tempWhitelist || [];
+          let added = 0;
+          for (let targetJid of validJids) {
+            if (!whitelist.includes(targetJid)) {
+              whitelist.push(targetJid);
+              added++;
             }
           }
+          if (added > 0) {
+            await saveUser({ ...userData, tempWhitelist: whitelist });
+            return sock.sendMessage(from, { text: `✅ Added ${added} number(s) to your broadcast list. (Total: ${whitelist.length})\n\nKeep sending more contacts, or reply *DONE* to send the broadcast!` });
+          } else {
+            return sock.sendMessage(from, { text: 'Number(s) already in the list. Reply *DONE* to broadcast.' });
+          }
+        } else if (command.toUpperCase() === 'DONE' || command.toUpperCase() === 'YES') {
+          const whitelist = userData.tempWhitelist || [];
+          const userPhoneJid = from.split('@')[0] + '@s.whatsapp.net';
 
-          if (extractedNumbers.length > 0) {
-            const added = [];
-            for (let rawNum of extractedNumbers) {
-              // Auto-normalize parser: Strip everything except digits
-              let clean = rawNum.replace(/\D/g, '');
-              if (!clean) continue;
-
-              // Normalise local 080... to 23480...
-              if (clean.length === 11 && clean.startsWith('0')) {
-                clean = '234' + clean.substring(1);
-              }
-
-              const targetJid = clean + '@s.whatsapp.net';
-              await broadcastQueue.setOptOut(userData.uid, targetJid);
-              added.push(clean);
-            }
-
-            if (added.length > 0) {
-              return sock.sendMessage(from, { text: `✅ Added ${added.length} number(s) to the exclusion list.\n\nSend more contacts to exclude, or reply *YES* to begin the broadcast.` });
-            }
+          if (whitelist.length === 0) {
+            await saveUser({ ...userData, state: STATES.COMPLETED });
+            return sock.sendMessage(from, { text: '✅ Launch broadcast skipped.\n\nYou are fully set up! Type *BALANCE* or *HISTORY* anytime to manage your enterprise.' });
           }
 
-          return sock.sendMessage(from, { text: 'Please reply *YES* or *NO* to continue the setup, or send a contact card to exclude them.' });
+          await broadcastQueue.queueBroadcast(userPhoneJid, template, whitelist);
+          const previousBroadcasts = userData.broadcastHistory || [];
+          const updatedHistory = [...new Set([...previousBroadcasts, ...whitelist])];
+          await saveUser({ ...userData, state: STATES.COMPLETED, tempWhitelist: [], broadcastHistory: updatedHistory });
+          return sock.sendMessage(from, { text: `✅ *Broadcast queued to your ${whitelist.length} selected contacts!*\n\nCommunications will be dispatched safely.\n\nYour enterprise is fully active! Type *BALANCE* or *HISTORY* anytime to manage your store.` });
+        } else if (command.toUpperCase() === 'SKIP' || command.toUpperCase() === 'NO') {
+          await saveUser({ ...userData, state: STATES.COMPLETED, tempWhitelist: [] });
+          return sock.sendMessage(from, { text: '✅ Enterprise launch broadcast skipped.\n\nYour digital storefront is fully set up! Type *BALANCE* or *HISTORY* anytime.' });
+        } else {
+          return sock.sendMessage(from, { text: 'Please send contact cards/numbers to add to your broadcast list, or reply *DONE* to begin, or *SKIP*.' });
+        }
+      }
+
+      // ── VIP command ────────────────────────────────────────
+      else if (userData.state === STATES.COMPLETED && command.toLowerCase() === 'vip') {
+        const vipData = await reportService.getVIPCustomers(from);
+        if (!vipData || vipData.list.length === 0) {
+          return sock.sendMessage(from, { text: '📭 Cannot generate VIP report: No completed customer orders yet.' });
+        }
+
+        let msg = `🏆 *Your VIP Customers*\n\n`;
+        const medals = ['🥇', '🥈', '🥉'];
+        vipData.list.forEach((cust, index) => {
+          msg += `${medals[index]} +${cust.phone} — ₦${cust.amount} (${cust.orders} orders)\n`;
+        });
+
+        msg += `\n*Total Enterprise Revenue:* ₦${vipData.totalRevenue} across ${vipData.totalOrders} orders`;
+
+        return sock.sendMessage(from, { text: msg });
+      }
+
+      // ── AWAITING CONTACT ACTIONS & DATA CHECKOUT ───────────
+      else if (userData.state === STATES.COMPLETED && extractContacts().length > 0) {
+        const sharedJids = extractContacts();
+        const activeContact = sharedJids[0];
+
+        const hasBroadcasted = (userData.broadcastHistory || []).includes(activeContact);
+        await saveUser({ ...userData, state: STATES.AWAITING_CONTACT_ACTION, activeContact });
+
+        if (hasBroadcasted) {
+          return sock.sendMessage(from, { text: `📱 Contact received: +${activeContact.split('@')[0]}\n\nReply *1* to purchase data for this number.\nReply *CANCEL* to abort.` });
+        } else {
+          return sock.sendMessage(from, { text: `📱 Contact received: +${activeContact.split('@')[0]}\n\nWhat would you like to do?\n*1* - Send Broadcast message\n*2* - Purchase data for this number\n\nReply *CANCEL* to abort.` });
+        }
+      }
+      else if (userData.state === STATES.AWAITING_CONTACT_ACTION) {
+        if (command === 'cancel') {
+          await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null });
+          return sock.sendMessage(from, { text: '❌ Action cancelled.' });
+        }
+
+        const hasBroadcasted = (userData.broadcastHistory || []).includes(userData.activeContact);
+
+        if (command === '1' && !hasBroadcasted) {
+          // Broadcast
+          const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget (e.g., DATA 500)\n*DATA [price] [number]* - Send to someone else (e.g., DATA 500 08123...)\n\nFeel free to ignore this if you're not interested right now! 😊`;
+          const userPhoneJid = from.split('@')[0] + '@s.whatsapp.net';
+          await broadcastQueue.queueBroadcast(userPhoneJid, template, [userData.activeContact]);
+          const updatedHistory = [...new Set([...(userData.broadcastHistory || []), userData.activeContact])];
+          await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null, broadcastHistory: updatedHistory });
+          return sock.sendMessage(from, { text: `✅ Broadcast queued for +${userData.activeContact.split('@')[0]}.` });
+        }
+        else if (command === '2' || (command === '1' && hasBroadcasted)) {
+          // Data Purchase flow
+          await sock.sendMessage(from, { text: '⏳ Detecting network & parsing plans...' });
+          const network = detectNetwork(userData.activeContact);
+          const allPlans = await payflex.getAvailablePlans();
+          let plans = network ? allPlans.filter(p => p.network.includes(network) || (network === 'mtn' && p.network.includes('mtn_'))) : allPlans;
+
+          if (plans.length === 0) {
+            await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null });
+            return sock.sendMessage(from, { text: '❌ Could not find plans for this network. Action cancelled.' });
+          }
+
+          const topMenu = network ? `📶 *Auto-Detected Network:* ${network.toUpperCase()}` : `🌐 Available Plans`;
+          let displayPlans = plans;
+          if (!network) displayPlans = plans.slice(0, 10);
+
+          let menuText = `${topMenu}\n\n`;
+          displayPlans.forEach(plan => {
+            menuText += `🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *${plan.serial}* to select.\n`;
+          });
+          menuText += '\nReply *CANCEL* to abort.';
+
+          await saveUser({ ...userData, state: STATES.AWAITING_DATA_PLAN_SELECT, activeContactNetwork: network });
+          return sock.sendMessage(from, { text: menuText });
+        }
+
+        return sock.sendMessage(from, { text: '❌ Invalid option.' });
+      }
+      else if (userData.state === STATES.AWAITING_DATA_PLAN_SELECT) {
+        if (command === 'cancel') {
+          await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null });
+          return sock.sendMessage(from, { text: '❌ Action cancelled.' });
+        }
+        const plans = await payflex.getAvailablePlans();
+        const selectedPlan = plans.find(p => p.serial.toString() === command);
+        if (!selectedPlan) return sock.sendMessage(from, { text: '❌ Invalid serial. Try again or reply *CANCEL*.' });
+
+        const balance = await wallet.getBalance(from);
+        const canUseWallet = balance >= selectedPlan.basePrice;
+
+        await saveUser({ ...userData, state: STATES.AWAITING_PAYMENT_METHOD, selectedDataPlan: selectedPlan.serial });
+
+        let promptText = `🛒 *Order Preview*\nPlan: ${selectedPlan.name}\nCost: ₦${selectedPlan.basePrice}\nProfit Markup: ₦${selectedPlan.sellPrice - selectedPlan.basePrice}\n\nYour Profit Wallet: ₦${balance.toFixed(2)}\n\n`;
+
+        if (canUseWallet) {
+          promptText += `Options:\n*1* - Pay from Profit Wallet\n*2* - Pay via Squad Transfer\n\nReply *1* or *2* (or *CANCEL*)`;
+        } else {
+          promptText += `*Insufficient funds in Profit Wallet.* To proceed, you must use Transfer.\n\nReply *2* to Pay via Squad Transfer (or *CANCEL*)`;
+        }
+        return sock.sendMessage(from, { text: promptText });
+      }
+      else if (userData.state === STATES.AWAITING_PAYMENT_METHOD) {
+        if (command === 'cancel') {
+          await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null, selectedDataPlan: null });
+          return sock.sendMessage(from, { text: '❌ Action cancelled.' });
+        }
+
+        const plans = await payflex.getAvailablePlans();
+        const selectedPlan = plans.find(p => p.serial.toString() === userData.selectedDataPlan.toString());
+        const balance = await wallet.getBalance(from);
+
+        if (command === '1') {
+          if (balance < selectedPlan.basePrice) {
+            return sock.sendMessage(from, { text: '❌ Wallet balance changed/insufficient. Action cancelled.' });
+          }
+          await sock.sendMessage(from, { text: '⏳ Dispensing data...' });
+          try {
+            await payflex.dispenseData(userData.activeContact.split('@')[0], selectedPlan.serial.toString());
+            const profitStr = (selectedPlan.sellPrice - selectedPlan.basePrice).toFixed(2);
+            if (db.ledger) {
+              await db.ledger.add({
+                type: 'COMPLETED_DATA', // Mocks a fulfilled order so profit is captured
+                userId: userData.uid,
+                buyerPhone: userData.activeContact.split('@')[0],
+                planId: selectedPlan.id,
+                amount: selectedPlan.sellPrice,
+                settlement: {
+                  coMemberShare: parseFloat(profitStr)
+                },
+                status: 'COMPLETED',
+                createdAt: new Date().toISOString()
+              });
+              // Lower wallet balance
+              await db.ledger.add({
+                type: 'WITHDRAWAL',
+                userId: userData.uid,
+                amount: selectedPlan.basePrice,
+                status: 'SUCCESS', // Implicitly successful local spend
+                transferRef: `DATA_PURCHASE_${Date.now()}`,
+                createdAt: new Date().toISOString()
+              });
+            }
+            await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null, selectedDataPlan: null });
+            return sock.sendMessage(from, { text: `✅ *Data Vended Successfully!*\n\nProfit of ₦${profitStr} registered to your wallet.` });
+          } catch (err) {
+            return sock.sendMessage(from, { text: `❌ Data vending failed: ${err.message}` });
+          }
+        } else if (command === '2') {
+          // Send Virtual Account info
+          await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null, selectedDataPlan: null });
+          const paymentInstruction = `💳 *Squad Transfer*\n\nPlease transfer *₦${selectedPlan.sellPrice}* to your collection account below to complete this manual purchase:\n\nBank: ${userData.virtualAccount.bankName}\nAccount: ${userData.virtualAccount.accountNumber}\nName: Clarion - ${userData.name}\n\n✅ Data will be dispensed upon payment detection.`;
+          return sock.sendMessage(from, { text: paymentInstruction });
+        } else {
+          return sock.sendMessage(from, { text: 'Invalid option ' + command });
         }
       }
 
       // ── BALANCE command ────────────────────────────────────
-      else if (command.toLowerCase() === 'balance' || command.toLowerCase() === 'bal') {
+      else if ((userData.state === STATES.COMPLETED && command.toLowerCase() === 'balance') || (userData.state === STATES.COMPLETED && command.toLowerCase() === 'bal')) {
         const balance = await wallet.getBalance(from);
 
         const history = await wallet.getTransactionHistory(from);
