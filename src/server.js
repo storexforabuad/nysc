@@ -10,16 +10,37 @@ import mediaGen from './services/mediaGen.js';
 import wallet from './services/WalletService.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
 import broadcastQueue from './services/BroadcastQueue.js';
+import rateLimit from 'express-rate-limit';
+
+// ── HTTP Rate Limiters ──
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 30,              // 30 requests per minute per IP
+  message: { error: 'Too many webhook requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 60,              // 60 requests per minute per IP
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 async function startServer() {
   const app = express();
   app.use(express.json());
 
+  // Apply API rate limiter globally to /api routes
+  app.use('/api', apiLimiter);
+
   // API routes go here FIRST
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  // Squad Webhook
-  app.post('/webhook/squad', async (req, res) => {
+  // Squad Webhook (rate-limited: 30 req/min per IP)
+  app.post('/webhook/squad', webhookLimiter, async (req, res) => {
     const signature = req.headers['x-squad-signature'];
     const payload = req.body;
 

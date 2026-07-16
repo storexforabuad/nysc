@@ -7,6 +7,10 @@ import wallet, { WITHDRAWAL_FEES } from '../services/WalletService.js';
 import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import { detectNetwork } from '../utils/networkUtils.js';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
+
+// ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
+const motherMessageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
 
 const STATES = {
   START: 'START',
@@ -26,6 +30,15 @@ const mockUserStore = new Map();
 
 export const handleMotherMessage = async (sock, msg) => {
   const from = msg.key.remoteJid;
+
+  // Rate limit check
+  try {
+    await motherMessageLimiter.consume(from);
+  } catch (rejRes) {
+    logger.warn(`[RATE-LIMIT] Mother Bot message throttled for ${from}`);
+    return;
+  }
+
   const messageContent = msg.message?.ephemeralMessage?.message ||
     msg.message?.viewOnceMessage?.message ||
     msg.message?.viewOnceMessageV2?.message ||
@@ -193,18 +206,39 @@ export const handleMotherMessage = async (sock, msg) => {
         if (validJids.length > 0) {
           let whitelist = userData.tempWhitelist || [];
           let added = 0;
+          let invalid = 0;
+
+          if (validJids.length > 2) {
+            await sock.sendMessage(from, { text: `⏳ Verifying ${validJids.length} contacts with WhatsApp servers...` });
+          }
+
           for (let targetJid of validJids) {
             if (!whitelist.includes(targetJid)) {
-              whitelist.push(targetJid);
-              added++;
+              // Verify number directly on WhatsApp platform
+              const [result] = await sock.onWhatsApp(targetJid).catch(() => []);
+              if (result && result.exists) {
+                whitelist.push(targetJid);
+                added++;
+              } else {
+                invalid++;
+              }
             }
           }
+
+          let responseText = '';
           if (added > 0) {
             await saveUser({ ...userData, tempWhitelist: whitelist });
-            return sock.sendMessage(from, { text: `✅ Added ${added} number(s) to your broadcast list. (Total: ${whitelist.length})\n\nKeep sending more contacts, or reply *DONE* to send the broadcast!` });
+            responseText = `✅ Added ${added} valid number(s). (Total: ${whitelist.length})\n`;
           } else {
-            return sock.sendMessage(from, { text: 'Number(s) already in the list. Reply *DONE* to broadcast.' });
+            responseText = `No valid new numbers were added.\n`;
           }
+
+          if (invalid > 0) {
+            responseText += `⚠️ Skipped ${invalid} number(s) that are NOT registered on WhatsApp to protect your account.\n`;
+          }
+
+          responseText += `\nKeep sharing more contacts, or reply *DONE* to send the broadcast!`;
+          return sock.sendMessage(from, { text: responseText.trim() });
         } else if (command.toUpperCase() === 'DONE' || command.toUpperCase() === 'YES') {
           const whitelist = userData.tempWhitelist || [];
           const userPhoneJid = from.split('@')[0] + '@s.whatsapp.net';

@@ -48,5 +48,11 @@ service cloud.firestore {
       // Writes are strictly server-side (Mother Bot)
       allow write: if false;
     }
+    // Opt-outs Collection
+    match /optouts/{optoutId} {
+      // Allow proxy store owners to see who in their store has opted out if they log into a frontend dashboard
+      allow read: if isSignedIn() && resource.data.storeId == request.auth.uid;
+      allow write: if false; // Writes strictly handled by backend Admin SDK based bots
+    }
   }
 }

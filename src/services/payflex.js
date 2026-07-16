@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { config, logger } from '../config/env.js';
 import { db } from './firebase.js';
+import CircuitBreaker from 'opossum';
 
 // Tiered markup: fallback for minimum markup.
 const getTieredMarkup = (basePrice) => {
@@ -116,6 +117,23 @@ class PayflexService {
         'Content-Type': 'application/json'
       }
     });
+
+    const breakerOptions = {
+      timeout: 15000,
+      errorThresholdPercentage: 50,
+      resetTimeout: 30000
+    };
+
+    this.getBreaker = new CircuitBreaker((url) => this.client.get(url), breakerOptions);
+    this.getBreaker.fallback((url, err) => {
+      throw new Error(`Peyflex API unavailable (${err.code || 'CIRCUIT_OPEN'}).`);
+    });
+
+    this.postBreaker = new CircuitBreaker((url, data) => this.client.post(url, data), breakerOptions);
+    this.postBreaker.fallback((url, data, err) => {
+      throw new Error(`Peyflex API unavailable (${err.code || 'CIRCUIT_OPEN'}).`);
+    });
+
     this.cachedPlans = [];
   }
 
@@ -126,7 +144,7 @@ class PayflexService {
 
     for (const net of networks) {
       try {
-        const response = await this.client.get(`/api/data/plans/?network=${net}`);
+        const response = await this.getBreaker.fire(`/api/data/plans/?network=${net}`);
         if (response.data && response.data.plans) {
           const plans = response.data.plans.map((p, index) => {
             const markup = getTieredMarkup(p.amount);
@@ -238,7 +256,7 @@ class PayflexService {
 
       logger.info(`Dispensing real data: ${plan.name} to ${phoneNumber} via Peyflex`);
 
-      const response = await this.client.post('/api/data/purchase/', {
+      const response = await this.postBreaker.fire('/api/data/purchase/', {
         network: plan.network,
         mobile_number: phoneNumber,
         plan_code: plan.plan_code

@@ -45,12 +45,14 @@ export const db = firestore ? {
   users: firestore.collection('users'),
   plansCache: firestore.collection('plans_cache'),
   ledger: firestore.collection('ledger'),
-  sessions: firestore.collection('sessions')
+  sessions: firestore.collection('sessions'),
+  optouts: firestore.collection('optouts')
 } : {
   users: null,
   plansCache: null,
   ledger: null,
-  sessions: null
+  sessions: null,
+  optouts: null
 };
 
 export default admin;

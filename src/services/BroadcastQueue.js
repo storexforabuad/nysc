@@ -28,6 +28,18 @@ function getNetworkImages(detectedNetwork) {
     return [];
 }
 
+// ── Spintax resolver: {option1|option2|option3} → random pick ──
+function resolveSpintax(text) {
+    return text.replace(/{([^{}]+)}/g, (match, choices) => {
+        const parts = choices.split('|');
+        return parts[Math.floor(Math.random() * parts.length)];
+    });
+}
+
+// ── Random delay helper (ms) ──
+function randomDelay(minMs, maxMs) {
+    return new Promise(r => setTimeout(r, minMs + Math.floor(Math.random() * (maxMs - minMs))));
+}
 
 class BroadcastQueue {
     constructor() {
@@ -72,18 +84,22 @@ class BroadcastQueue {
         if (!db.ledger) return;
 
         try {
-            const snaps = await db.ledger.where('type', '==', 'BROADCAST_BATCH').get();
+            // Optimized query: strict filter + limit to prevent memory OOM and high read bills
+            const snaps = await db.ledger
+                .where('type', '==', 'BROADCAST_BATCH')
+                .where('status', '==', 'PENDING')
+                .limit(5)
+                .get();
 
-            // We filter in memory to avoid missing composite index errors on the database
-            const batches = snaps.docs.map(d => ({ id: d.id, ...d.data() })).filter(b => b.status === 'PENDING');
+            const batches = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
 
             for (const batch of batches) {
                 const now = Date.now();
-                // Jitter Delay: Scale to production rate-limits (15 seconds between sends)
-                const minJitterMs = 15000;
+                // Anti-ban: Randomized jitter between 30-75 seconds to mimic human send patterns
+                const minJitterMs = 30000 + Math.floor(Math.random() * 45000);
 
                 if (now - batch.lastSentAt < minJitterMs) {
-                    continue; // Enforce slow dispatching
+                    continue; // Enforce humanized slow dispatching
                 }
 
                 const remainingTargets = batch.targetJids || [];
@@ -96,7 +112,7 @@ class BroadcastQueue {
                 }
 
                 const targetJid = remainingTargets.shift();
-                const isOptedOut = await this.isOptedOut(targetJid);
+                const isOptedOut = await this.isOptedOut(batch.userId, targetJid);
 
                 if (!isOptedOut) {
                     const sock = sessionManager.sessions.get(batch.userId);
@@ -120,25 +136,38 @@ class BroadcastQueue {
                                 }
                             }
 
-                            const footerMsg = '\n\n_Powered by Clarion A.I._';
-                            const finalMessage = batch.messageTemplate + customMenu + footerMsg;
+                            const footerVariants = resolveSpintax(
+                                '\n\n_{Powered by|Brought to you by|Delivered via} Clarion A.I.{.|!| 🚀}_'
+                            );
+                            const finalMessage = resolveSpintax(batch.messageTemplate) + customMenu + footerVariants;
 
                             // Send the network-specific plan image(s) FIRST, then the text
                             const imagePaths = getNetworkImages(detectedNetwork);
                             for (const imgPath of imagePaths) {
                                 if (fs.existsSync(imgPath)) {
                                     try {
+                                        // Anti-ban: simulate "attaching image" presence
+                                        await sock.sendPresenceUpdate('composing', targetJid);
+                                        await randomDelay(1500, 3000);
                                         await sock.sendMessage(targetJid, {
                                             image: fs.readFileSync(imgPath),
-                                            caption: `📶 Beautiful discounts for your ${detectedNetwork?.toUpperCase() || ''} network!`
+                                            caption: resolveSpintax(
+                                                `📶 {Beautiful discounts|Great deals|Amazing offers} for your ${detectedNetwork?.toUpperCase() || ''} network!`
+                                            )
                                         });
+                                        // Anti-ban: inter-media delay (3-6s) between image and next send
+                                        await randomDelay(3000, 6000);
                                     } catch (imgErr) {
                                         logger.warn(`Could not send plan image to ${targetJid}: ${imgErr.message}`);
                                     }
                                 }
                             }
 
+                            // Anti-ban: simulate typing before the text message
+                            await sock.sendPresenceUpdate('composing', targetJid);
+                            await randomDelay(2000, 4000);
                             await sock.sendMessage(targetJid, { text: finalMessage });
+                            await sock.sendPresenceUpdate('paused', targetJid);
                             logger.info(`[CLARION-BROADCAST] -> Sent to ${targetJid} on behalf of ${batch.userId}`);
                         } catch (sendErr) {
                             logger.error(`Broadcast Failed for ${targetJid}`, sendErr.message);
@@ -161,28 +190,24 @@ class BroadcastQueue {
         }
     }
 
-    async isOptedOut(phoneJid) {
-        if (!db.users) return false;
+    async isOptedOut(proxyUserId, phoneJid) {
+        if (!db.optouts) return false;
         try {
-            const snap = await db.users.where('optOuts', 'array-contains', phoneJid).limit(1).get();
-            return !snap.empty;
+            const snap = await db.optouts.doc(`${proxyUserId}_${phoneJid}`).get();
+            return snap.exists;
         } catch (e) {
             return false;
         }
     }
 
     async setOptOut(proxyUserId, customerPhoneJid) {
-        if (!db.users) return;
+        if (!db.optouts) return;
         try {
-            const userRef = db.users.doc(proxyUserId);
-            const userDoc = await userRef.get();
-            if (userDoc.exists) {
-                const optOuts = userDoc.data().optOuts || [];
-                if (!optOuts.includes(customerPhoneJid)) {
-                    optOuts.push(customerPhoneJid);
-                    await userRef.update({ optOuts });
-                }
-            }
+            await db.optouts.doc(`${proxyUserId}_${customerPhoneJid}`).set({
+                storeId: proxyUserId,
+                customer: customerPhoneJid,
+                optedOutAt: new Date().toISOString()
+            });
         } catch (err) {
             logger.error('Failed to opt out', err.message);
         }

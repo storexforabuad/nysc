@@ -3,9 +3,25 @@ import { db } from '../services/firebase.js';
 import payflex from '../services/payflex.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import { detectNetwork } from '../utils/networkUtils.js';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
+
+// ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
+const messageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
+
+// ── BUY command debounce: prevent double-tap within 5 seconds ──
+const buyDebounce = new Map();
+const BUY_DEBOUNCE_MS = 5000;
 
 export const handleProxyMessage = async (sock, msg, user) => {
   const from = msg.key.remoteJid;
+
+  // Rate limit check
+  try {
+    await messageLimiter.consume(from);
+  } catch (rejRes) {
+    logger.warn(`[RATE-LIMIT] Proxy message throttled for ${from}`);
+    return;
+  }
   const messageContent = msg.message?.ephemeralMessage?.message ||
     msg.message?.viewOnceMessage?.message ||
     msg.message?.viewOnceMessageV2?.message ||
@@ -88,9 +104,27 @@ export const handleProxyMessage = async (sock, msg, user) => {
       if (filteredPlans.length === 0) {
         menuText += `\n❌ No plans found matching your criteria.`;
       } else {
-        filteredPlans.forEach(plan => {
-          menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.`;
-        });
+        if (detectedNet === 'mtn') {
+          const sharePlans = filteredPlans.filter(p => p.network === 'mtn_data_share');
+          const giftPlans = filteredPlans.filter(p => p.network === 'mtn_gifting_data');
+
+          if (sharePlans.length > 0) {
+            menuText += `\n📦 *MTN Data Share:*\n`;
+            sharePlans.forEach(plan => {
+              menuText += `🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.\n`;
+            });
+          }
+          if (giftPlans.length > 0) {
+            menuText += `\n🎁 *MTN Gifting Data:*\n`;
+            giftPlans.forEach(plan => {
+              menuText += `🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.\n`;
+            });
+          }
+        } else {
+          filteredPlans.forEach(plan => {
+            menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.`;
+          });
+        }
       }
 
       menuText += '\n\n_Transfer exact amount and data will be vended instantly._';
@@ -99,6 +133,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
     // Handle Order initiation
     if (command.startsWith('buy ')) {
+      // Debounce: block duplicate BUY commands within 5 seconds
+      const debounceKey = `${from}_buy`;
+      const lastBuy = buyDebounce.get(debounceKey);
+      if (lastBuy && Date.now() - lastBuy < BUY_DEBOUNCE_MS) {
+        return sock.sendMessage(from, { text: '⏳ Your previous order is being processed. Please wait a moment.' });
+      }
+      buyDebounce.set(debounceKey, Date.now());
+
       const serial = command.split(' ')[1];
       const plans = await payflex.getAvailablePlans();
       const plan = plans.find(p => p.serial.toString() === serial.toString());

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import { config, logger } from '../config/env.js';
+import CircuitBreaker from 'opossum';
 
 class SquadService {
     constructor() {
@@ -10,6 +11,16 @@ class SquadService {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${config.squad.secretKey}`
             }
+        });
+
+        const breakerOptions = {
+            timeout: 15000,
+            errorThresholdPercentage: 50,
+            resetTimeout: 30000
+        };
+        this.postBreaker = new CircuitBreaker((url, data) => this.client.post(url, data), breakerOptions);
+        this.postBreaker.fallback((url, data, err) => {
+            throw new Error(`Squad API is temporarily unreachable (${err.code || 'CIRCUIT_OPEN'}). Please try again later.`);
         });
     }
 
@@ -46,7 +57,7 @@ class SquadService {
                 beneficiary_account: ""
             };
 
-            const response = await this.client.post('/virtual-account', payload);
+            const response = await this.postBreaker.fire('/virtual-account', payload);
 
             const data = response.data.data;
             return {
@@ -104,7 +115,7 @@ class SquadService {
                 return { accountName: 'MOCK SQUAD ACC', accountNumber, bankCode };
             }
 
-            const response = await this.client.post('/payout/account/lookup', {
+            const response = await this.postBreaker.fire('/payout/account/lookup', {
                 bank_code: bankCode,
                 account_number: accountNumber
             });
@@ -136,7 +147,7 @@ class SquadService {
                 transaction_reference: reference
             };
 
-            const response = await this.client.post('/payout/transfer', payload);
+            const response = await this.postBreaker.fire('/payout/transfer', payload);
             return response.data;
         } catch (error) {
             logger.error('Error initiating transfer with Squad:', error.response?.data || error.message);
