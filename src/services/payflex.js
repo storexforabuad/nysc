@@ -14,6 +14,61 @@ const getTieredMarkup = (basePrice) => {
 // Deterministic plan_code → officialPrice map, built from master_pricing_strategy_dashboard.html.
 // Keyed by Payflex plan_code so it is IMMUNE to API ordering/count changes.
 // MTN Share plan codes that collide with Gifting (e.g. M2GBS) are prefixed with their network.
+
+const analyzeDuration = (label) => {
+  const lbl = label.toLowerCase();
+  let priority = 99;
+  let category = 'Other Plans';
+
+  if (lbl.includes('1 day') || lbl.includes('1day')) { priority = 1; category = '⚡ *1-Day Plans:*'; }
+  else if (lbl.includes('2 day') || lbl.includes('2day')) { priority = 2; category = '⚡ *2-Day Plans:*'; }
+  else if (lbl.includes('3 day') || lbl.includes('3day')) { priority = 3; category = '⚡ *3-Day Plans:*'; }
+  else if (lbl.includes('7 day') || lbl.includes('7day') || lbl.includes('weekly')) { priority = 7; category = '📅 *7-Day Plans:*'; }
+  else if (lbl.includes('14 day') || lbl.includes('14day')) { priority = 14; category = '📅 *14-Day Plans:*'; }
+  else if (lbl.includes('1 month') || lbl.includes('30 day') || lbl.includes('30day') || lbl.includes('1month')) { priority = 30; category = '🗓️ *30-Day/Monthly Plans:*'; }
+  else if (lbl.includes('2 month') || lbl.includes('60 day') || lbl.includes('60day') || lbl.includes('2months')) { priority = 60; category = '🗓️ *2-Month Plans:*'; }
+  else if (lbl.includes('1 year') || lbl.includes('365 day')) { priority = 365; category = '💎 *Yearly Plans:*'; }
+
+  return { category, priority };
+};
+
+const CUSTOM_MTN_PLANS = {
+  // 7 Days
+  'mtn_data_share:M500MBS': { sellPrice: 590, officialPrice: 500 },
+  'mtn_data_share:M1GBS': { sellPrice: 790, officialPrice: 800 },
+  'mtn_data_share:M2GBS': { sellPrice: 990, officialPrice: null },
+  'mtn_data_share:M3GBS': { sellPrice: 1290, officialPrice: null },
+  // 30 Days
+  'mtn_data_share:M1GBS2': { sellPrice: 790, officialPrice: null },
+  'mtn_data_share:M2GBS2': { sellPrice: 1290, officialPrice: 1500 },
+  'mtn_data_share:M3GBS2': { sellPrice: 1950, officialPrice: null },
+  'mtn_data_share:M5GBS': { sellPrice: 2550, officialPrice: null },
+  // Gifting - 2 Day
+  'mtn_gifting_data:M1m2GB': { sellPrice: 650, officialPrice: 450 },
+  'mtn_gifting_data:M2m5GB': { sellPrice: 800, officialPrice: 750 },
+  'mtn_gifting_data:M2m5GBS': { sellPrice: 990, officialPrice: 900 },
+  'mtn_gifting_data:M2GBS': { sellPrice: 765, officialPrice: 750 },
+  'mtn_gifting_data:M3m2GBS': { sellPrice: 1090, officialPrice: 1000 },
+  // Monthly
+  'mtn_gifting_data:M3m5GBS': { sellPrice: 2495, officialPrice: 2500 },
+  'mtn_gifting_data:M6GBS': { sellPrice: 2550, officialPrice: 2500 },
+  'mtn_gifting_data:M7GBS': { sellPrice: 3550, officialPrice: 3500 },
+  'mtn_gifting_data:M12m5GBS': { sellPrice: 5490, officialPrice: 5500 },
+  'mtn_gifting_data:M14m5GBS': { sellPrice: 4995, officialPrice: 5000 },
+  'mtn_gifting_data:M20GBS': { sellPrice: 7490, officialPrice: 7500 },
+  'mtn_gifting_data:M25GBS': { sellPrice: 8990, officialPrice: 9000 },
+  'mtn_gifting_data:M36GBS': { sellPrice: 10990, officialPrice: 11000 },
+  'mtn_gifting_data:M65GBS': { sellPrice: 15980, officialPrice: 16000 },
+  'mtn_gifting_data:M75GBS': { sellPrice: 17980, officialPrice: 18000 },
+  // 2-Month
+  'mtn_gifting_data:M90GBS': { sellPrice: 24980, officialPrice: 25000 },
+  'mtn_gifting_data:M150GBS': { sellPrice: 39950, officialPrice: 40000 },
+  'mtn_gifting_data:M165GBS': { sellPrice: 34950, officialPrice: 35000 },
+  'mtn_gifting_data:M200GBS': { sellPrice: 49950, officialPrice: 50000 },
+  // Yearly
+  'mtn_gifting_data:M250GBS': { sellPrice: 54950, officialPrice: 55000 },
+  'mtn_gifting_data:M800GBS': { sellPrice: 124950, officialPrice: 125000 },
+};
 const OFFICIAL_PRICES_MAP = {
   // MTN DATA SHARE
   'mtn_data_share:M500MBS': 500,
@@ -167,50 +222,69 @@ class PayflexService {
     }
 
     if (allPlans.length > 0) {
-      // Assign global serials and apply Official Price Ceiling + Smart Discount strategy.
-      // Uses plan_code keyed map so it is IMMUNE to API plan count/ordering changes.
-      allPlans = allPlans.map((p, index) => {
-        // Build the lookup key using network prefix to resolve plan_code collisions (e.g. MTN Share vs Gifting)
-        const mapKey = `${p.network}:${p.plan_code}`;
-        const official = OFFICIAL_PRICES_MAP[mapKey] ?? null;
-        let newSellPrice = p.sellPrice;
+      // Step 1: Filter MTN down to the strict 29-plan whitelist
+      allPlans = allPlans.filter(p => {
+        if (p.network.includes('mtn')) {
+          const mapKey = `${p.network}:${p.plan_code}`;
+          return !!CUSTOM_MTN_PLANS[mapKey];
+        }
+        return true;
+      });
 
-        if (official !== null && official !== undefined) {
-          if (p.sellPrice < official) {
-            // Full profit capture: raise to network retail ceiling
-            newSellPrice = official;
-          } else if (p.sellPrice > official) {
-            // Above market: set just below official to stay competitive
-            newSellPrice = official - 5;
+      // Step 2: Assign global serials, apply duration categories, and process pricing strategy
+      allPlans = allPlans.map((p, index) => {
+        const mapKey = `${p.network}:${p.plan_code}`;
+        const dur = analyzeDuration(p.name);
+
+        let newSellPrice = p.sellPrice;
+        let official = null;
+
+        if (p.network.includes('mtn')) {
+          // Absolute override for MTN
+          newSellPrice = CUSTOM_MTN_PLANS[mapKey].sellPrice;
+        } else {
+          official = OFFICIAL_PRICES_MAP[mapKey] ?? null;
+
+          if (official !== null && official !== undefined) {
+            if (p.sellPrice < official) {
+              newSellPrice = official;
+            } else if (p.sellPrice > official) {
+              newSellPrice = official - 5;
+            }
+          }
+
+          const grossMargin = newSellPrice - p.basePrice;
+          if (grossMargin >= 500) { newSellPrice -= 50; }
+          else if (grossMargin >= 200) { newSellPrice -= 20; }
+          else if (grossMargin >= 100) { newSellPrice -= 10; }
+          else if (grossMargin >= 50) { newSellPrice -= 5; }
+
+          if (newSellPrice <= p.basePrice) {
+            newSellPrice = p.basePrice + Math.max(5, p.markup);
           }
         }
 
-        // --- Smart Advertising Discount Strategy ---
-        const grossMargin = newSellPrice - p.basePrice;
-        if (grossMargin >= 500) {
-          newSellPrice -= 50;
-        } else if (grossMargin >= 200) {
-          newSellPrice -= 20;
-        } else if (grossMargin >= 100) {
-          newSellPrice -= 10;
-        } else if (grossMargin >= 50) {
-          newSellPrice -= 5;
-        }
-
-        // Safety net: never sell below cost
-        if (newSellPrice <= p.basePrice) {
-          newSellPrice = p.basePrice + Math.max(5, p.markup);
-        }
+        let cleanName = p.name.replace(/\s*=\s*(?:N|NGN)\s*\d+(?:\.\d+)?/i, ' ');
+        cleanName = cleanName.replace(/\s*\(\s*\d*\s*(?:day|days|month|months|year|weekly|week)\s*\)/gi, ' ');
+        cleanName = cleanName.replace(/\s+/g, ' ').trim();
 
         return {
           ...p,
+          name: cleanName,
           serial: index + 1,
           officialPrice: official,
           sellPrice: newSellPrice,
-          proxyCost: newSellPrice
+          proxyCost: newSellPrice,
+          durationCategory: dur.category,
+          durationPriority: dur.priority
         };
       });
 
+      // Final sort for allPlans to group by duration
+      allPlans.sort((a, b) => {
+        if (a.durationPriority !== b.durationPriority) return a.durationPriority - b.durationPriority;
+        return a.sellPrice - b.sellPrice;
+      });
 
       if (db.plansCache) {
         const batch = db.plansCache.firestore.batch();

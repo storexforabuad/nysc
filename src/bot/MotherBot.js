@@ -1,5 +1,5 @@
 import { logger } from '../config/env.js';
-import { db } from '../services/firebase.js';
+import admin, { db } from '../services/firebase.js';
 import squad from '../services/SquadService.js';
 import payflex from '../services/payflex.js';
 import sessionManager from './SessionManager.js';
@@ -15,6 +15,7 @@ const motherMessageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
 const STATES = {
   START: 'START',
   AWAITING_NYSC_CODE: 'AWAITING_NYSC_CODE',
+  AWAITING_PROXY_NUMBER: 'AWAITING_PROXY_NUMBER',
   AWAITING_DETAILS: 'AWAITING_DETAILS',
   COMPLETED: 'COMPLETED',
   AWAITING_WITHDRAW_DETAILS: 'AWAITING_WITHDRAW_DETAILS',
@@ -89,8 +90,11 @@ export const handleMotherMessage = async (sock, msg) => {
     logger.info(`Mother Bot handling message from ${pushName} (${userData.state})`);
 
     if (userData.state === STATES.START) {
+      if (command.toLowerCase() !== 'connect 000') {
+        return; // Quietly ignore non-trigger messages for unregistered numbers
+      }
       await sock.sendMessage(from, {
-        text: `🎺 Welcome ${pushName} to Clarion A.I. — your NYSC SAED-inspired digital enterprise partner!\n\nI am the Clarion Hub. I'm here to help you activate your very own automated data storefront. Ready to blow your trumpet?\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
+        text: `🎺 Welcome to Clarion A.I! 🚀 Let's set up your automated 24/7 Data Business and start earning extra income while helping NYSC community projects.\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
       });
       await saveUser({ ...userData, state: STATES.AWAITING_NYSC_CODE });
     }
@@ -109,44 +113,34 @@ export const handleMotherMessage = async (sock, msg) => {
         ...userData,
         stateCode: command.toUpperCase(),
         virtualAccount: account,
-        state: STATES.COMPLETED,
+        state: STATES.AWAITING_PROXY_NUMBER,
         name: pushName
       });
 
       await sock.sendMessage(from, {
-        text: `🎊 Enterprise Setup Complete!\n\nYour Clarion Profit Wallet is now active.\nBank: ${account.bankName}\nAcct: ${account.accountNumber}\n\n*Final Step:* Type *PAIR [your_phone_number]* to link your WhatsApp and activate your Digital Storefront.`
+        text: `🎊 Enterprise Setup Complete!\n\nYour Clarion Profit Wallet is now active.\nBank: ${account.bankName}\nAcct: ${account.accountNumber}\n\n*Final Step:* To activate your Digital Storefront, please reply with the WhatsApp number you want your Bot to run on (e.g. 08012345678):`
       });
     }
-    else if (command.toUpperCase().startsWith('PAIR')) {
-      let targetNumber = userData.uid.split('@')[0];
-      const parts = command.split(/\s+/);
+    else if (userData.state === STATES.AWAITING_PROXY_NUMBER || command.toUpperCase().startsWith('PAIR')) {
+      let rawNumber = command.toUpperCase().startsWith('PAIR') ? command.split(/\s+/)[1] : command;
+      rawNumber = rawNumber ? rawNumber.replace(/\D/g, '') : '';
 
-      if (parts.length > 1) {
-        // User provided a manual number, e.g. PAIR 08012345678
-        let rawNumber = parts[1].replace(/\D/g, '');
-
-        // Normalize Nigerian local numbers: 080... -> 23480...
-        if (rawNumber.startsWith('0') && rawNumber.length === 11) {
-          rawNumber = '234' + rawNumber.substring(1);
-          logger.info(`Normalized local number ${parts[1]} to ${rawNumber}`);
-        }
-
-        targetNumber = rawNumber;
-
-        // Save phone number to DB immediately
-        await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net` });
-
-        await sock.sendMessage(from, { text: `⏳ Generating your activation QR code for *${targetNumber}*...\n\nPlease stand by — the Clarion Hub is preparing your secure link!` });
-      } else {
-        // No manual number provided. Check if we have an LID which can't be used for pairing.
-        const isLid = userData.uid.endsWith('@lid');
-        if (isLid) {
-          return sock.sendMessage(from, {
-            text: `❌ *Phone Number Required*\n\nI detected that you are using an LID-based account. To generate a pairing code, I need your actual phone number.\n\nPlease type:\n*PAIR [your_phone_number]*\n(e.g., *PAIR 08012345678*)`
-          });
-        }
-        await sock.sendMessage(from, { text: '⏳ Generating your activation QR code... Please stand by!' });
+      if (rawNumber.length < 10) {
+        return sock.sendMessage(from, { text: `❌ Phone Number Required. Please reply with the number you want your Bot to run on (e.g. 08012345678):` });
       }
+
+      // Normalize Nigerian local numbers: 080... -> 23480...
+      if (rawNumber.startsWith('0') && rawNumber.length === 11) {
+        rawNumber = '234' + rawNumber.substring(1);
+        logger.info(`Normalized local number to ${rawNumber}`);
+      }
+
+      let targetNumber = rawNumber;
+
+      // Transition to COMPLETED state immediately so they can manage wallet
+      await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net`, state: STATES.COMPLETED });
+
+      await sock.sendMessage(from, { text: `⏳ Generating your activation QR code for *${targetNumber}*...\n\nPlease stand by — the Clarion Hub is preparing your secure link!` });
 
       try {
         await sessionManager.startQRPairingForUser(
@@ -157,13 +151,15 @@ export const handleMotherMessage = async (sock, msg) => {
           async () => {
             // Called the instant the QR appears in the terminal
             await sock.sendMessage(from, {
-              text: `📱 *Your QR code is now live!*\n\nThe admin is turning the screen towards you right now.\n\n*How to scan:*\n1. Open WhatsApp on your phone\n2. Go to *Settings > Linked Devices*\n3. Tap *Link a Device*\n4. Point your camera at the QR code on the screen\n\n⏱️ You have about 60 seconds before it expires!`
+              text: `📱 *Your QR code is now live!*\n\nThe admin is turning the screen towards you right now.\n\n*How to scan:*\n1. Open WhatsApp on the phone you want the bot to run on\n2. Go to *Settings > Linked Devices*\n3. Tap *Link a Device*\n4. Point your camera at the QR code on the screen\n\n⏱️ You have about 60 seconds before it expires!\n\n*(Once scanned, your business is live! Type MENU to manage your store).*`
             });
           }
         );
       } catch (err) {
         logger.error('QR Pairing Error:', err);
-        await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try again by typing *PAIR [your_phone_number]*.' });
+        // Put them back in AWAITING_PROXY_NUMBER so they can try again easily
+        await saveUser({ ...userData, state: STATES.AWAITING_PROXY_NUMBER });
+        await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try typing your phone number again (e.g. 08012345678).' });
       }
     }
     else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
@@ -200,7 +196,7 @@ export const handleMotherMessage = async (sock, msg) => {
       };
 
       if (userData.state === STATES.AWAITING_BROADCAST_CONTACTS) {
-        const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget (e.g., DATA 500)\n*DATA [price] [number]* - Send to someone else (e.g., DATA 500 08123...)\n\nFeel free to ignore this if you're not interested right now! 😊`;
+        const template = `Big news! 🚀 I just launched my automated 24/7 Data Bot powered by Clarion A.I (NYSC SAED Project). Get your MTN, Airtel, and Glo data instantly, at either official rates or cheaper! 🔥\n\nThe bot runs on this my number, but it ignores normal chat. To talk to the bot, you MUST trigger it!\n\nJust reply to me with:\n*Data 500* - To see deals around ₦500\n*Data 1000* - To see deals around ₦1000\n\nThe best part? Every time you buy, you're helping fund NYSC community projects! 🇳🇬 Try it right now!`;
 
         let validJids = extractContacts();
         if (validJids.length > 0) {
@@ -303,7 +299,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
         if (command === '1' && !hasBroadcasted) {
           // Broadcast
-          const template = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget (e.g., DATA 500)\n*DATA [price] [number]* - Send to someone else (e.g., DATA 500 08123...)\n\nFeel free to ignore this if you're not interested right now! 😊`;
+          const template = `Big news! 🚀 I just launched my automated 24/7 Data Bot powered by Clarion A.I (NYSC SAED Project). Get your MTN, Airtel, and Glo data instantly, at either official rates or cheaper! 🔥\n\nThe bot runs on this my number, but it ignores normal chat. To talk to the bot, you MUST trigger it!\n\nJust reply to me with:\n*Data 500* - To see deals around ₦500\n*Data 1000* - To see deals around ₦1000\n\nThe best part? Every time you buy, you're helping fund NYSC community projects! 🇳🇬 Try it right now!`;
           const userPhoneJid = from.split('@')[0] + '@s.whatsapp.net';
           await broadcastQueue.queueBroadcast(userPhoneJid, template, [userData.activeContact]);
           const updatedHistory = [...new Set([...(userData.broadcastHistory || []), userData.activeContact])];
@@ -402,8 +398,24 @@ export const handleMotherMessage = async (sock, msg) => {
                 createdAt: new Date().toISOString()
               });
             }
+
+            // Increment contacts collection here
+            if (db.users && userData.activeContact) {
+              try {
+                const uId = userData.uid || from;
+                const cleanCustomer = userData.activeContact.includes('@') ? userData.activeContact : `${userData.activeContact}@s.whatsapp.net`;
+                await db.users.doc(uId).collection('contacts').doc(cleanCustomer).set({
+                  totalSpent: admin.firestore.FieldValue.increment(selectedPlan.sellPrice),
+                  totalOrders: admin.firestore.FieldValue.increment(1)
+                }, { merge: true });
+              } catch (e) {
+                logger.warn(`Failed to increment contact ${userData.activeContact} stats: ${e.message}`);
+              }
+            }
+
             await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null, selectedDataPlan: null });
-            return sock.sendMessage(from, { text: `✅ *Data Vended Successfully!*\n\nProfit of ₦${profitStr} registered to your wallet.` });
+            const successMessage = `✅ *Data Vended Successfully!*\n\nThanks for supporting the hustle! Your purchase just contributed to funding NYSC community projects (lodge renovations, extra camp kits, etc) today. 🇳🇬\n\n🤝 To buy next time, simply text *Data [Amount]* (e.g. Data 500).`;
+            return sock.sendMessage(from, { text: `${successMessage}\n\n[Profit of ₦${profitStr} registered to your wallet]` });
           } catch (err) {
             return sock.sendMessage(from, { text: `❌ Data vending failed: ${err.message}` });
           }

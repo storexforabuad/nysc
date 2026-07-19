@@ -1,5 +1,5 @@
 import { logger } from '../config/env.js';
-import { db } from '../services/firebase.js';
+import admin, { db } from '../services/firebase.js';
 import payflex from '../services/payflex.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import { detectNetwork } from '../utils/networkUtils.js';
@@ -60,6 +60,20 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
     }
 
+    // -- Capture/Update Customer Profile --
+    if (db.users && actionableJid) {
+      try {
+        const cleanPhone = actionableJid.split('@')[0];
+        await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
+          phone: cleanPhone,
+          pushName: pushName,
+          lastInteraction: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (e) {
+        logger.warn(`Failed to update customer contacts profile for ${actionableJid}`);
+      }
+    }
+
     // Handle Data/Menu request
     const dataCommandRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const isDataMatch = dataCommandRegex.test(command);
@@ -96,33 +110,29 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       if (targetPrice) {
-        menuText += `*Available ${networkStr} Plans around ₦${targetPrice}:*\n`;
+        menuText += `*Clarion Instant, Affordable & Reliable ${networkStr} data list (Around ₦${targetPrice}):*\n`;
       } else {
-        menuText += `*Available ${networkStr} Enterprise Plans:*\n`;
+        menuText += `*Clarion Instant, Affordable & Reliable ${networkStr} data list:*\n`;
       }
 
       if (filteredPlans.length === 0) {
         menuText += `\n❌ No plans found matching your criteria.`;
       } else {
-        if (detectedNet === 'mtn') {
-          const sharePlans = filteredPlans.filter(p => p.network === 'mtn_data_share');
-          const giftPlans = filteredPlans.filter(p => p.network === 'mtn_gifting_data');
+        // Render dynamically grouped duration categories natively for all networks
+        const durationGroups = {};
+        for (const plan of filteredPlans) {
+          const cat = plan.durationCategory || '🗓️ *Other Plans:*';
+          if (!durationGroups[cat]) durationGroups[cat] = [];
+          durationGroups[cat].push(plan);
+        }
 
-          if (sharePlans.length > 0) {
-            menuText += `\n📦 *MTN Data Share:*\n`;
-            sharePlans.forEach(plan => {
-              menuText += `🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.\n`;
-            });
-          }
-          if (giftPlans.length > 0) {
-            menuText += `\n🎁 *MTN Gifting Data:*\n`;
-            giftPlans.forEach(plan => {
-              menuText += `🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.\n`;
-            });
-          }
-        } else {
-          filteredPlans.forEach(plan => {
-            menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *BUY ${plan.serial}* to order.`;
+        // Output each grouped category in sorted order
+        for (const cat of Object.keys(durationGroups)) {
+          menuText += `\n${cat}\n`;
+          durationGroups[cat].forEach(plan => {
+            const officialTag = plan.officialPrice ? ` (Official: ₦${plan.officialPrice})` : '';
+            menuText += `👉 *${plan.name} = ₦${plan.basePrice}* - ₦${plan.sellPrice}${officialTag}\n`;
+            menuText += `   Reply *BUY ${plan.serial}* to order.\n`;
           });
         }
       }
@@ -167,12 +177,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       return sock.sendMessage(from, { text: paymentInstruction });
     }
 
-    // Default welcome message for first contact or unrecognizable input
-    if (command.includes('hi') || command.includes('hello') || !command) {
-      return sock.sendMessage(from, {
-        text: `👋 Welcome to *${user.name || 'our'}* Digital Hub!\n\nI am your Clarion A.I. assistant. We provide high-speed data at wholesale prices 24/7.\n\nType *DATA* to view our available enterprise plans.`
-      });
-    }
+
 
   } catch (error) {
     logger.error({ err: error }, 'Clarion Digital Store Error');

@@ -4,7 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import { config, logger } from './config/env.js';
 import squad from './services/SquadService.js';
 import payflex from './services/payflex.js';
-import { db } from './services/firebase.js';
+import admin, { db } from './services/firebase.js';
 import sessionManager from './bot/SessionManager.js';
 import mediaGen from './services/mediaGen.js';
 import wallet from './services/WalletService.js';
@@ -78,6 +78,19 @@ async function startServer() {
             settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
             updatedAt: new Date().toISOString()
           });
+
+          // Add atomic increment for contacts collection
+          if (db.users && order.buyerPhone) {
+            try {
+              const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+              await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).set({
+                totalSpent: admin.firestore.FieldValue.increment(order.amount),
+                totalOrders: admin.firestore.FieldValue.increment(1)
+              }, { merge: true });
+            } catch (e) {
+              logger.warn(`Failed to increment contact ${order.buyerPhone} stats: ${e.message}`);
+            }
+          }
 
           logger.info(`Order ${orderId} vended and settled successfully.`);
         }

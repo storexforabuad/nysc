@@ -8,6 +8,61 @@ const require = createRequire(import.meta.url);
 import { config } from './src/config/env.js';
 import { db } from './src/services/firebase.js';
 
+const analyzeDuration = (label) => {
+    const lbl = label.toLowerCase();
+    let priority = 99;
+    let category = 'Other Plans';
+
+    if (lbl.includes('1 day') || lbl.includes('1day')) { priority = 1; category = '⚡ *1-Day Plans:*'; }
+    else if (lbl.includes('2 day') || lbl.includes('2day')) { priority = 2; category = '⚡ *2-Day Plans:*'; }
+    else if (lbl.includes('3 day') || lbl.includes('3day')) { priority = 3; category = '⚡ *3-Day Plans:*'; }
+    else if (lbl.includes('7 day') || lbl.includes('7day') || lbl.includes('weekly')) { priority = 7; category = '📅 *7-Day Plans:*'; }
+    else if (lbl.includes('14 day') || lbl.includes('14day')) { priority = 14; category = '📅 *14-Day Plans:*'; }
+    else if (lbl.includes('1 month') || lbl.includes('30 day') || lbl.includes('30day') || lbl.includes('1month')) { priority = 30; category = '🗓️ *30-Day/Monthly Plans:*'; }
+    else if (lbl.includes('2 month') || lbl.includes('60 day') || lbl.includes('60day') || lbl.includes('2months')) { priority = 60; category = '🗓️ *2-Month Plans:*'; }
+    else if (lbl.includes('1 year') || lbl.includes('365 day')) { priority = 365; category = '💎 *Yearly Plans:*'; }
+
+    return { category, priority };
+};
+
+const CUSTOM_MTN_PLANS = {
+    // 7 Days
+    'mtn_data_share:M500MBS': { sellPrice: 590, officialPrice: 500 },
+    'mtn_data_share:M1GBS': { sellPrice: 790, officialPrice: 800 },
+    'mtn_data_share:M2GBS': { sellPrice: 990, officialPrice: null },
+    'mtn_data_share:M3GBS': { sellPrice: 1290, officialPrice: null },
+    // 30 Days
+    'mtn_data_share:M1GBS2': { sellPrice: 790, officialPrice: null },
+    'mtn_data_share:M2GBS2': { sellPrice: 1290, officialPrice: 1500 },
+    'mtn_data_share:M3GBS2': { sellPrice: 1950, officialPrice: null },
+    'mtn_data_share:M5GBS': { sellPrice: 2550, officialPrice: null },
+    // Gifting - 2 Day
+    'mtn_gifting_data:M1m2GB': { sellPrice: 650, officialPrice: 450 },
+    'mtn_gifting_data:M2m5GB': { sellPrice: 800, officialPrice: 750 },
+    'mtn_gifting_data:M2m5GBS': { sellPrice: 990, officialPrice: 900 },
+    'mtn_gifting_data:M2GBS': { sellPrice: 765, officialPrice: 750 },
+    'mtn_gifting_data:M3m2GBS': { sellPrice: 1090, officialPrice: 1000 },
+    // Monthly
+    'mtn_gifting_data:M3m5GBS': { sellPrice: 2495, officialPrice: 2500 },
+    'mtn_gifting_data:M6GBS': { sellPrice: 2550, officialPrice: 2500 },
+    'mtn_gifting_data:M7GBS': { sellPrice: 3550, officialPrice: 3500 },
+    'mtn_gifting_data:M12m5GBS': { sellPrice: 5490, officialPrice: 5500 },
+    'mtn_gifting_data:M14m5GBS': { sellPrice: 4995, officialPrice: 5000 },
+    'mtn_gifting_data:M20GBS': { sellPrice: 7490, officialPrice: 7500 },
+    'mtn_gifting_data:M25GBS': { sellPrice: 8990, officialPrice: 9000 },
+    'mtn_gifting_data:M36GBS': { sellPrice: 10990, officialPrice: 11000 },
+    'mtn_gifting_data:M65GBS': { sellPrice: 15980, officialPrice: 16000 },
+    'mtn_gifting_data:M75GBS': { sellPrice: 17980, officialPrice: 18000 },
+    // 2-Month
+    'mtn_gifting_data:M90GBS': { sellPrice: 24980, officialPrice: 25000 },
+    'mtn_gifting_data:M150GBS': { sellPrice: 39950, officialPrice: 40000 },
+    'mtn_gifting_data:M165GBS': { sellPrice: 34950, officialPrice: 35000 },
+    'mtn_gifting_data:M200GBS': { sellPrice: 49950, officialPrice: 50000 },
+    // Yearly
+    'mtn_gifting_data:M250GBS': { sellPrice: 54950, officialPrice: 55000 },
+    'mtn_gifting_data:M800GBS': { sellPrice: 124950, officialPrice: 125000 },
+};
+
 const OFFICIAL_PRICES_MAP = {
     // MTN DATA SHARE
     'mtn_data_share:M500MBS': 500, 'mtn_data_share:M1GBS': 800, 'mtn_data_share:M2GBS': 1000,
@@ -51,9 +106,17 @@ function getMarkup(base) {
 
 function applyPricing(plan) {
     const mapKey = `${plan.network}:${plan.plan_code}`;
-    const official = OFFICIAL_PRICES_MAP[mapKey] ?? null;
     const basePrice = plan.amount;
     const markup = getMarkup(basePrice);
+
+    if (plan.network.includes('mtn')) {
+        const entry = CUSTOM_MTN_PLANS[mapKey];
+        const sellPrice = entry.sellPrice;
+        const officialPrice = entry.officialPrice ?? null;
+        return { basePrice, markup, sellPrice, proxyCost: sellPrice, officialPrice };
+    }
+
+    const official = OFFICIAL_PRICES_MAP[mapKey] ?? null;
     let sellPrice = basePrice + markup;
 
     if (official !== null) {
@@ -185,26 +248,42 @@ for (const net of networks) {
     for (const p of RAW_PLANS[net]) {
         const baseSeenKey = `${net}:${p.plan_code}`;
         seen[baseSeenKey] = (seen[baseSeenKey] || 0) + 1;
-        // For the second occurrence of the same plan_code within the same network, use a '2' suffix key
         const mapKey = seen[baseSeenKey] > 1 ? `${net}:${p.plan_code}2` : baseSeenKey;
-        const official = OFFICIAL_PRICES_MAP[mapKey] ?? null;
-        const pricing = applyPricing({ ...p, network: net, plan_code_orig: p.plan_code });
+
+        if (net.includes('mtn')) {
+            if (!CUSTOM_MTN_PLANS[mapKey]) continue;
+        }
+
+        const pricing = applyPricing({ ...p, network: net, plan_code: p.plan_code });
+        const dur = analyzeDuration(p.label);
+
+        let cleanName = p.label.replace(/\s*=\s*(?:N|NGN)\s*\d+(?:\.\d+)?/i, ' ');
+        cleanName = cleanName.replace(/\s*\(\s*\d*\s*(?:day|days|month|months|year|weekly|week)\s*\)/gi, ' ');
+        cleanName = cleanName.replace(/\s+/g, ' ').trim();
 
         allPlans.push({
             id: `${net}_${p.plan_code}_${serial}`,
             network: net,
             plan_code: p.plan_code,
-            name: p.label,
+            name: cleanName,
             basePrice: p.amount,
             markup: pricing.markup,
             sellPrice: pricing.sellPrice,
             proxyCost: pricing.proxyCost,
-            officialPrice: official,
+            officialPrice: pricing.officialPrice,
+            durationCategory: dur.category,
+            durationPriority: dur.priority,
             serial: serial++,
             updatedAt: new Date().toISOString(),
         });
     }
 }
+
+// Final sort for duration rendering
+allPlans.sort((a, b) => {
+    if (a.durationPriority !== b.durationPriority) return a.durationPriority - b.durationPriority;
+    return a.sellPrice - b.sellPrice;
+});
 
 console.log(`Built ${allPlans.length} plans. Writing to Firestore...`);
 
@@ -218,14 +297,20 @@ console.log('9mobile 1GB:', spot('E1GB', '9mobile_data')?.sellPrice, '(expected 
 
 // Write to Firestore
 if (db.plansCache) {
-    const batch = db.plansCache.firestore.batch();
-    // Clear old docs first by re-setting them all
+    const snap = await db.plansCache.get();
+    console.log(`Clearing ${snap.size} old plans from Firestore...`);
+    const batch1 = db.plansCache.firestore.batch();
+    snap.docs.forEach(doc => batch1.delete(doc.ref));
+    await batch1.commit();
+
+    console.log('Writing fresh clean cache...');
+    const batch2 = db.plansCache.firestore.batch();
     for (const p of allPlans) {
         const ref = db.plansCache.doc(p.id);
-        batch.set(ref, p, { merge: false }); // full overwrite
+        batch2.set(ref, p, { merge: false });
     }
-    await batch.commit();
-    console.log('✅ Firestore plans_cache updated successfully!');
+    await batch2.commit();
+    console.log('✅ Firestore plans_cache updated beautifully!');
 } else {
     console.log('⚠️ db.plansCache not available, skipping Firestore write');
 }
