@@ -10,7 +10,9 @@ import mediaGen from './services/mediaGen.js';
 import wallet from './services/WalletService.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
 import broadcastQueue from './services/BroadcastQueue.js';
+import adminService from './services/AdminService.js';
 import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 
 // ── HTTP Rate Limiters ──
 const webhookLimiter = rateLimit({
@@ -38,6 +40,76 @@ async function startServer() {
 
   // API routes go here FIRST
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+  // --- ADMIN AUTH ROUTES ---
+  app.post('/api/auth/login', (req, res) => {
+    const { passcode } = req.body;
+    if (!passcode) {
+      return res.status(400).json({ error: 'Passcode required' });
+    }
+    if (passcode === process.env.ADMIN_PASSCODE) {
+      const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '24h' });
+      return res.json({ token, success: true });
+    } else {
+      return res.status(401).json({ error: 'Invalid passcode' });
+    }
+  });
+
+  // Admin Verification Middleware
+  const verifyAdminToken = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing or invalid token' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+      jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+      next();
+    } catch (err) {
+      return res.status(403).json({ error: 'Unauthorized: Invalid token' });
+    }
+  };
+
+  app.get('/api/admin/metrics', verifyAdminToken, async (req, res) => {
+    try {
+      const metrics = await adminService.getSystemMetrics();
+      const activeBots = await adminService.getActiveBotCount();
+      res.json({ ...metrics, activeBots });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch admin metrics' });
+    }
+  });
+
+  app.get('/api/admin/partners', verifyAdminToken, async (req, res) => {
+    try {
+      const partners = await adminService.listPartners();
+      res.json(partners);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch partners' });
+    }
+  });
+
+  app.get('/api/admin/withdrawals/pending', verifyAdminToken, async (req, res) => {
+    try {
+      const withdrawals = await adminService.listPendingWithdrawals();
+      res.json(withdrawals);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch pending withdrawals' });
+    }
+  });
+
+  app.post('/api/admin/withdrawals/:id/approve', verifyAdminToken, async (req, res) => {
+    try {
+      if (!db.ledger) return res.status(500).json({ error: 'DB unavailable' });
+      await db.ledger.doc(req.params.id).update({
+        status: 'SUCCESS',
+        updatedAt: new Date().toISOString()
+      });
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // Squad Webhook (rate-limited: 30 req/min per IP)
   app.post('/webhook/squad', webhookLimiter, async (req, res) => {

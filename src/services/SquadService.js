@@ -22,6 +22,14 @@ class SquadService {
         this.postBreaker.fallback((url, data, err) => {
             throw new Error(`Squad API is temporarily unreachable (${err.code || 'CIRCUIT_OPEN'}). Please try again later.`);
         });
+
+        // Log raw Squad API error body BEFORE circuit breaker replaces it
+        this.client.interceptors.response.use(null, (error) => {
+            if (error.response) {
+                logger.error(`[SQUAD-RAW] HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`);
+            }
+            return Promise.reject(error);
+        });
     }
 
     async createVirtualAccount(customerName, customerEmail, mobileNum) {
@@ -45,16 +53,16 @@ class SquadService {
             }
 
             const payload = {
-                customer_identifier: String(mobileNum || Date.now()), // Unique ID for customer
+                customer_identifier: String(mobileNum || Date.now()),
                 first_name: customerName.split(' ')[0] || 'Customer',
                 last_name: customerName.split(' ').slice(1).join(' ') || 'Clarion',
                 mobile_num: cleanMobile,
                 email: customerEmail,
-                bvn: "",
-                dob: "1990-01-01",
+                bvn: "22222222222",
+                dob: "01/01/1990",
                 address: "Nigeria",
                 gender: "1",
-                beneficiary_account: ""
+                beneficiary_account: process.env.SQUAD_SETTLEMENT_ACCOUNT || "0000000000"
             };
 
             const response = await this.postBreaker.fire('/virtual-account', payload);
@@ -66,7 +74,10 @@ class SquadService {
                 accountName: data.account_name || data.first_name + ' ' + data.last_name
             };
         } catch (error) {
-            logger.error('Error creating Squad virtual account:', error.response?.data || error.message);
+            const detail = error.response?.data
+                ? JSON.stringify(error.response.data)
+                : error.message;
+            logger.error(`Error creating Squad virtual account: ${detail}`);
             throw error;
         }
     }
