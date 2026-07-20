@@ -1,0 +1,83 @@
+# Implementation Plan: Centralised Auto-Status & Receipt Engine
+
+## Objective
+Build a lightweight, VPS-powered image generation and scheduling engine that equips ProxyBots with zero-touch WhatsApp Status marketing. This involves setting up `canvas` for graphic rendering, organizing a localized media pipeline, hooking into transaction events, and executing a robust Node-cron scheduler for Baileys.
+
+---
+
+## 🏗️ Phase 1: Local Foundation & Dependencies
+Setup the environment and local file architecture necessary for asset storage.
+
+1. **Install Node Canvas:** 
+   - Command: `npm install canvas` (ensure OS Windows build tools are present).
+2. **Setup Media Directories:**
+   - Create local absolute/relative paths for:
+     - `media/status_library/` (Admin uploads/promo templates).
+     - `media/receipts/` (Auto-generated).
+     - `media/price_cards/` (Weekly generated).
+
+---
+
+## 🎨 Phase 2: Asset Generators
+Create the core visualization scripts in `src/services/` that will compile image buffers and save them locally.
+
+1. **`ReceiptGenerator.js`**
+   - **Inputs:** `storeName, targetPhone, planName, amount, date`.
+   - **Logic:** 
+     - Masks `targetPhone` to `081****1234`.
+     - Draws a vertical UI ticket layout (canvas width/height matching standard WhatsApp ratios 1080x1920).
+     - Stamps "Powered by Clarion A.I."
+     - Saves output to `media/receipts/txn_[timestamp].jpg`.
+
+2. **`PriceCardGenerator.js`**
+   - **Inputs:** Raw active `plans` object.
+   - **Logic:**
+     - Loops networks: `['mtn', 'airtel', 'glo', '9mobile']`.
+     - For each, selects top 10 diverse validity plans.
+     - Draws "10 Best [Network] Data".
+     - Adds subheader "Instant Reliable Affordable".
+     - Overlays a huge pre-loaded 5G Ribbon graphic over the frame.
+     - Saves outputs to e.g. `media/price_cards/mtn_card.jpg`.
+
+---
+
+## ⚙️ Phase 3: The Transaction Webhook Intercept
+Modify the core purchasing flow so assets are deployed exactly when value moves.
+
+1. **`src/server.js` (Squad Webhook)**
+   - Inside `charge_successful` block, after updating `db.ledger`:
+   - Call `ReceiptGenerator.generate(orderData)`.
+   - Take the returned image path and pass it to MotherBot / Payflex router to instantly reply to the buyer with the image receipt.
+   - The path inherently exists on the VPS now, ready for the next status post slot.
+
+---
+
+## ⏰ Phase 4: Chron Job & Baileys Broadcaster
+Build the autonomous brain that pushes these assets to WhatsApp Status on a strict schedule.
+
+1. **`src/jobs/statusPostJob.js`**
+   - Import `node-cron`.
+   - Setup Cron Schedules targeting the active ProxyBot sessions (using `sessionManager.getAllActiveSessions()`):
+     - **Sunday Midnight (00:00)**: Call `PriceCardGenerator.regenerate()` to pull latest Peyflex API data and build the week's 4 network cards.
+     - **07:00 AM Task**: Post the 4 `media/price_cards/*.jpg` images sequentially with the overarching caption (`Reply DATA [amount] (e.g DATA 1000)...`).
+     - **12:30 PM & 09:00 PM Tasks**: Pull an un-posted receipt from `media/receipts/`. Send image with the social proof caption. Delete or mark receipt as posted.
+     - **06:00 PM Task**: Pull a generic promotional image/text from `media/status_library/`.
+     - **02:00 AM Task (Cleanup)**: `fs.unlink()` all images in `media/receipts/` older than 48 hours to preserve VPS memory.
+
+---
+
+## 🧪 Phase 5: Admin Visual Playground (Web Dashboard)
+To verify the canvas logic looks spectacular before it hits live users, we will build a testing interface in the frontend.
+
+1. **Backend Endpoints (`src/server.js`):**
+   - `GET /api/admin/generate-test-receipt` -> Calls `ReceiptGenerator.js` with dummy data (`"Ahmed Ventures"`, `"MTN 5GB"`) and returns the base64 or file URL.
+   - `GET /api/admin/generate-test-pricecard` -> Calls `PriceCardGenerator.js`, drawing all 4 cards, and returning them.
+2. **Frontend UI (`src/App.tsx`):**
+   - Inside the new Admin metric view, create an isolated `"Marketing Playground"` area.
+   - Add simple buttons: `"Generate Preview Receipt"` & `"Generate Best 10 Preview"`.
+   - Displays the returned generated graphics inside standard `<img>` tags so we can tune font sizes, colors, and the 5G badge positioning dynamically based on immediate feedback.
+
+---
+
+## ✅ User Approval Gate
+Review this technical trajectory. If approved, we will transition to EXECUTION phase by installing `canvas` and scaffolding the `ReceiptGenerator.js` alongside the Admin interface.

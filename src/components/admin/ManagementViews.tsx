@@ -6,6 +6,10 @@ export default function ManagementViews() {
     const [partners, setPartners] = useState<any[]>([]);
     const [withdrawals, setWithdrawals] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+    const [priceCardPreviews, setPriceCardPreviews] = useState<string[]>([]);
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const [previewError, setPreviewError] = useState('');
 
     const fetchData = async () => {
         setLoading(true);
@@ -46,6 +50,42 @@ export default function ManagementViews() {
         }
     };
 
+    const handleGenerateReceiptPreview = async () => {
+        setPreviewLoading(true);
+        setPreviewError('');
+        try {
+            const token = localStorage.getItem('clarion_admin_token');
+            const res = await fetch('/api/admin/generate-test-receipt', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error('Failed to generate receipt preview');
+            const data = await res.json();
+            setReceiptPreview(data.imageBase64 || null);
+        } catch (error) {
+            setPreviewError(error.message || 'Unable to generate receipt preview');
+        } finally {
+            setPreviewLoading(false);
+        }
+    };
+
+    const handleGeneratePriceCardPreview = async () => {
+        setPreviewLoading(true);
+        setPreviewError('');
+        try {
+            const token = localStorage.getItem('clarion_admin_token');
+            const res = await fetch('/api/admin/generate-test-pricecard', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error('Failed to generate price card preview');
+            const data = await res.json();
+            setPriceCardPreviews(data.images || []);
+        } catch (error) {
+            setPreviewError(error.message || 'Unable to generate price card preview');
+        } finally {
+            setPreviewLoading(false);
+        }
+    };
+
     return (
         <div className="w-full space-y-12">
 
@@ -79,6 +119,61 @@ export default function ManagementViews() {
                         </div>
                     ))}
                 </div>
+            </div>
+
+            {/* ── MARKETING PREVIEW PANEL */}
+            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                        <Bot size={14} className="text-accent" />
+                        <h3 className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-widest">Marketing Playground</h3>
+                    </div>
+                    <button
+                        onClick={fetchData}
+                        className="text-zinc-500 hover:text-accent p-1"
+                    >
+                        <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <button
+                        onClick={handleGenerateReceiptPreview}
+                        disabled={previewLoading}
+                        className="w-full bg-accent text-black font-mono text-xs font-bold uppercase py-3 tracking-widest hover:bg-white transition-colors"
+                    >
+                        {previewLoading ? 'Generating...' : 'Generate Preview Receipt'}
+                    </button>
+                    <button
+                        onClick={handleGeneratePriceCardPreview}
+                        disabled={previewLoading}
+                        className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 font-mono text-xs font-bold uppercase py-3 tracking-widest hover:border-accent hover:text-accent transition-colors"
+                    >
+                        {previewLoading ? 'Generating...' : 'Generate Preview Price Card'}
+                    </button>
+                </div>
+
+                {previewError && (
+                    <div className="text-sm text-red-400 font-mono mb-4">{previewError}</div>
+                )}
+
+                {receiptPreview && (
+                    <div className="mb-4">
+                        <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">Receipt Preview</p>
+                        <img src={receiptPreview} alt="Receipt Preview" className="w-full rounded-xl border border-zinc-800" />
+                    </div>
+                )}
+
+                {priceCardPreviews.length > 0 && (
+                    <div>
+                        <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">Price Card Previews</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {priceCardPreviews.map((image, index) => (
+                                <img key={index} src={image} alt={`Price Card ${index + 1}`} className="w-full rounded-xl border border-zinc-800" />
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* ── WITHDRAWAL QUEUE (MOBILE CARDS) ── */}

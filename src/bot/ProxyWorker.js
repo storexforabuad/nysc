@@ -131,6 +131,26 @@ async function startWorker(isInitialBoot = true) {
             } catch (e) {
                 logger.error(`[WORKER] Broadcast send failed:`, e.message);
             }
+        } else if (msg.type === 'status') {
+            const { imagePaths, caption } = msg;
+            const statusJid = 'status@broadcast';
+            const randomDelay = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.floor(Math.random() * (maxMs - minMs))));
+            try {
+                for (const imgPath of imagePaths) {
+                    if (fs.existsSync(imgPath)) {
+                        await sock.sendPresenceUpdate('composing', statusJid);
+                        await randomDelay(1200, 2500);
+                        await sock.sendMessage(statusJid, {
+                            image: fs.readFileSync(imgPath),
+                            caption: caption || 'Clarion status update.'
+                        });
+                        await randomDelay(2000, 4000);
+                    }
+                }
+                await sock.sendPresenceUpdate('paused', statusJid);
+            } catch (e) {
+                logger.error(`[WORKER] Status post failed:`, e.message);
+            }
         }
     });
 }

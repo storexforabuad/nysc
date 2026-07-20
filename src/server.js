@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { config, logger } from './config/env.js';
@@ -9,6 +10,9 @@ import sessionManager from './bot/SessionManager.js';
 import mediaGen from './services/mediaGen.js';
 import wallet from './services/WalletService.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
+import { startStatusPostJob } from './jobs/statusPostJob.js';
+import ReceiptGenerator from './services/ReceiptGenerator.js';
+import PriceCardGenerator from './services/PriceCardGenerator.js';
 import broadcastQueue from './services/BroadcastQueue.js';
 import adminService from './services/AdminService.js';
 import rateLimit from 'express-rate-limit';
@@ -111,6 +115,49 @@ async function startServer() {
     }
   });
 
+  app.get('/api/admin/generate-test-receipt', verifyAdminToken, async (req, res) => {
+    try {
+      const sampleOrder = {
+        id: `TEST_${Date.now()}`,
+        planName: 'MTN 5GB',
+        buyerPhone: '2348000000001@s.whatsapp.net',
+        amount: 550
+      };
+      const outPath = await ReceiptGenerator.generate(sampleOrder);
+      if (!outPath) {
+        return res.status(500).json({ error: 'Receipt generation failed' });
+      }
+      const fileBuffer = fs.readFileSync(outPath);
+      const base64Image = `data:image/jpeg;base64,${fileBuffer.toString('base64')}`;
+      res.json({ success: true, imageBase64: base64Image });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/generate-test-pricecard', verifyAdminToken, async (req, res) => {
+    try {
+      const plans = await payflex.getAvailablePlans();
+      if (!plans || plans.length === 0) {
+        return res.status(500).json({ error: 'No plans available for price card generation' });
+      }
+
+      const generatedPaths = await PriceCardGenerator.generateWeeklyCards(plans);
+      if (!generatedPaths || generatedPaths.length === 0) {
+        return res.status(500).json({ error: 'Price card generation failed' });
+      }
+
+      const images = generatedPaths.map((filePath) => {
+        const ext = filePath.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+        const buffer = fs.readFileSync(filePath);
+        return `data:image/${ext};base64,${buffer.toString('base64')}`;
+      });
+      res.json({ success: true, images });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Squad Webhook (rate-limited: 30 req/min per IP)
   app.post('/webhook/squad', webhookLimiter, async (req, res) => {
     const signature = req.headers['x-squad-signature'];
@@ -150,6 +197,20 @@ async function startServer() {
             settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
             updatedAt: new Date().toISOString()
           });
+
+          // Attempt to generate and send a receipt image to the buyer
+          try {
+            const receiptPath = await ReceiptGenerator.generate(order);
+            if (receiptPath && sessionManager.motherSock) {
+              const destinationJid = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+              await sessionManager.motherSock.sendMessage(destinationJid, {
+                image: fs.readFileSync(receiptPath),
+                caption: '📄 Your Clarion payment receipt is ready. Thank you for your purchase!'
+              });
+            }
+          } catch (sendErr) {
+            logger.warn(`Receipt send failed for order ${orderId}: ${sendErr.message}`);
+          }
 
           // Add atomic increment for contacts collection
           if (db.users && order.buyerPhone) {
@@ -239,6 +300,7 @@ async function startServer() {
         try {
           await sessionManager.initMotherBot();
           startWeeklyReportJob();
+          startStatusPostJob();
           broadcastQueue.start();
         } catch (botError) {
           logger.error({ err: botError }, 'Background Bot Initialization failed');
