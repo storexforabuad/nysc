@@ -13,6 +13,7 @@ import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
 import { startStatusPostJob } from './jobs/statusPostJob.js';
 import ReceiptGenerator from './services/ReceiptGenerator.js';
 import PriceCardGenerator from './services/PriceCardGenerator.js';
+import CaptionService from './services/CaptionService.js';
 import broadcastQueue from './services/BroadcastQueue.js';
 import adminService from './services/AdminService.js';
 import rateLimit from 'express-rate-limit';
@@ -153,6 +154,33 @@ async function startServer() {
         return `data:image/${ext};base64,${buffer.toString('base64')}`;
       });
       res.json({ success: true, images });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/status-captions', verifyAdminToken, async (req, res) => {
+    try {
+      const captions = await CaptionService.getStatusCaptions();
+      res.json({ success: true, captions });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/status-captions', verifyAdminToken, async (req, res) => {
+    try {
+      const payload = req.body;
+      if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ error: 'Invalid caption payload' });
+      }
+
+      const success = await CaptionService.updateStatusCaptions(payload);
+      if (!success) {
+        return res.status(500).json({ error: 'Could not persist captions' });
+      }
+
+      res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

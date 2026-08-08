@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import payflex from '../services/payflex.js';
 import PriceCardGenerator from '../services/PriceCardGenerator.js';
+import CaptionService from '../services/CaptionService.js';
 import { config, logger } from '../config/env.js';
 import sessionManager from '../bot/SessionManager.js';
 
@@ -25,8 +26,9 @@ const getFiles = (dir, ext = '.jpg') => {
     .map(file => path.join(dir, file));
 };
 
-const sendStatusToWorkers = async (imagePaths, caption) => {
-  if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
+const sendStatusToWorkers = async (imageItems) => {
+  const items = Array.isArray(imageItems) ? imageItems : [];
+  if (items.length === 0) {
     logger.warn('No status images available to send.');
     return;
   }
@@ -38,7 +40,7 @@ const sendStatusToWorkers = async (imagePaths, caption) => {
 
   for (const worker of sessionManager.sessions.values()) {
     try {
-      worker.postMessage({ type: 'status', imagePaths, caption });
+      worker.postMessage({ type: 'status', imageItems: items });
     } catch (err) {
       logger.error('Failed to post status to worker:', err.message);
     }
@@ -92,7 +94,21 @@ const sendPriceCardStatus = async () => {
     return;
   }
 
-  await sendStatusToWorkers(priceCards, '🚀 Latest data prices are live! Reply DATA to buy now.');
+  const captions = await CaptionService.getStatusCaptions();
+  const items = priceCards.map((filePath) => {
+    const baseName = path.basename(filePath).toLowerCase();
+    let network = 'mtn';
+    if (baseName.includes('airtel')) network = 'airtel';
+    if (baseName.includes('glo')) network = 'glo';
+    if (baseName.includes('9mobile')) network = '9mobile';
+
+    return {
+      imagePath: filePath,
+      caption: captions[network] || 'Fast • Reliable • Affordable'
+    };
+  });
+
+  await sendStatusToWorkers(items);
 };
 
 const sendReceiptStatus = async () => {
@@ -102,7 +118,11 @@ const sendReceiptStatus = async () => {
     return;
   }
 
-  await sendStatusToWorkers(receipts, '📸 Live social proof — transactions processed successfully!');
+  const captions = await CaptionService.getStatusCaptions();
+  const receiptCaption = captions.receipt || 'Trusted proxybot social proof.';
+  const items = receipts.map((receiptPath) => ({ imagePath: receiptPath, caption: receiptCaption }));
+
+  await sendStatusToWorkers(items);
 
   receipts.forEach((receiptPath) => {
     const fileName = path.basename(receiptPath);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export default function ManagementViews() {
@@ -10,6 +10,10 @@ export default function ManagementViews() {
     const [priceCardPreviews, setPriceCardPreviews] = useState<string[]>([]);
     const [previewLoading, setPreviewLoading] = useState(false);
     const [previewError, setPreviewError] = useState('');
+    const [captions, setCaptions] = useState<Record<string, string>>({});
+    const [captionLoading, setCaptionLoading] = useState(false);
+    const [captionSaveLoading, setCaptionSaveLoading] = useState(false);
+    const [captionError, setCaptionError] = useState('');
 
     const fetchData = async () => {
         setLoading(true);
@@ -17,17 +21,47 @@ export default function ManagementViews() {
             const token = localStorage.getItem('clarion_admin_token');
             const headers = { 'Authorization': `Bearer ${token}` };
 
-            const [pRes, wRes] = await Promise.all([
+            const [pRes, wRes, cRes] = await Promise.all([
                 fetch('/api/admin/partners', { headers }),
-                fetch('/api/admin/withdrawals/pending', { headers })
+                fetch('/api/admin/withdrawals/pending', { headers }),
+                fetch('/api/admin/status-captions', { headers })
             ]);
 
             if (pRes.ok) setPartners(await pRes.json());
             if (wRes.ok) setWithdrawals(await wRes.json());
+            if (cRes.ok) {
+                const data = await cRes.json();
+                setCaptions(data.captions || {});
+            }
         } catch (error) {
             console.error("Failed fetching admin data");
         }
         setLoading(false);
+    };
+
+    const handleCaptionChange = (key: string, value: string) => {
+        setCaptions(prev => ({ ...prev, [key]: value }));
+    };
+
+    const handleSaveCaptions = async () => {
+        setCaptionSaveLoading(true);
+        setCaptionError('');
+        try {
+            const token = localStorage.getItem('clarion_admin_token');
+            const res = await fetch('/api/admin/status-captions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(captions)
+            });
+            if (!res.ok) throw new Error('Failed to save captions');
+        } catch (error) {
+            setCaptionError(error.message || 'Unable to save captions');
+        } finally {
+            setCaptionSaveLoading(false);
+        }
     };
 
     useEffect(() => {
@@ -155,6 +189,41 @@ export default function ManagementViews() {
 
                 {previewError && (
                     <div className="text-sm text-red-400 font-mono mb-4">{previewError}</div>
+                )}
+
+                {captions && Object.keys(captions).length > 0 && (
+                    <div className="mb-6 p-4 bg-zinc-950 border border-zinc-800 rounded-xl">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                                <Pencil size={16} className="text-accent" />
+                                <h4 className="text-xs font-mono uppercase tracking-widest text-zinc-400">Live Network Captions</h4>
+                            </div>
+                            <button
+                                onClick={handleSaveCaptions}
+                                disabled={captionSaveLoading}
+                                className="inline-flex items-center gap-2 bg-accent text-black text-xs font-bold uppercase px-4 py-2 rounded hover:bg-white transition"
+                            >
+                                <Save size={16} />
+                                {captionSaveLoading ? 'Saving...' : 'Save Captions'}
+                            </button>
+                        </div>
+                        {captionError && (
+                            <div className="text-sm text-red-400 font-mono mb-4">{captionError}</div>
+                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {['mtn', 'airtel', 'glo', '9mobile', 'receipt'].map((key) => (
+                                <div key={key} className="space-y-2">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">{key.toUpperCase()} Caption</p>
+                                    <textarea
+                                        rows={3}
+                                        value={captions[key] || ''}
+                                        onChange={(e) => handleCaptionChange(key, e.target.value)}
+                                        className="w-full rounded-xl border border-zinc-700 bg-zinc-900 text-zinc-100 p-3 text-sm font-mono focus:border-accent focus:outline-none"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 )}
 
                 {receiptPreview && (

@@ -3,13 +3,56 @@ import { logger } from '../config/env.js';
 import path from 'path';
 import fs from 'fs';
 
-export class PriceCardGenerator {
+const COLOR_MAP = {
+  mtn: { top: '#F6E05E', bottom: '#F59E0B', accent: '#0F172A', name: 'MTN' },
+  airtel: { top: '#FEE2E2', bottom: '#EF4444', accent: '#111827', name: 'AIRTEL' },
+  glo: { top: '#D8FAE5', bottom: '#22C55E', accent: '#0F172A', name: 'GLO' },
+  '9mobile': { top: '#DBEAFE', bottom: '#2563EB', accent: '#0F172A', name: '9MOBILE' }
+};
 
-    /**
-     * Build '10 Best' Cards for all 4 networks and store them locally.
-     * @param {Array} allPlans - Raw plans from payflex payload
-     * @returns {Array} - Array of saved file paths
-     */
+const parseQuantity = (text) => {
+  if (!text) return { label: 'OTHER', value: Number.MAX_VALUE };
+  const normalized = text.toString().toLowerCase();
+  const match = normalized.match(/(\d+(?:\.\d+)?)(?:\s*)(gb|mb|tb)/i);
+  if (match) {
+    const quantity = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+    let value = quantity;
+    if (unit === 'mb') value /= 1024;
+    if (unit === 'tb') value *= 1024;
+    return { label: `${quantity}${unit.toUpperCase()}`, value };
+  }
+  const fallbackMatch = normalized.match(/(\d+(?:\.\d+)?)/);
+  if (fallbackMatch) {
+    return { label: `${fallbackMatch[1]}GB`, value: parseFloat(fallbackMatch[1]) };
+  }
+  return { label: 'OTHER', value: Number.MAX_VALUE };
+};
+
+// Contrast helper: choose readable text color (dark or light) for a given hex background
+function hexToRgb(hex) {
+    const cleaned = hex.replace('#', '');
+    const full = cleaned.length === 3 ? cleaned.split('').map(c => c + c).join('') : cleaned;
+    const intVal = parseInt(full, 16);
+    return { r: (intVal >> 16) & 255, g: (intVal >> 8) & 255, b: intVal & 255 };
+}
+
+function relativeLuminance(r, g, b) {
+    const srgb = [r, g, b].map(v => v / 255).map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+    return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+
+function chooseContrastColor(hex) {
+    try {
+        const { r, g, b } = hexToRgb(hex);
+        const lum = relativeLuminance(r, g, b);
+        return lum > 0.5 ? '#0F172A' : '#FFFFFF';
+    } catch (e) {
+        return '#FFFFFF';
+    }
+}
+
+export class PriceCardGenerator {
     static async generateWeeklyCards(allPlans) {
         if (!allPlans || allPlans.length === 0) return [];
 
@@ -17,141 +60,172 @@ export class PriceCardGenerator {
         const savedPaths = [];
 
         for (const net of networks) {
-            // 1) Filter plans belonging to this network natively
             const netPlans = allPlans.filter(p => {
-                if (net === 'mtn') return p.network.includes('mtn');
-                return p.network.includes(net);
+                if (net === 'mtn') return p.network?.toLowerCase().includes('mtn');
+                return p.network?.toLowerCase().includes(net);
             });
 
             if (netPlans.length === 0) continue;
 
-            // 2) Select top 10 best values
-            // Currently sorting strictly by price to get the most affordable fast-selling options
-            const sorted = netPlans.sort((a, b) => a.sellPrice - b.sellPrice).slice(0, 10);
-
-            // 3) Draw and Save
-            const cardPath = await this._drawNetworkCard(net, sorted);
-            if (cardPath) {
-                savedPaths.push(cardPath);
+            const cheapestBySize = new Map();
+            for (const plan of netPlans) {
+                const quantity = this._normalizePlanSize(plan);
+                const existing = cheapestBySize.get(quantity.label);
+                if (!existing || plan.sellPrice < existing.sellPrice) {
+                    cheapestBySize.set(quantity.label, plan);
+                }
             }
+
+            const uniquePlans = Array.from(cheapestBySize.values())
+                .map(plan => ({ plan, quantity: this._normalizePlanSize(plan) }))
+                .sort((a, b) => a.quantity.value - b.quantity.value)
+                .slice(0, 6)
+                .map(item => item.plan);
+
+            const cardPath = await this._drawNetworkCard(net, uniquePlans);
+            if (cardPath) savedPaths.push(cardPath);
         }
+
         return savedPaths;
+    }
+
+    static _normalizePlanSize(plan) {
+        const text = `${plan.name || ''} ${plan.description || ''}`;
+        return parseQuantity(text);
     }
 
     static async _drawNetworkCard(networkName, plans) {
         try {
             const width = 1080;
-            const height = 1920;
+            const height = 1440;
             const canvas = createCanvas(width, height);
             const ctx = canvas.getContext('2d');
 
-            // --- Theme Selection ---
-            let bgConfig = { top: '#0f172a', bottom: '#020617', name: networkName.toUpperCase() };
-            if (networkName === 'mtn') bgConfig = { top: '#423d06', bottom: '#000000', name: 'MTN' };
-            if (networkName === 'airtel') bgConfig = { top: '#4a0714', bottom: '#000000', name: 'AIRTEL' };
-            if (networkName === 'glo') bgConfig = { top: '#064215', bottom: '#000000', name: 'GLO' };
-            if (networkName === '9mobile') bgConfig = { top: '#073322', bottom: '#000000', name: '9MOBILE' };
+            const config = COLOR_MAP[networkName] || { top: '#0F172A', bottom: '#111827', accent: '#FFFFFF', name: networkName.toUpperCase() };
 
-            // --- Background Gradient ---
             const gradient = ctx.createLinearGradient(0, 0, 0, height);
-            gradient.addColorStop(0, bgConfig.top);
-            gradient.addColorStop(1, bgConfig.bottom);
+            gradient.addColorStop(0, config.top);
+            gradient.addColorStop(1, config.bottom);
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, width, height);
 
-            // --- Badges & Ribbons ---
-            // Draw a quick vector "5G" badge top right (mocking ribbon)
-            ctx.fillStyle = '#fbbf24'; // Yellow ribbon
+            const softPanelY = 140;
+            ctx.fillStyle = 'rgba(255,255,255,0.14)';
             ctx.beginPath();
-            ctx.moveTo(900, 0);
-            ctx.lineTo(1080, 0);
-            ctx.lineTo(1080, 180);
-            ctx.lineTo(900, 0);
+            ctx.roundRect(60, softPanelY, width - 120, 240, [50]);
             ctx.fill();
 
-            ctx.save();
-            ctx.translate(1010, 70);
-            ctx.rotate(Math.PI / 4);
-            ctx.fillStyle = '#000000';
-            ctx.font = 'bold 36px Arial';
-            ctx.fillText('5G ✨', 0, 0);
-            ctx.restore();
-
-            // --- Headers ---
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 80px Arial';
+            // 5G Badge: prefer explicit badge token, then bottom, then top; ensures network-specific color
+            const badgeBg = config.badge || config.bottom || config.top || '#FBBF24';
+            const badgeText = chooseContrastColor(badgeBg);
+            ctx.fillStyle = badgeBg;
+            ctx.beginPath();
+            ctx.ellipse(width / 2, 220, 140, 140, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = badgeText;
+            ctx.font = 'bold 72px Arial';
             ctx.textAlign = 'center';
-            ctx.fillText(`10 Best ${bgConfig.name} Data`, width / 2, 200);
+            ctx.fillText('5G', width / 2, 245);
 
-            ctx.fillStyle = '#94a3b8';
-            ctx.font = 'bold 45px Arial';
-            ctx.fillText('INSTANT • RELIABLE • AFFORDABLE', width / 2, 280);
+            // Heading: Clarion A.I [NETWORK] Data
+            ctx.fillStyle = '#111827';
+            ctx.font = 'bold 60px Arial';
+            ctx.fillText(`Clarion A.I ${config.name} Data`, width / 2, 420);
 
-            // --- Body Box (The 10 Plans) ---
-            const margin = 80;
-            let currentY = 400;
+            ctx.fillStyle = '#475569';
+            ctx.font = 'bold 32px Arial';
+            ctx.fillText('Fast • Reliable • Affordable', width / 2, 470);
 
-            const boxHeight = 110;
-            const boxSpacing = 30;
+            const cardStartY = 520;
+            const rowHeight = 100;
+            const rowGap = 24;
+            const boxWidth = width - 120;
+            const maxRows = 6;
 
-            plans.forEach(plan => {
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            plans.forEach((plan, index) => {
+                const y = cardStartY + index * (rowHeight + rowGap);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
                 ctx.beginPath();
-                ctx.roundRect(margin, currentY, width - (margin * 2), boxHeight, [20]);
+                ctx.roundRect(60, y, boxWidth, rowHeight, [30]);
                 ctx.fill();
 
-                // Draw Text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 36px Arial';
                 ctx.textAlign = 'left';
-                ctx.fillStyle = '#f8fafc';
-                ctx.font = 'bold 45px Arial';
-                // truncate plan name slightly if too long
-                const pName = plan.name.length > 25 ? plan.name.substring(0, 25) + '...' : plan.name;
-                ctx.fillText(pName, margin + 40, currentY + 70);
+                const planLabel = this._normalizePlanSize(plan).label || plan.name;
+                ctx.fillText(planLabel, 100, y + 55);
 
+                ctx.fillStyle = '#111827';
+                ctx.font = 'bold 46px Arial';
                 ctx.textAlign = 'right';
-                // Show Official Price crossed out (Optional design touch)
-                if (plan.officialPrice && plan.officialPrice > plan.sellPrice) {
-                    ctx.fillStyle = '#ef4444'; // Red crossed out
-                    ctx.font = '30px Arial';
-                    const offPText = `₦${plan.officialPrice}`;
-                    ctx.fillText(offPText, width - margin - 220, currentY + 70);
-                    // strikethrough
-                    const strikeWx = ctx.measureText(offPText).width;
-                    ctx.beginPath();
-                    ctx.moveTo(width - margin - 220 - strikeWx, currentY + 60);
-                    ctx.lineTo(width - margin - 220, currentY + 60);
-                    ctx.strokeStyle = '#ef4444';
-                    ctx.lineWidth = 3;
-                    ctx.stroke();
-                }
-
-                // Final Sell Price
-                ctx.fillStyle = '#4ade80'; // Bright Green
-                ctx.font = 'bold 54px Arial';
-                ctx.fillText(`₦${plan.sellPrice}`, width - margin - 40, currentY + 75);
-
-                currentY += boxHeight + boxSpacing;
+                ctx.fillText(`₦${plan.sellPrice}`, width - 100, y + 60);
             });
 
-            // --- Bottom Instruction ---
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 50px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(`Reply DATA to buy instantly 🚀`, width / 2, currentY + 100);
+            // Dynamic spacing: position CTA and footer relative to last plan row to avoid overlap.
+            // Use text metrics where possible to ensure adequate separation.
+            const lastIndex = Math.max(0, plans.length - 1);
+            const lastRowY = cardStartY + lastIndex * (rowHeight + rowGap);
+            const lastRowBottom = plans.length > 0 ? lastRowY + rowHeight : (cardStartY - rowGap);
 
-            // Export to File
-            const fileName = `${networkName}_best10.jpg`;
+            // CTA measurements
+            const ctaText = 'Reply DATA to buy instantly';
+            ctx.font = 'bold 42px Arial';
+            const ctaMetrics = (ctx.measureText && ctx.measureText(ctaText)) || {};
+            const ctaAscent = ctaMetrics.actualBoundingBoxAscent || 34;
+            const ctaDescent = ctaMetrics.actualBoundingBoxDescent || 8;
+            const ctaHeight = ctaAscent + ctaDescent;
+
+            // Footer measurements
+            const footerText = 'Powered by Clarion A.I (NYSC SAED Project)';
+            ctx.font = '28px Arial';
+            const footerMetrics = (ctx.measureText && ctx.measureText(footerText)) || {};
+            const footerAscent = footerMetrics.actualBoundingBoxAscent || 18;
+            const footerDescent = footerMetrics.actualBoundingBoxDescent || 6;
+            const footerHeight = footerAscent + footerDescent;
+
+            // Desired spacing: at least 40px gap after last row, and at least 24px between CTA and footer
+            const minGapAfterRows = 40;
+            const minGapBetweenCtaAndFooter = 24;
+
+            // Compute baseline Y positions (baseline is approximately ascent from top)
+            const tentativeCtaTop = lastRowBottom + minGapAfterRows;
+            // Baseline y = top + ascent
+            let ctaY = Math.min(height - 140, tentativeCtaTop + ctaAscent);
+
+            // Ensure footer is sufficiently below CTA
+            let footerY = ctaY + (ctaDescent + minGapBetweenCtaAndFooter + footerAscent + 4);
+            // Clamp footer to not go off-canvas
+            if (footerY > height - 40) {
+                footerY = height - 40;
+                // if footer clamped, move CTA up if it would overlap
+                const maxCtaY = footerY - (footerAscent + minGapBetweenCtaAndFooter + ctaDescent);
+                if (ctaY > maxCtaY) ctaY = maxCtaY;
+            }
+
+            // Draw CTA
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 42px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(ctaText, width / 2, ctaY);
+
+            // Draw footer
+            ctx.fillStyle = '#CBD5E1';
+            ctx.font = '28px Arial';
+            ctx.fillText(footerText, width / 2, footerY);
+
+            const fileName = `${networkName}_best10_${Date.now()}.jpg`;
             const outPath = path.join(process.cwd(), 'src/media/price_cards', fileName);
+            logger.info(`Price card generation: network=${networkName} badgeBg=${badgeBg} heading="Clarion A.I ${config.name} Data" output=${fileName}`);
             const buffer = canvas.toBuffer('image/jpeg');
             fs.writeFileSync(outPath, buffer);
 
-            logger.info(`Generated 10-Best Card for ${networkName} at ${fileName}`);
+            logger.info(`Generated Clarion card for ${networkName} at ${fileName}`);
             return outPath;
-
         } catch (err) {
             logger.error(`Generation failed for ${networkName} card: ${err.message}`);
             return null;
         }
     }
 }
+
 export default PriceCardGenerator;

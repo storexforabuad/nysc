@@ -132,17 +132,19 @@ async function startWorker(isInitialBoot = true) {
                 logger.error(`[WORKER] Broadcast send failed:`, e.message);
             }
         } else if (msg.type === 'status') {
-            const { imagePaths, caption } = msg;
+            const { imageItems } = msg;
             const statusJid = 'status@broadcast';
             const randomDelay = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.floor(Math.random() * (maxMs - minMs))));
             try {
-                for (const imgPath of imagePaths) {
+                for (const item of imageItems) {
+                    const imgPath = item.imagePath || item.path;
+                    const caption = item.caption || 'Clarion status update.';
                     if (fs.existsSync(imgPath)) {
                         await sock.sendPresenceUpdate('composing', statusJid);
                         await randomDelay(1200, 2500);
                         await sock.sendMessage(statusJid, {
                             image: fs.readFileSync(imgPath),
-                            caption: caption || 'Clarion status update.'
+                            caption
                         });
                         await randomDelay(2000, 4000);
                     }
