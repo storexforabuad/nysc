@@ -14,6 +14,7 @@ import { startStatusPostJob } from './jobs/statusPostJob.js';
 import ReceiptGenerator from './services/ReceiptGenerator.js';
 import PriceCardGenerator from './services/PriceCardGenerator.js';
 import CaptionService from './services/CaptionService.js';
+import retryQueue from './services/RetryQueue.js';
 import broadcastQueue from './services/BroadcastQueue.js';
 import adminService from './services/AdminService.js';
 import rateLimit from 'express-rate-limit';
@@ -211,49 +212,73 @@ async function startServer() {
         if (!ledgerSnapshot.empty) {
           const order = ledgerSnapshot.docs[0].data();
           const orderId = ledgerSnapshot.docs[0].id;
+          const destinationJid = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
 
-          await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId);
-
-          // Use tiered markup saved with the order; fallback for legacy records
-          const netProfit = order.markup ?? +(Body.amount - order.baseCost).toFixed(2);
-          const coMemberShare = +(netProfit * 0.50).toFixed(2); // Proxy Bot Owner
-          const systemShare = +(netProfit * 0.30).toFixed(2); // Platform
-          const cdsShare = +(netProfit * 0.20).toFixed(2); // CDS Group
-
+          // 1. Move to DISPENSING to prevent double-processing and confirm receipt
           await db.ledger.doc(orderId).update({
-            status: 'COMPLETED',
-            settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
+            status: 'DISPENSING',
             updatedAt: new Date().toISOString()
           });
 
-          // Attempt to generate and send a receipt image to the buyer
+          if (sessionManager.motherSock) {
+            await sessionManager.motherSock.sendMessage(destinationJid, {
+              text: `⏳ *Payment Received!*\n\nYour payment of *₦${order.amount}* for ${order.planName || 'your data'} has been confirmed. We are dispensing your data now.\n\n_If there is a slight network delay, please be patient._`
+            }).catch(() => { });
+          }
+
           try {
-            const receiptPath = await ReceiptGenerator.generate(order);
-            if (receiptPath && sessionManager.motherSock) {
-              const destinationJid = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
-              await sessionManager.motherSock.sendMessage(destinationJid, {
-                image: fs.readFileSync(receiptPath),
-                caption: '📄 Your Clarion payment receipt is ready. Thank you for your purchase!'
-              });
-            }
-          } catch (sendErr) {
-            logger.warn(`Receipt send failed for order ${orderId}: ${sendErr.message}`);
-          }
+            // 2. Attempt Delivery
+            await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId);
 
-          // Add atomic increment for contacts collection
-          if (db.users && order.buyerPhone) {
+            // 3. COMPLETE
+            const netProfit = order.markup ?? +(Body.amount - order.baseCost).toFixed(2);
+            const coMemberShare = +(netProfit * 0.50).toFixed(2); // Proxy Bot Owner
+            const systemShare = +(netProfit * 0.30).toFixed(2); // Platform
+            const cdsShare = +(netProfit * 0.20).toFixed(2); // CDS Group
+
+            await db.ledger.doc(orderId).update({
+              status: 'COMPLETED',
+              settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
+              updatedAt: new Date().toISOString()
+            });
+
+            // Attempt to generate and send a receipt image to the buyer
             try {
-              const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
-              await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).set({
-                totalSpent: admin.firestore.FieldValue.increment(order.amount),
-                totalOrders: admin.firestore.FieldValue.increment(1)
-              }, { merge: true });
-            } catch (e) {
-              logger.warn(`Failed to increment contact ${order.buyerPhone} stats: ${e.message}`);
+              const receiptPath = await ReceiptGenerator.generate(order);
+              if (receiptPath && sessionManager.motherSock) {
+                await sessionManager.motherSock.sendMessage(destinationJid, {
+                  image: fs.readFileSync(receiptPath),
+                  caption: '📄 Your Clarion payment receipt is ready. Thank you for your purchase!'
+                });
+              }
+            } catch (sendErr) {
+              logger.warn(`Receipt send failed for order ${orderId}: ${sendErr.message}`);
             }
-          }
 
-          logger.info(`Order ${orderId} vended and settled successfully.`);
+            // Add atomic increment for contacts collection
+            if (db.users && order.buyerPhone) {
+              try {
+                const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+                await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).set({
+                  totalSpent: admin.firestore.FieldValue.increment(order.amount),
+                  totalOrders: admin.firestore.FieldValue.increment(1)
+                }, { merge: true });
+              } catch (e) {
+                logger.warn(`Failed to increment contact ${order.buyerPhone} stats: ${e.message}`);
+              }
+            }
+            logger.info(`Order ${orderId} vended and settled successfully.`);
+
+          } catch (dispenseError) {
+            // 4. FAILED DISPENSE (Will be picked up by RetryQueue)
+            logger.error(`Dispense failed for order ${orderId}: ${dispenseError.message}`);
+            await db.ledger.doc(orderId).update({
+              status: 'FAILED_DISPENSE',
+              retryCount: 0,
+              lastError: dispenseError.message,
+              updatedAt: new Date().toISOString()
+            });
+          }
         }
       } catch (error) {
         logger.error('Webhook processing failed:', error);
@@ -330,6 +355,32 @@ async function startServer() {
           startWeeklyReportJob();
           startStatusPostJob();
           broadcastQueue.start();
+
+          // Wire up RetryQueue customer notification callback to Proxy Workers
+          retryQueue.onOrderUpdate = async (event) => {
+            const { type, order, message } = event;
+            const targetJid = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+
+            // Try pushing via ProxyWorker if alive, else fallback to MotherBot
+            const worker = Array.from(sessionManager.sessions.values())
+              .find(w => w.workerData?.user?.uid === order.userId);
+
+            if (worker) {
+              if (type === 'OWNER_ALERT') {
+                worker.postMessage({ type: 'notify_owner', message });
+              } else {
+                worker.postMessage({ type: 'notify_customer', targetJid, message });
+              }
+            } else if (sessionManager.motherSock) {
+              // Fallback: send directly through Hub
+              await sessionManager.motherSock.sendMessage(
+                type === 'OWNER_ALERT' ? order.userId : targetJid,
+                { text: message }
+              ).catch(() => { });
+            }
+          };
+          retryQueue.start();
+
         } catch (botError) {
           logger.error({ err: botError }, 'Background Bot Initialization failed');
         }

@@ -78,6 +78,19 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const dataCommandRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const isDataMatch = dataCommandRegex.test(command);
 
+    if (command === 'balance') {
+      let balance = 0;
+      if (db.users && actionableJid) {
+        try {
+          const doc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
+          if (doc.exists) balance = doc.data().walletBalance || 0;
+        } catch (e) {
+          logger.error('Error fetching balance:', e.message);
+        }
+      }
+      return sock.sendMessage(from, { text: `🛡️ *Clarion Wallet*\n\nYour current balance is: *₦${balance}*\n\nThis balance is automatically funded if your previous data orders could not be delivered due to network issues.\n\nReply *DATA* to use your balance.` });
+    }
+
     if (command === 'menu' || command === 'start' || isDataMatch) {
       const match = isDataMatch ? command.match(dataCommandRegex) : null;
       const targetPrice = match && match[1] ? parseInt(match[1]) : null;
@@ -159,9 +172,78 @@ export const handleProxyMessage = async (sock, msg, user) => {
         return sock.sendMessage(from, { text: '❌ Invalid plan serial. Type *DATA* to view the Clarion catalog.' });
       }
 
+      // 1. Fetch customer's wallet balance
+      let walletBalance = 0;
+      if (db.users && actionableJid) {
+        try {
+          const customerDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
+          if (customerDoc.exists) walletBalance = customerDoc.data().walletBalance || 0;
+        } catch (e) { }
+      }
+
       const orderRef = `CLARION_${Date.now()}`;
+
+      // 2. Exact match or sufficient wallet balance? Buy instantly using Wallet
+      if (walletBalance >= plan.sellPrice) {
+        await sock.sendMessage(from, { text: `💳 *Wallet Vending Proceeding*\n\nDeducting ₦${plan.sellPrice} from your Clarion Wallet. Dispensing data...` });
+
+        // Deduct from wallet immediately
+        if (db.users) {
+          await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
+            walletBalance: admin.firestore.FieldValue.increment(-plan.sellPrice)
+          }, { merge: true });
+        }
+
+        const netProfit = (plan.sellPrice - plan.basePrice);
+        const coMemberShare = +(netProfit * 0.50).toFixed(2);
+        const systemShare = +(netProfit * 0.30).toFixed(2);
+        const cdsShare = +(netProfit * 0.20).toFixed(2);
+
+        // Record as DISPENSING
+        if (db.ledger) {
+          await db.ledger.doc(orderRef).set({
+            type: 'COMPLETED_DATA', // Already paid, ready to map
+            userId: user.uid,
+            buyerPhone: actionableJid,
+            planId: plan.id,
+            serial: plan.serial,
+            amount: plan.sellPrice,
+            baseCost: plan.basePrice,
+            markup: netProfit,
+            status: 'DISPENSING',
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        try {
+          // Dispense inline
+          await payflex.dispenseData(actionableJid.split('@')[0], plan.serial);
+
+          if (db.ledger) {
+            await db.ledger.doc(orderRef).update({
+              status: 'COMPLETED',
+              settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
+              updatedAt: new Date().toISOString()
+            });
+          }
+          return sock.sendMessage(from, { text: `✅ *Great News!*\n\nYour ${plan.name} plan has been successfully delivered and deducted from your Clarion Wallet.\n\nThank you for using Clarion A.I! 🎉` });
+        } catch (dispenseError) {
+          // If Peyflex fails again during wallet buy, push it to FAILED_DISPENSE for RetryQueue to handle
+          if (db.ledger) {
+            await db.ledger.doc(orderRef).update({
+              status: 'FAILED_DISPENSE',
+              retryCount: 0,
+              lastError: dispenseError.message,
+              updatedAt: new Date().toISOString()
+            });
+          }
+          return sock.sendMessage(from, { text: `⚠️ We experienced a slight delay dispensing your data. Don't worry! Our automated system will retry this order and you'll get your data shortly.` });
+        }
+      }
+
+      // 3. Insufficient wallet balance? Proceed with Bank Transfer instructions
       if (db.ledger) {
-        await db.ledger.add({
+        await db.ledger.doc(orderRef).set({
           type: 'PENDING_DATA',
           userId: user.uid,
           buyerPhone: actionableJid,

@@ -189,6 +189,13 @@ class PayflexService {
       throw new Error(`Peyflex API unavailable (${err.code || 'CIRCUIT_OPEN'}).`);
     });
 
+    this.client.interceptors.response.use(null, (error) => {
+      if (error.response) {
+        logger.error(`[PEYFLEX-RAW] HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`);
+      }
+      return Promise.reject(error);
+    });
+
     this.cachedPlans = [];
   }
 
@@ -328,6 +335,22 @@ class PayflexService {
 
       if (!plan) throw new Error('Invalid plan selection');
 
+      if (config.mockMode) {
+        // Mock flow: if mobile number is '08000000000', simulate a telco network failure to trigger RetryQueue/Refunds
+        if (phoneNumber === '08000000000') {
+          logger.warn(`MOCK: Simulating Peyflex API failure for ${phoneNumber}`);
+          throw new Error('MOCK TELCO NETWORK ERROR');
+        }
+
+        logger.info(`MOCK: Vended ${plan.name} to ${phoneNumber} successfully.`);
+        return {
+          status: 'success',
+          reference: `MOCK_REF_${Date.now()}`,
+          planDetails: plan,
+          apiResponse: { status: 'SUCCESS', reference: `MOCK_REF_${Date.now()}` }
+        };
+      }
+
       logger.info(`Dispensing real data: ${plan.name} to ${phoneNumber} via Peyflex`);
 
       const response = await this.postBreaker.fire('/api/data/purchase/', {
@@ -348,7 +371,8 @@ class PayflexService {
         throw new Error(response.data.message || 'Data vending failed at provider');
       }
     } catch (error) {
-      logger.error(`Error dispensing data to ${phoneNumber}:`, error.response?.data || error.message);
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      logger.error(`Error dispensing data to ${phoneNumber}: ${detail}`);
       throw new Error(error.response?.data?.message || error.message);
     }
   }

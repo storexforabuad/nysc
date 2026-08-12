@@ -153,6 +153,23 @@ async function startWorker(isInitialBoot = true) {
             } catch (e) {
                 logger.error(`[WORKER] Status post failed:`, e.message);
             }
+        } else if (msg.type === 'notify_customer') {
+            const { targetJid, message } = msg;
+            try {
+                await sock.sendPresenceUpdate('composing', targetJid);
+                await new Promise(r => setTimeout(r, 1000));
+                await sock.sendMessage(targetJid, { text: message });
+            } catch (e) {
+                logger.error(`[WORKER] Failed to send customer notification: ${e.message}`);
+            }
+        } else if (msg.type === 'notify_owner') {
+            const { message } = msg;
+            const ownerJid = user.phoneJid || user.uid;
+            try {
+                await sock.sendMessage(ownerJid, { text: message });
+            } catch (e) {
+                logger.error(`[WORKER] Failed to send owner alert: ${e.message}`);
+            }
         }
     });
 }
