@@ -16,6 +16,7 @@ const STATES = {
   START: 'START',
   AWAITING_NYSC_CODE: 'AWAITING_NYSC_CODE',
   AWAITING_PROXY_NUMBER: 'AWAITING_PROXY_NUMBER',
+  AWAITING_QR_SCAN: 'AWAITING_QR_SCAN',
   AWAITING_DETAILS: 'AWAITING_DETAILS',
   COMPLETED: 'COMPLETED',
   AWAITING_WITHDRAW_DETAILS: 'AWAITING_WITHDRAW_DETAILS',
@@ -137,8 +138,9 @@ export const handleMotherMessage = async (sock, msg) => {
 
       let targetNumber = rawNumber;
 
-      // Transition to COMPLETED state immediately so they can manage wallet
-      await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net`, state: STATES.COMPLETED });
+      // Hold in AWAITING_QR_SCAN until bot actually connects.
+      // SessionManager's new_login IPC event will update this to AWAITING_BROADCAST_CONTACTS.
+      await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net`, state: STATES.AWAITING_QR_SCAN });
 
       await sock.sendMessage(from, { text: `⏳ Generating your activation QR code for *${targetNumber}*...\n\nPlease stand by — the Clarion Hub is preparing your secure link!` });
 
@@ -161,6 +163,10 @@ export const handleMotherMessage = async (sock, msg) => {
         await saveUser({ ...userData, state: STATES.AWAITING_PROXY_NUMBER });
         await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try typing your phone number again (e.g. 08012345678).' });
       }
+    }
+    else if (userData.state === STATES.AWAITING_QR_SCAN) {
+      // User is in QR scan limbo — bot not connected yet. Just guide them.
+      return sock.sendMessage(from, { text: '📱 Please scan the QR code displayed on the screen to activate your store. Message me again once you have scanned it!' });
     }
     else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 
