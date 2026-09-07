@@ -1,0 +1,275 @@
+=== SQUAD B2C-B2B STATIC VA UAT SIGN OFF RESULTS ===
+Generated on: 2026-08-17T17:04:31.025Z
+
+--- Pre-fetch: VA Details ---
+Method: GET
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/customer/9298876974
+
+[REQUEST PAYLOAD]
+(None / Query Parameters omitted)
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": {
+    "first_name": "MG💯",
+    "last_name": "Clarion",
+    "mobile_num": "08000000000",
+    "email": "161856060690464@nyscbot.com",
+    "customer_identifier": "161856060690464",
+    "virtual_account_number": "9298876974",
+    "beneficiary_account": "0000000000"
+  }
+}
+
+=======================================================
+
+--- 1. Create Virtual Account (Individual) ---
+Method: POST
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account
+
+[REQUEST PAYLOAD SQUAD EXPECTS]
+{
+  "customer_identifier": "161856060690464",
+  "first_name": "MG💯",
+  "last_name": "Clarion",
+  "mobile_num": "08000000000",
+  "bvn": "22308000843",
+  "dob": "03/11/2002",
+  "gender": "1",
+  "address": "11 Bukole str, Aja, Lagos",
+  "email": "161856060690464@nyscbot.com",
+  "beneficiary_account": "0000000000"
+}
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": {
+    "first_name": "MG💯",
+    "last_name": "Clarion",
+    "mobile_num": "08000000000",
+    "email": "161856060690464@nyscbot.com",
+    "customer_identifier": "161856060690464",
+    "virtual_account_number": "9298876974",
+    "beneficiary_account": "0000000000"
+  }
+}
+
+=======================================================
+
+--- 2. Create a Virtual Account (Business) ---
+Method: POST
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/business
+
+[REQUEST PAYLOAD SQUAD EXPECTS]
+{
+  "customer_identifier": "161856060690464_BUS",
+  "business_name": "Clarion A.I",
+  "mobile_num": "08033455084",
+  "bvn": "22308000843",
+  "email": "business@clarion.com",
+  "beneficiary_account": "0000000000"
+}
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 422,
+  "success": false,
+  "message": "Merchant has reached account opening limit, please contact habaripay support",
+  "data": {}
+}
+
+=======================================================
+
+--- 3. Simulate Payment ---
+Method: POST
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/simulate/payment
+
+[REQUEST PAYLOAD SQUAD EXPECTS]
+{
+  "virtual_account_number": "9298876974",
+  "amount": "59000"
+}
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": "Payment successful"
+}
+
+=======================================================
+
+--- 4. Query Customers transaction ---
+Method: GET
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/customer/transactions/161856060690464
+
+[REQUEST PAYLOAD]
+(None / Query Parameters omitted)
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "transaction_reference": "REF4YRYV6TYD1786986259648",
+      "virtual_account_number": "9298876974",
+      "principal_amount": "59000.00",
+      "settled_amount": "58852.50",
+      "fee_charged": "147.50",
+      "transaction_date": "2026-08-17T17:04:19.648Z",
+      "transaction_indicator": "C",
+      "remarks": "Transfer from MG💯 Clarion to sandbox | [161856060690464]",
+      "currency": "NGN",
+      "alerted_merchant": true,
+      "merchant_settlement_date": null,
+      "frozen_transaction": null,
+      "customer": {
+        "customer_identifier": "161856060690464"
+      },
+      "virtual_account": {
+        "account_type": "static"
+      }
+    },
+    {
+      "transaction_reference": "REF8G62LNZ981786986052467",
+      "virtual_account_number": "9298876974",
+      "principal_amount": "59000.00",
+      "settled_amount": "58852.50",
+      "fee_charged": "147.50",
+      "transaction_date": "2026-08-17T17:00:52.467Z",
+      "transaction_indicator": "C",
+      "remarks": "Transfer from MG💯 Clarion to sandbox | [161856060690464]",
+      "currency": "NGN",
+      "alerted_merchant": true,
+      "merchant_settlement_date": null,
+      "frozen_transaction": null,
+      "customer": {
+        "customer_identifier": "161856060690464"
+      },
+      "virtual_account": {
+        "account_type": "static"
+      }
+    }
+  ]
+}
+
+=======================================================
+
+--- 5. Query Merchants transaction ---
+Method: GET
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/merchant/transactions
+
+[REQUEST PAYLOAD]
+(None / Query Parameters omitted)
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "transaction_reference": "REF4YRYV6TYD1786986259648",
+      "virtual_account_number": "9298876974",
+      "principal_amount": "59000.00",
+      "settled_amount": "58852.50",
+      "fee_charged": "147.50",
+      "transaction_date": "2026-08-17T17:04:19.648Z",
+      "transaction_indicator": "C",
+      "remarks": "Transfer from MG💯 Clarion to sandbox | [161856060690464]",
+      "currency": "NGN",
+      "alerted_merchant": true,
+      "merchant_settlement_date": null,
+      "frozen_transaction": null,
+      "customer": {
+        "customer_identifier": "161856060690464"
+      },
+      "virtual_account": {
+        "account_type": "static"
+      }
+    },
+    {
+      "transaction_reference": "REF8G62LNZ981786986052467",
+      "virtual_account_number": "9298876974",
+      "principal_amount": "59000.00",
+      "settled_amount": "58852.50",
+      "fee_charged": "147.50",
+      "transaction_date": "2026-08-17T17:00:52.467Z",
+      "transaction_indicator": "C",
+      "remarks": "Transfer from MG💯 Clarion to sandbox | [161856060690464]",
+      "currency": "NGN",
+      "alerted_merchant": true,
+      "merchant_settlement_date": null,
+      "frozen_transaction": null,
+      "customer": {
+        "customer_identifier": "161856060690464"
+      },
+      "virtual_account": {
+        "account_type": "static"
+      }
+    }
+  ]
+}
+
+=======================================================
+
+--- 6. Retrieve VA details ---
+Method: GET
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/customer/9298876974
+
+[REQUEST PAYLOAD]
+(None / Query Parameters omitted)
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": {
+    "first_name": "MG💯",
+    "last_name": "Clarion",
+    "mobile_num": "08000000000",
+    "email": "161856060690464@nyscbot.com",
+    "customer_identifier": "161856060690464",
+    "virtual_account_number": "9298876974",
+    "beneficiary_account": "0000000000"
+  }
+}
+
+=======================================================
+
+--- 7. Retrieve VA details using the customer identifier ---
+Method: GET
+Endpoint: https://sandbox-api-d.squadco.com/virtual-account/161856060690464
+
+[REQUEST PAYLOAD]
+(None / Query Parameters omitted)
+
+[ACTUAL RESPONSE RECEIVED]
+{
+  "status": 200,
+  "success": true,
+  "message": "Success",
+  "data": {
+    "first_name": "MG💯",
+    "last_name": "Clarion",
+    "bank_code": "058",
+    "virtual_account_number": "9298876974",
+    "beneficiary_account": "0000000000",
+    "customer_identifier": "161856060690464",
+    "created_at": "2026-08-11T14:27:05.928Z",
+    "updated_at": "2026-08-11T14:27:05.928Z"
+  }
+}
+
+=======================================================
+

@@ -1,0 +1,53 @@
+UAT Preparation Guide
+What to Prepare Before Your UAT Session
+To ensure a smooth and successful UAT session, please have the following ready:
+1. Business & Use Case
+Be prepared to give a brief overview of your company/business, including:
+What your business does
+How you intend to use the Squad service
+The specific service(s) being integrated
+2. User Journey
+Be prepared to briefly explain your end-to-end user journey up to the point where the Squad service is
+called.
+For example:
+Customer initiates a transaction → your system processes the request → your system calls
+the Squad API → response is received and processed.
+3. Live Integration Demonstration
+During the UAT session, you will be required to share your screen and demonstrate your integration.
+Please have the following ready:
+The relevant API endpoints you have integrated
+The request payload sent to the endpoint
+The API response received
+The associated webhook notification(s) received
+Your implementation of webhook hash/signature validation
+Evidence that your system successfully processes the API response and webhook notification
+✅ UAT Readiness Checklist
+[ ] Business/use case overview prepared
+[ ] End-to-end user journey prepared
+[ ] API integration completed
+[ ] Request payloads available
+[ ] API responses available
+[ ] Webhook notifications configured and testable
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1
+--- PAGE ---
+[ ] Hash/signature validation implemented and testable
+[ ] Screen sharing available for the UAT session
+Please ensure your integration is fully completed and testable before requesting a UAT session.
+• 
+• 
+2

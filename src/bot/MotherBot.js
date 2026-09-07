@@ -8,6 +8,7 @@ import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import { detectNetwork } from '../utils/networkUtils.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
+import QRCode from 'qrcode';
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const motherMessageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -16,6 +17,7 @@ const STATES = {
   START: 'START',
   AWAITING_NYSC_CODE: 'AWAITING_NYSC_CODE',
   AWAITING_PROXY_NUMBER: 'AWAITING_PROXY_NUMBER',
+  AWAITING_QR_DELIVERY_NUMBER: 'AWAITING_QR_DELIVERY_NUMBER',
   AWAITING_QR_SCAN: 'AWAITING_QR_SCAN',
   AWAITING_DETAILS: 'AWAITING_DETAILS',
   COMPLETED: 'COMPLETED',
@@ -29,6 +31,43 @@ const STATES = {
 
 // In-memory fallback if Firestore is slow/down
 const mockUserStore = new Map();
+
+const startQRImageDelivery = async (sock, from, user, saveUser) => {
+  const targetNumber = user.phoneNumber;
+  const deliveryJid = user.qrDeliveryJid || from;
+
+  try {
+    await sessionManager.startQRPairingForUser(
+      {
+        ...user,
+        uid: targetNumber.includes('@') ? targetNumber : `${targetNumber}@s.whatsapp.net`
+      },
+      async (rawQR) => {
+        try {
+          const qrBuffer = await QRCode.toBuffer(rawQR, { width: 600, margin: 2 });
+
+          await sock.sendMessage(deliveryJid, {
+            image: qrBuffer,
+            caption: `📸 *Scan this QR Code with your Bot Phone (+${targetNumber})!*\n\n1. Open WhatsApp on *+${targetNumber}*\n2. Go to *Settings > Linked Devices > Link a Device*\n3. Point your camera at this QR image on this screen!\n\n⏱️ *Expires in 60 seconds. Reply RESEND to get a fresh code.*`
+          });
+
+          if (deliveryJid !== from) {
+            await sock.sendMessage(from, {
+              text: `📤 *QR image sent to +${deliveryJid.split('@')[0]}!* Open that phone and scan the image with your bot phone (*+${targetNumber}*).`
+            });
+          }
+        } catch (imgErr) {
+          logger.error('Error generating/sending QR image:', imgErr);
+          await sock.sendMessage(from, { text: '❌ Error generating QR code image. Reply *RESEND* to try again.' });
+        }
+      }
+    );
+  } catch (err) {
+    logger.error('QR Pairing Error:', err);
+    await saveUser({ ...user, state: STATES.AWAITING_PROXY_NUMBER });
+    await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try typing your bot phone number again (e.g. 08012345678).' });
+  }
+};
 
 export const handleMotherMessage = async (sock, msg) => {
   const from = msg.key.remoteJid;
@@ -138,35 +177,48 @@ export const handleMotherMessage = async (sock, msg) => {
 
       let targetNumber = rawNumber;
 
-      // Hold in AWAITING_QR_SCAN until bot actually connects.
-      // SessionManager's new_login IPC event will update this to AWAITING_BROADCAST_CONTACTS.
-      await saveUser({ ...userData, phoneNumber: targetNumber, phoneJid: `${targetNumber}@s.whatsapp.net`, state: STATES.AWAITING_QR_SCAN });
+      await saveUser({
+        ...userData,
+        phoneNumber: targetNumber,
+        phoneJid: `${targetNumber}@s.whatsapp.net`,
+        state: STATES.AWAITING_QR_DELIVERY_NUMBER
+      });
 
-      await sock.sendMessage(from, { text: `⏳ Generating your activation QR code for *${targetNumber}*...\n\nPlease stand by — the Clarion Hub is preparing your secure link!` });
+      return sock.sendMessage(from, {
+        text: `📱 *Where should we send your QR activation code image?*\n\nTo scan the QR code, the image needs to be displayed on a screen nearby (so your bot phone *+${targetNumber}* can scan it).\n\n• Reply *SAME* to receive the QR image right here in this chat.\n• Or reply with a *Phone Number* (e.g. 08012345678 - personal phone, laptop, or friend's WhatsApp) to receive the image there instead.`
+      });
+    }
+    else if (userData.state === STATES.AWAITING_QR_DELIVERY_NUMBER) {
+      let deliveryJid = from;
 
-      try {
-        await sessionManager.startQRPairingForUser(
-          {
-            ...userData,
-            uid: targetNumber.includes('@') ? targetNumber : `${targetNumber}@s.whatsapp.net`
-          },
-          async () => {
-            // Called the instant the QR appears in the terminal
-            await sock.sendMessage(from, {
-              text: `📱 *Your QR code is now live!*\n\nThe admin is turning the screen towards you right now.\n\n*How to scan:*\n1. Open WhatsApp on the phone you want the bot to run on\n2. Go to *Settings > Linked Devices*\n3. Tap *Link a Device*\n4. Point your camera at the QR code on the screen\n\n⏱️ You have about 60 seconds before it expires!\n\n*(Once scanned, your business is live! Type MENU to manage your store).*`
-            });
-          }
-        );
-      } catch (err) {
-        logger.error('QR Pairing Error:', err);
-        // Put them back in AWAITING_PROXY_NUMBER so they can try again easily
-        await saveUser({ ...userData, state: STATES.AWAITING_PROXY_NUMBER });
-        await sock.sendMessage(from, { text: '❌ Failed to generate QR code. Please try typing your phone number again (e.g. 08012345678).' });
+      if (command.toUpperCase() !== 'SAME') {
+        let rawNum = command.replace(/\D/g, '');
+        if (rawNum.startsWith('0') && rawNum.length === 11) {
+          rawNum = '234' + rawNum.substring(1);
+        }
+        if (rawNum.length < 10) {
+          return sock.sendMessage(from, { text: '❌ Invalid phone number. Reply *SAME* to send here, or enter a valid 11-digit phone number:' });
+        }
+        deliveryJid = `${rawNum}@s.whatsapp.net`;
       }
+
+      const updatedUser = { ...userData, qrDeliveryJid: deliveryJid, state: STATES.AWAITING_QR_SCAN };
+      await saveUser(updatedUser);
+
+      await sock.sendMessage(from, { text: `⏳ Generating your activation QR code image for *+${userData.phoneNumber}*...\n\nPlease stand by!` });
+
+      await startQRImageDelivery(sock, from, updatedUser, saveUser);
     }
     else if (userData.state === STATES.AWAITING_QR_SCAN) {
-      // User is in QR scan limbo — bot not connected yet. Just guide them.
-      return sock.sendMessage(from, { text: '📱 Please scan the QR code displayed on the screen to activate your store. Message me again once you have scanned it!' });
+      if (command.toUpperCase() === 'RESEND' || command.toUpperCase() === 'RETRY') {
+        await sock.sendMessage(from, { text: `⏳ Regenerating a fresh QR code image...` });
+        await startQRImageDelivery(sock, from, userData, saveUser);
+      } else {
+        const destNum = (userData.qrDeliveryJid || from).split('@')[0];
+        return sock.sendMessage(from, {
+          text: `📱 Your activation QR code image was sent to *+${destNum}*.\n\nOpen WhatsApp on *+${destNum}*, display the image on screen, and scan it with your bot phone (*+${userData.phoneNumber}*).\n\nReply *RESEND* if the code expired!`
+        });
+      }
     }
     else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 

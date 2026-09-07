@@ -231,7 +231,7 @@ class SessionManager {
         logger.info(`[CLARION-ACTIVATE] ACTIVATION CODE FOR: ${user.uid.split('@')[0]}`);
         qrcode.generate(msg.qr, { small: true });
         logger.info('========================================');
-        try { await onQRReady(); } catch (e) { }
+        try { await onQRReady(msg.qr); } catch (e) { }
       }
     });
 

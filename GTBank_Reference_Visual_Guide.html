@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GTBank Reference Form - Visual Guide</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f5;
+            display: flex;
+            justify-content: center;
+            padding: 40px;
+        }
+        .form-container {
+            background-color: white;
+            padding: 40px;
+            width: 800px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            border: 1px solid #ccc;
+        }
+        .form-row {
+            margin-bottom: 25px;
+            position: relative;
+        }
+        .label {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .line {
+            border-bottom: 1px solid #000;
+            margin-top: 25px;
+            position: relative;
+        }
+        .handwritten {
+            position: absolute;
+            bottom: 2px;
+            left: 10px;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            color: #0000ff; /* Blue ink */
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .account-boxes {
+            display: flex;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .box {
+            width: 25px;
+            height: 25px;
+            border: 1px solid #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Comic Sans MS', cursive;
+            color: #0000ff;
+            font-weight: bold;
+        }
+        .date-boxes {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            margin-left: auto;
+        }
+        .date-group {
+            display: flex;
+            gap: 2px;
+        }
+        .date-label {
+            font-size: 10px;
+            text-align: center;
+            margin-top: 2px;
+        }
+        .header {
+            font-weight: bold;
+            font-size: 15px;
+            margin-bottom: 30px;
+        }
+        .footer-note {
+            font-size: 11px;
+            color: #555;
+            margin-top: 30px;
+        }
+        .caution {
+            color: red;
+            text-align: center;
+            font-size: 12px;
+            font-weight: bold;
+            margin-top: 15px;
+        }
+        .flex-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="form-container">
+        <div class="header">
+            To: <br>
+            The Manager, <br>
+            Guaranty Trust
+        </div>
+        
+        <div class="form-row">
+            <div class="label">Dear Sir,</div>
+        </div>
+
+        <div class="form-row">
+            <div class="label">Name Of Company</div>
+            <div class="line">
+                <span class="handwritten">CLARION DIGITAL HUB</span>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="label">I/We would wish to confirm that we have known the above-named Company and its Directors for</div>
+            <div class="line">
+                <span class="handwritten" style="left: 65%;">3 YEARS</span>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 40px;">
+            <div class="label">I/We would like to comment about their suitability for maintaining a current account with yourselves as follows:</div>
+            <div class="line">
+                <span class="handwritten">Fit, reliable, and highly suitable for maintaining a current account.</span>
+            </div>
+            <div class="line"></div>
+            <div class="line"></div>
+        </div>
+
+        <div class="form-row" style="margin-top: 40px;">
+            <div class="label">We maintain a current account with:</div>
+        </div>
+
+        <div class="form-row">
+            <div class="label" style="display:inline-block; width: 120px;">Name of Bank:</div>
+            <div class="line" style="display:inline-block; width: 630px; margin-top:0;">
+                <span class="handwritten">GUARANTY TRUST BANK PLC</span>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="label" style="display:inline-block; width: 80px;">Address:</div>
+            <div class="line" style="display:inline-block; width: 670px; margin-top:0;">
+                <span class="handwritten">MAIN BRANCH, BAUCHI, BAUCHI STATE</span>
+            </div>
+        </div>
+
+        <div class="form-row" style="display: flex; align-items: center; margin-top: 30px;">
+            <div class="label" style="margin-right: 15px;">My/Our Account No. is:</div>
+            <div class="account-boxes">
+                <div class="box">0</div><div class="box">1</div><div class="box">2</div><div class="box">3</div><div class="box">4</div>
+                <div class="box">5</div><div class="box">6</div><div class="box">7</div><div class="box">8</div><div class="box">9</div>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 30px;">
+            <div class="label" style="display:inline-block; width: 180px;">And my/our Phone No.(s) is/are:</div>
+            <div class="line" style="display:inline-block; width: 570px; margin-top:0;">
+                <span class="handwritten">0803 123 4567</span>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 30px;">
+            <div class="label">Yours faithfully,</div>
+        </div>
+
+        <div class="form-row flex-row" style="margin-top: 50px;">
+            <div style="width: 50%;">
+                <div class="line" style="width: 80%;">
+                    <span class="handwritten" style="font-family: 'Brush Script MT', cursive; font-size: 24px;">Alhaji Abubakar</span>
+                </div>
+                <div class="label" style="text-align: center; width: 80%;">Signature</div>
+            </div>
+            
+            <div class="date-boxes">
+                <span class="label" style="margin-bottom:0; margin-right: 10px;">Date</span>
+                <div>
+                    <div class="date-group"><div class="box">2</div><div class="box">4</div></div>
+                    <div class="date-label">Day</div>
+                </div>
+                <div>
+                    <div class="date-group"><div class="box">0</div><div class="box">8</div></div>
+                    <div class="date-label">Month</div>
+                </div>
+                <div>
+                    <div class="date-group"><div class="box">2</div><div class="box">0</div><div class="box">2</div><div class="box">6</div></div>
+                    <div class="date-label">Year</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 50px;">
+            <div class="label" style="display:inline-block; width: 50px;">Name</div>
+            <div class="line" style="display:inline-block; width: 700px; margin-top:0;">
+                <span class="handwritten">ALHAJI ABUBAKAR IBRAHIM</span>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="label" style="display:inline-block; width: 60px;">Address</div>
+            <div class="line" style="display:inline-block; width: 690px; margin-top:0;">
+                <span class="handwritten">NO 15 AHMADU BELLO WAY, BAUCHI</span>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="label" style="display:inline-block; width: 250px;">Name of Director known to the referee</div>
+            <div class="line" style="display:inline-block; width: 500px; margin-top:0;">
+                <span class="handwritten">MUSTAPHA GAMBO LAWAL</span>
+            </div>
+        </div>
+
+        <div class="footer-note">
+            <strong>Please note:</strong><br><br>
+            1. Referees must be a current account holder either in GTCO or any other bank. Referees from other banks must be corporate account holders only.<br><br>
+            2. Referee's account must not be less than six months old.<br><br>
+            3. Salary account holder(s) are not suitable referees.
+        </div>
+        
+        <div class="caution">
+            "CAUTION"<br>
+            IT IS VERY DANGEROUS TO INTRODUCE A PERSON WHO IS NOT WELL-KNOWN TO YOU<br>
+            <span style="color: transparent; font-size: 8px;">(powered by nano banana)</span>
+        </div>
+    </div>
+
+</body>
+</html>
