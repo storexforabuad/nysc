@@ -25,10 +25,19 @@ service cloud.firestore {
 
     // Users collection
     match /users/{userId} {
-      // Only the user can read their own profile
-      allow get: if isOwner(userId);
+      // Only the user can read their own profile, or admin
+      allow get: if isOwner(userId) || isAdmin();
       // Writes are handled by Mother Bot (Admin SDK)
-      allow list: if false;
+      allow list: if isAdmin();
+    }
+
+    // CDS Personal Proposals Collection
+    match /cds_proposals/{proposalId} {
+      // Corps member can view their own proposal, Admin can view all
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      // Writes are strictly server-side (Mother Bot / Admin SDK)
+      allow write: if false;
     }
 
     // Plans Cache

@@ -3,12 +3,14 @@ import admin, { db } from '../services/firebase.js';
 import squad from '../services/SquadService.js';
 import payflex from '../services/payflex.js';
 import sessionManager from './SessionManager.js';
-import wallet, { WITHDRAWAL_FEES } from '../services/WalletService.js';
+import wallet, { WITHDRAWAL_FEES, PARTNERSHIP_TIERS } from '../services/WalletService.js';
 import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
+import mediaGen from '../services/mediaGen.js';
 import { detectNetwork } from '../utils/networkUtils.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import QRCode from 'qrcode';
+import { mockCdsProposals } from '../services/AdminService.js';
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const motherMessageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -16,6 +18,8 @@ const motherMessageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
 const STATES = {
   START: 'START',
   AWAITING_NYSC_CODE: 'AWAITING_NYSC_CODE',
+  AWAITING_TIER_SELECTION: 'AWAITING_TIER_SELECTION',
+  AWAITING_INITIAL_BANK: 'AWAITING_INITIAL_BANK',
   AWAITING_PROXY_NUMBER: 'AWAITING_PROXY_NUMBER',
   AWAITING_QR_DELIVERY_NUMBER: 'AWAITING_QR_DELIVERY_NUMBER',
   AWAITING_QR_SCAN: 'AWAITING_QR_SCAN',
@@ -23,11 +27,34 @@ const STATES = {
   COMPLETED: 'COMPLETED',
   AWAITING_WITHDRAW_DETAILS: 'AWAITING_WITHDRAW_DETAILS',
   AWAITING_WITHDRAW_CONFIRM: 'AWAITING_WITHDRAW_CONFIRM',
+  AWAITING_UPDATE_BANK: 'AWAITING_UPDATE_BANK',
+  AWAITING_UPDATE_BANK_CONFIRM: 'AWAITING_UPDATE_BANK_CONFIRM',
   AWAITING_BROADCAST_CONTACTS: 'AWAITING_BROADCAST_CONTACTS',
   AWAITING_CONTACT_ACTION: 'AWAITING_CONTACT_ACTION',
   AWAITING_DATA_PLAN_SELECT: 'AWAITING_DATA_PLAN_SELECT',
-  AWAITING_PAYMENT_METHOD: 'AWAITING_PAYMENT_METHOD'
+  AWAITING_PAYMENT_METHOD: 'AWAITING_PAYMENT_METHOD',
+  AWAITING_MB_CARD_AMOUNT: 'AWAITING_MB_CARD_AMOUNT',
+  AWAITING_CDS_PROPOSAL_DETAILS: 'AWAITING_CDS_PROPOSAL_DETAILS'
 };
+
+// Central ClarionHub Virtual Account for public orders (mock for now, connected via Squad later)
+export const CENTRAL_HUB_ACCOUNT = {
+  bankName: 'Wema Bank',
+  accountNumber: '0123456789',
+  accountName: 'ClarionHub Central'
+};
+
+/**
+ * Helper to determine if a corps member is running their proxy bot
+ * directly on the same phone number they use to chat with MotherBot.
+ */
+export function checkIsSameNumber(userJid, botPhoneNumber) {
+  if (!userJid || !botPhoneNumber) return false;
+  const userDigits = String(userJid).replace(/[^0-9]/g, '');
+  const botDigits = String(botPhoneNumber).replace(/[^0-9]/g, '');
+  if (userDigits.length < 10 || botDigits.length < 10) return false;
+  return userDigits.slice(-10) === botDigits.slice(-10);
+}
 
 // In-memory fallback if Firestore is slow/down
 const mockUserStore = new Map();
@@ -130,13 +157,272 @@ export const handleMotherMessage = async (sock, msg) => {
     logger.info(`Mother Bot handling message from ${pushName} (${userData.state})`);
 
     if (userData.state === STATES.START) {
-      if (command.toLowerCase() !== 'connect 000') {
-        return; // Quietly ignore non-trigger messages for unregistered numbers
+      if (command.toLowerCase() === 'connect 000') {
+        await sock.sendMessage(from, {
+          text: `🎺 Welcome to Clarion A.I! 🚀 Let's set up your automated 24/7 Data Business and start earning extra income while helping NYSC community projects.\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
+        });
+        await saveUser({ ...userData, state: STATES.AWAITING_NYSC_CODE });
+        return;
       }
-      await sock.sendMessage(from, {
-        text: `🎺 Welcome to Clarion A.I! 🚀 Let's set up your automated 24/7 Data Business and start earning extra income while helping NYSC community projects.\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
+
+      // Public Airtime (Card) check
+      const cardRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
+      if (cardRegex.test(command)) {
+        const match = command.match(cardRegex);
+        const amount = match && match[1] ? parseInt(match[1]) : null;
+        let targetPhone = match && match[2] ? match[2] : from.split('@')[0];
+
+        if (!amount) {
+          await saveUser({ ...userData, state: STATES.AWAITING_MB_CARD_AMOUNT, previousState: STATES.START });
+          return sock.sendMessage(from, {
+            text: `📲 *Clarion Airtime Top-up*\n\nHow much airtime would you like to buy?\n\nReply:\n👉 *CARD [amount]* (e.g. *CARD 500* for this number)\n👉 *CARD [amount] [phone]* (e.g. *CARD 500 08012345678* to gift someone)`
+          });
+        }
+
+        if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+        const network = detectNetwork(targetPhone) || 'mtn';
+
+        if (amount < 50 || amount > 50000) {
+          return sock.sendMessage(from, { text: '❌ Airtime amount must be between ₦50 and ₦50,000.' });
+        }
+
+        const orderRef = `CLARION_AIR_${Date.now()}`;
+        if (db.ledger) {
+          await db.ledger.doc(orderRef).set({
+            type: 'PENDING_AIRTIME',
+            userId: 'HUB',
+            buyerPhone: from,
+            targetPhone,
+            network,
+            amount,
+            donationTier: 'HUB',
+            status: 'AWAITING_PAYMENT',
+            createdAt: new Date().toISOString()
+          }).catch(() => {});
+        }
+
+        return sock.sendMessage(from, {
+          text: `📲 *Clarion Airtime Order Confirmation*\n\n` +
+            `📱 *Recipient:* ${targetPhone}\n` +
+            `🌐 *Network:* ${network.toUpperCase()}\n` +
+            `💰 *Amount:* ₦${amount.toLocaleString()}\n\n` +
+            `💳 *Payment Transfer Details:*\n` +
+            `🏦 *Bank:* ${CENTRAL_HUB_ACCOUNT.bankName}\n` +
+            `🔢 *Account Number:* ${CENTRAL_HUB_ACCOUNT.accountNumber}\n` +
+            `👤 *Account Name:* ${CENTRAL_HUB_ACCOUNT.accountName}\n\n` +
+            `_Transfer exactly ₦${amount.toLocaleString()} to receive instant airtime top-up._`
+        });
+      }
+
+      // Public Data plans check
+      const dataRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
+      if (dataRegex.test(command)) {
+        const match = command.match(dataRegex);
+        const targetPrice = match && match[1] ? parseInt(match[1]) : null;
+        let targetPhone = match && match[2] ? match[2] : from.split('@')[0];
+        if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+        const network = detectNetwork(targetPhone) || 'mtn';
+        const plans = await payflex.getAvailablePlans();
+        let filtered = plans.filter(p => p.network.toLowerCase().includes(network.toLowerCase()));
+
+        if (targetPrice) {
+          filtered.sort((a, b) => Math.abs(a.sellPrice - targetPrice) - Math.abs(b.sellPrice - targetPrice));
+          filtered = filtered.slice(0, 4);
+          filtered.sort((a, b) => a.sellPrice - b.sellPrice);
+        } else {
+          filtered = filtered.slice(0, 6);
+        }
+
+        let menuText = `👋 Welcome to *Clarion A.I.* Digital Hub!\n\n🔎 Network Detected: *${network.toUpperCase()}* for ${targetPhone}\n\n`;
+        filtered.forEach(p => {
+          menuText += `👉 *${p.name}* = ₦${p.sellPrice}\n`;
+        });
+        menuText += `\n💳 *Payment Transfer Details:*\n` +
+          `🏦 Bank: ${CENTRAL_HUB_ACCOUNT.bankName}\n` +
+          `🔢 Account Number: ${CENTRAL_HUB_ACCOUNT.accountNumber}\n` +
+          `👤 Account Name: ${CENTRAL_HUB_ACCOUNT.accountName}\n\n` +
+          `_Transfer the exact amount for your chosen plan to receive instant data delivery._`;
+
+        return sock.sendMessage(from, { text: menuText });
+      }
+
+      // Public Exam PIN check
+      const pinRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
+      if (pinRegex.test(command)) {
+        const match = command.match(pinRegex);
+        const exam = match && match[1] ? match[1].toUpperCase() : null;
+        const examProducts = payflex.getExamProducts();
+
+        if (!exam) {
+          let msg = `🎓 *Clarion Exam Result Checker PINs*\n\nAvailable PINs:\n`;
+          for (const [k, v] of Object.entries(examProducts)) {
+            msg += `👉 *PIN ${k}* — ₦${v.sellPrice.toLocaleString()} (${v.name})\n`;
+          }
+          msg += `\nReply *PIN WAEC* or *PIN NECO* to purchase.`;
+          return sock.sendMessage(from, { text: msg });
+        }
+
+        const prod = examProducts[exam];
+        const orderRef = `CLARION_PIN_${Date.now()}`;
+        if (db.ledger) {
+          await db.ledger.doc(orderRef).set({
+            type: 'PENDING_EXAM_PIN',
+            userId: 'HUB',
+            buyerPhone: from,
+            examType: exam,
+            amount: prod.sellPrice,
+            donationTier: 'HUB',
+            status: 'AWAITING_PAYMENT',
+            createdAt: new Date().toISOString()
+          }).catch(() => {});
+        }
+
+        return sock.sendMessage(from, {
+          text: `🎓 *${prod.name} Confirmation*\n\n` +
+            `💰 *Price:* ₦${prod.sellPrice.toLocaleString()}\n\n` +
+            `💳 *Payment Transfer Details:*\n` +
+            `🏦 *Bank:* ${CENTRAL_HUB_ACCOUNT.bankName}\n` +
+            `🔢 *Account Number:* ${CENTRAL_HUB_ACCOUNT.accountNumber}\n` +
+            `👤 *Account Name:* ${CENTRAL_HUB_ACCOUNT.accountName}\n\n` +
+            `_Transfer exactly ₦${prod.sellPrice.toLocaleString()} to receive your PIN & Serial Number instantly._`
+        });
+      }
+
+      // Quietly ignore any other non-trigger message for unregistered users
+      return;
+    }
+    else if (userData.state === STATES.AWAITING_MB_CARD_AMOUNT) {
+      const match = command.match(/^(?:card\s+|airtime\s+)?(\d+)(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i);
+      if (!match) {
+        return sock.sendMessage(from, {
+          text: '❌ Invalid format. Please reply with the amount of airtime you need, e.g. *500* or *500 08012345678*:'
+        });
+      }
+
+      const amount = parseInt(match[1]);
+      let targetPhone = match[2] || userData.phoneNumber || from.split('@')[0];
+      if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+        targetPhone = '0' + targetPhone.slice(3);
+      }
+      const network = detectNetwork(targetPhone) || 'mtn';
+
+      if (amount < 50 || amount > 50000) {
+        return sock.sendMessage(from, { text: '❌ Airtime amount must be between ₦50 and ₦50,000.' });
+      }
+
+      // Restore user state
+      const returnState = userData.previousState || (userData.verifiedName ? STATES.COMPLETED : STATES.START);
+      await saveUser({ ...userData, state: returnState, previousState: null });
+
+      // If registered corps member with balance, vend from wallet
+      if (returnState === STATES.COMPLETED) {
+        const balance = await wallet.getBalance(from);
+        if (balance >= amount) {
+          await sock.sendMessage(from, { text: `⏳ *Processing Airtime Top-up...*\nDeducting ₦${amount.toLocaleString()} from your Clarion Wallet.` });
+          try {
+            await wallet.recordPurchaseDebit(from, amount, `Airtime: ₦${amount} to ${targetPhone} (${network.toUpperCase()})`, { network, targetPhone, amount });
+            const result = await payflex.purchaseAirtime(network, targetPhone, amount);
+            const newBal = (balance - amount).toFixed(2);
+            return sock.sendMessage(from, {
+              text: `✅ *Airtime Vended Successfully!*\n\n📱 *Recipient:* ${targetPhone}\n🌐 *Network:* ${network.toUpperCase()}\n💰 *Amount:* ₦${amount.toLocaleString()}\n💳 *Paid via:* Clarion Wallet\n🪙 *Remaining Balance:* ₦${newBal}\n🧾 *Ref:* ${result.reference}`
+            });
+          } catch (err) {
+            logger.error('Error vending airtime to partner:', err.message);
+            return sock.sendMessage(from, { text: `❌ Airtime delivery failed: ${err.message}. Your balance was not deducted.` });
+          }
+        } else {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Insufficient Wallet Balance*\n\nYour current Clarion balance is *₦${balance.toFixed(2)}*, but this airtime order requires *₦${amount.toLocaleString()}*.\n\nTo fund your wallet, transfer to your collection account:\n🏦 *Bank:* ${userData.virtualAccount?.bankName || CENTRAL_HUB_ACCOUNT.bankName}\n🔢 *Account:* ${userData.virtualAccount?.accountNumber || CENTRAL_HUB_ACCOUNT.accountNumber}\n👤 *Name:* ${userData.virtualAccount?.accountName || userData.verifiedName}`
+          });
+        }
+      } else {
+        // Public customer
+        const orderRef = `CLARION_AIR_${Date.now()}`;
+        if (db.ledger) {
+          await db.ledger.doc(orderRef).set({
+            type: 'PENDING_AIRTIME',
+            userId: 'HUB',
+            buyerPhone: from,
+            targetPhone,
+            network,
+            amount,
+            donationTier: 'HUB',
+            status: 'AWAITING_PAYMENT',
+            createdAt: new Date().toISOString()
+          }).catch(() => {});
+        }
+
+        return sock.sendMessage(from, {
+          text: `📲 *Clarion Airtime Order Confirmation*\n\n` +
+            `📱 *Recipient:* ${targetPhone}\n` +
+            `🌐 *Network:* ${network.toUpperCase()}\n` +
+            `💰 *Amount:* ₦${amount.toLocaleString()}\n\n` +
+            `💳 *Payment Transfer Details:*\n` +
+            `🏦 *Bank:* ${CENTRAL_HUB_ACCOUNT.bankName}\n` +
+            `🔢 *Account Number:* ${CENTRAL_HUB_ACCOUNT.accountNumber}\n` +
+            `👤 *Account Name:* ${CENTRAL_HUB_ACCOUNT.accountName}\n\n` +
+            `_Transfer exactly ₦${amount.toLocaleString()} to receive instant airtime top-up._`
+        });
+      }
+    }
+    else if (userData.state === STATES.AWAITING_CDS_PROPOSAL_DETAILS) {
+      if (command.toLowerCase() === 'cancel') {
+        await saveUser({ ...userData, state: STATES.COMPLETED });
+        return sock.sendMessage(from, { text: '↩️ CDS proposal application cancelled.' });
+      }
+
+      const match = command.match(/^(\d+)\s+(.+)$/s);
+      if (!match) {
+        return sock.sendMessage(from, {
+          text: `❌ *Invalid Format*\n\nPlease reply with the grant amount and project details:\n👉 *[Amount] [Project Title & Summary]*\n\n*Example:* 50000 Corpers Lodge Water Borehole Repair\n\n_Reply CANCEL to exit._`
+        });
+      }
+
+      const grantAmount = parseInt(match[1]);
+      const projectDetails = match[2].trim();
+      const rawStateCode = (userData.stateCode || 'NYSC').replace(/[^a-zA-Z0-9]/g, '');
+      const proposalId = `CDS-${rawStateCode}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const tier = (userData.donationTier || 'MEMBER').toUpperCase();
+      const priorityMap = { PIONEER: 100, LORD: 90, MASTER: 70, MEMBER: 50 };
+      const priorityScore = priorityMap[tier] || 50;
+
+      const newProposal = {
+        id: proposalId,
+        proposalId,
+        userId: from,
+        verifiedName: userData.verifiedName || userData.name || 'Corps Member',
+        stateCode: userData.stateCode || 'NYSC',
+        donationTier: tier,
+        priorityScore,
+        grantAmountRequested: grantAmount,
+        title: projectDetails.split('\n')[0].slice(0, 60),
+        description: projectDetails,
+        status: 'PENDING',
+        submittedAt: new Date().toISOString()
+      };
+
+      if (db.cdsProposals) {
+        await db.cdsProposals.doc(proposalId).set(newProposal).catch(err => {
+          logger.warn('Firestore proposal save failed, using memory:', err.message);
+        });
+      }
+      mockCdsProposals.set(proposalId, newProposal);
+
+      await saveUser({ ...userData, state: STATES.COMPLETED });
+
+      return sock.sendMessage(from, {
+        text: `✅ *CDS Micro-Grant Proposal Submitted!*\n\n` +
+          `🔖 *Tracking ID:* \`${proposalId}\`\n` +
+          `💰 *Grant Requested:* ₦${grantAmount.toLocaleString()}\n` +
+          `📋 *Project:* ${newProposal.title}\n` +
+          `🎖️ *Priority Standing:* ${PARTNERSHIP_TIERS[tier]?.name || tier} (${priorityScore}/100 Priority)\n\n` +
+          `_Your application has been submitted to the Clarion CDS Allocation Board. You can type *CDS STATUS* anytime to check review status._`
       });
-      await saveUser({ ...userData, state: STATES.AWAITING_NYSC_CODE });
     }
     else if (userData.state === STATES.AWAITING_NYSC_CODE) {
       const stateCodeRegex = /^[A-Z]{2}\/\d{2}[A-C]\/\d{4}$/i;
@@ -144,22 +430,134 @@ export const handleMotherMessage = async (sock, msg) => {
         return sock.sendMessage(from, { text: '❌ Invalid State Code format. Please use the format: NY/24A/1234' });
       }
 
-      await sock.sendMessage(from, { text: '✅ Verified! Now creating your business wallet...' });
-
-      // Create Squad Virtual Account
-      const account = await squad.createVirtualAccount(pushName, `${from.split('@')[0]}@nyscbot.com`, from.split('@')[0]);
-
       await saveUser({
         ...userData,
         stateCode: command.toUpperCase(),
-        virtualAccount: account,
-        state: STATES.AWAITING_PROXY_NUMBER,
-        name: pushName
+        state: STATES.AWAITING_TIER_SELECTION
       });
 
-      await sock.sendMessage(from, {
-        text: `🎊 Enterprise Setup Complete!\n\nYour Clarion Profit Wallet is now active.\nBank: ${account.bankName}\nAcct: ${account.accountNumber}\n\n*Final Step:* To activate your Digital Storefront, please reply with the WhatsApp number you want your Bot to run on (e.g. 08012345678):`
+      const tierPrompt = `🎖️ *Choose your Clarion Partnership Tier:*\n\n` +
+        `*1* - Clarion Member (Donate 16% to CDS) [Default]\n` +
+        `*2* - Clarion Master (Donate 40% to CDS)\n` +
+        `*3* - Clarion Lord (Donate 64% to CDS)\n` +
+        `*4* - Clarion Pioneer Class (Founding Batch: Donate 16% to CDS + Awarded Clarion Lord Rank & All Privileges) 🚀\n\n` +
+        `Reply *1*, *2*, *3*, or *4* to proceed:`;
+
+      return sock.sendMessage(from, { text: tierPrompt });
+    }
+    else if (userData.state === STATES.AWAITING_TIER_SELECTION) {
+      let selectedTier = 'MEMBER';
+      let rankBadge = 'MEMBER';
+
+      if (command === '1' || command.toLowerCase().includes('member')) {
+        selectedTier = 'MEMBER';
+        rankBadge = 'MEMBER';
+      } else if (command === '2' || command.toLowerCase().includes('master')) {
+        selectedTier = 'MASTER';
+        rankBadge = 'MASTER';
+      } else if (command === '3' || command.toLowerCase().includes('lord')) {
+        selectedTier = 'LORD';
+        rankBadge = 'LORD';
+      } else if (command === '4' || command.toLowerCase().includes('pioneer')) {
+        selectedTier = 'PIONEER';
+        rankBadge = 'LORD';
+      } else {
+        return sock.sendMessage(from, { text: '❌ Invalid selection. Please reply *1*, *2*, *3*, or *4* to choose your tier:' });
+      }
+
+      const tierInfo = PARTNERSHIP_TIERS[selectedTier];
+      await saveUser({
+        ...userData,
+        donationTier: selectedTier,
+        rankBadge: rankBadge,
+        state: STATES.AWAITING_INITIAL_BANK
       });
+
+      return sock.sendMessage(from, {
+        text: `🎖️ *Tier Selected: ${tierInfo.name}* (${tierInfo.displayDonate} CDS Donation)\n\n` +
+          `🏦 *Bank Account Setup & Verification*\n\n` +
+          `To ensure automated profit cashouts, please provide your payout bank details. Your account holder name will be verified via bank lookup and permanently locked to your Clarion enterprise.\n\n` +
+          `Please reply with your *Bank Name* and *10-digit Account Number* (e.g. *GTBank 0123456789* or *Access Bank 0123456789*):`
+      });
+    }
+    else if (userData.state === STATES.AWAITING_INITIAL_BANK) {
+      let bankName = '';
+      let accountNumber = '';
+
+      const spaceMatch = command.match(/^(.+?)\s*(\d{10})$/);
+      if (spaceMatch) {
+        bankName = spaceMatch[1].trim();
+        accountNumber = spaceMatch[2];
+      } else {
+        const noSpaceMatch = command.match(/^([a-zA-Z\s]+?)(\d{10})$/);
+        if (noSpaceMatch) {
+          bankName = noSpaceMatch[1].trim();
+          accountNumber = noSpaceMatch[2];
+        }
+      }
+
+      if (!bankName || !accountNumber) {
+        return sock.sendMessage(from, {
+          text: '❌ Could not read bank details.\n\nPlease reply with your Bank Name and 10-digit Account Number.\nExample: *GTBank 0123456789*'
+        });
+      }
+
+      await sock.sendMessage(from, { text: '🔍 Verifying account details with bank servers...' });
+      const banks = await squad.getBanks();
+      const matchedBank = banks.find(b =>
+        b.name.toLowerCase().replace(/\s+/g, '') === bankName.toLowerCase().replace(/\s+/g, '')
+      );
+
+      if (!matchedBank) {
+        const supported = banks.map(b => b.name).join(', ');
+        return sock.sendMessage(from, {
+          text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include: ${supported}.\nPlease try again:`
+        });
+      }
+
+      try {
+        const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
+        const verifiedName = accountInfo.accountName;
+
+        await sock.sendMessage(from, { text: `✅ *Account Verified:* ${verifiedName}!\n\nCreating your dedicated virtual collection account...` });
+
+        // Create Squad Virtual Account in the verified name
+        const account = await squad.createVirtualAccount(
+          verifiedName,
+          `${from.split('@')[0]}@nyscbot.com`,
+          from.split('@')[0]
+        );
+
+        const updatedUser = {
+          ...userData,
+          name: verifiedName,
+          verifiedName: verifiedName,
+          bankDetails: {
+            bankName: matchedBank.name,
+            bankCode: matchedBank.code,
+            accountNumber,
+            accountName: verifiedName
+          },
+          virtualAccount: account,
+          state: STATES.AWAITING_PROXY_NUMBER
+        };
+
+        await saveUser(updatedUser);
+
+        return sock.sendMessage(from, {
+          text: `🎊 *Enterprise Identity Setup Complete!*\n\n` +
+            `👤 *Verified Name:* ${verifiedName} (Permanently Locked)\n` +
+            `🏦 *Payout Bank:* ${matchedBank.name} (${accountNumber})\n` +
+            `💳 *Clarion Collection Acct:* ${account.bankName} - ${account.accountNumber}\n` +
+            `🎖️ *Tier:* ${PARTNERSHIP_TIERS[userData.donationTier || 'MEMBER'].name}\n\n` +
+            `*Final Step:* To activate your Digital Storefront, please reply with the WhatsApp number you want your Bot to run on (e.g. 08012345678):`
+        });
+      } catch (err) {
+        logger.error('Initial bank validation failed:', err.message);
+        return sock.sendMessage(from, {
+          text: '❌ Could not verify bank account. Please check your bank name and account number, then try again:'
+        });
+      }
     }
     else if (userData.state === STATES.AWAITING_PROXY_NUMBER || command.toUpperCase().startsWith('PAIR')) {
       let rawNumber = command.toUpperCase().startsWith('PAIR') ? command.split(/\s+/)[1] : command;
@@ -533,12 +931,43 @@ export const handleMotherMessage = async (sock, msg) => {
           return sock.sendMessage(from, { text: '📭 Cannot generate test report: You have absolutely zero activity in the last 7 days.' });
         }
 
-        const msg = `📈 *Weekly Enterprise Report: Clarion A.I.*\n\n` +
-          `Total Orders: ${stats.totalOrders}\n` +
-          `Gross Revenue: ₦${stats.grossRevenue}\n` +
-          `Net Profit Earned: ₦${stats.netProfit}\n` +
-          `Active Customer Base: ${stats.activeCustomers}\n\n` +
-          `_Keep scaling your digital enterprise! Have a highly profitable weekend._ 🚀`;
+        const badgeTitle = stats.impactMilestone?.current
+          ? `${stats.impactMilestone.current.badge} ${stats.impactMilestone.current.title}`
+          : '🌱 Community Contributor';
+
+        let msg = `📈 *Your Weekly Clarion Enterprise Report*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `📊 *This Week's Sales*\n` +
+          `• Total Orders: ${stats.totalOrders}\n` +
+          `• Data Orders: ${stats.dataOrders || 0}\n` +
+          `• Airtime Orders: ${stats.airtimeOrders || 0}\n` +
+          `• Exam PINs Sold: ${stats.examPinOrders || 0}\n` +
+          `• Gross Revenue: ₦${stats.grossRevenue.toLocaleString()}\n` +
+          `• Your Net Profit: ₦${stats.netProfit.toLocaleString()}\n` +
+          `• Active Customers: ${stats.activeCustomers}\n\n` +
+          `🏆 *Your NYSC CDS Impact*\n` +
+          `• Standing: ${badgeTitle}\n` +
+          `• Total Donated to Date: ₦${(stats.totalCdsDonated || 0).toLocaleString()}\n`;
+
+        if (stats.impactMilestone?.next) {
+          msg += `• Next Milestone: ${stats.impactMilestone.next.badge} ${stats.impactMilestone.next.title} (₦${stats.impactMilestone.next.threshold.toLocaleString()})\n\n`;
+        } else {
+          msg += `• 💎 Maximum NYSC Hero of Service Impact Achieved!\n\n`;
+        }
+
+        if (stats.topCustomers && stats.topCustomers.length > 0) {
+          msg += `👑 *Top VIP Customers This Week*\n`;
+          stats.topCustomers.slice(0, 3).forEach((c, idx) => {
+            const maskedPhone = c.phone.length > 7
+              ? `${c.phone.substring(0, 4)}****${c.phone.substring(c.phone.length - 4)}`
+              : c.phone;
+            msg += `${idx + 1}. ${maskedPhone} — ₦${c.amount.toLocaleString()} (${c.orders} orders)\n`;
+          });
+          msg += `\n`;
+        }
+
+        msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `_Keep building your digital enterprise! Have a highly profitable weekend._ 🚀`;
 
         return sock.sendMessage(from, { text: msg });
       }
@@ -554,7 +983,7 @@ export const handleMotherMessage = async (sock, msg) => {
         }
       }
 
-      // ── WITHDRAW command (initiates flow) ──────────────────
+      // ── WITHDRAW command (Streamlined with Permanent Bank Lock) ──
       else if (command.toLowerCase().startsWith('withdraw')) {
         const amountStr = command.split(/\s+/)[1];
         const amount = parseFloat(amountStr);
@@ -577,30 +1006,50 @@ export const handleMotherMessage = async (sock, msg) => {
           });
         }
 
+        // Zero Repetitive Typing: If bank details are already locked on file
+        if (userData.bankDetails && userData.bankDetails.accountNumber) {
+          const bank = userData.bankDetails;
+          const netPayout = +(amount - WITHDRAWAL_FEES.TOTAL).toFixed(2);
+
+          await saveUser({
+            ...userData,
+            state: STATES.AWAITING_WITHDRAW_CONFIRM,
+            pendingWithdrawAmount: amount,
+            pendingBank: bank
+          });
+
+          return sock.sendMessage(from, {
+            text: `💸 *Confirm Payout Transfer*\n\n` +
+              `Transfer *₦${amount.toFixed(2)}* (Net *₦${netPayout.toFixed(2)}* after ₦${WITHDRAWAL_FEES.TOTAL.toFixed(0)} fee) to your verified account:\n\n` +
+              `👤 *Name:* ${bank.accountName || userData.verifiedName}\n` +
+              `🏦 *Bank:* ${bank.bankName}\n` +
+              `🔢 *Account:* ${bank.accountNumber}\n\n` +
+              `Reply *YES* to confirm transfer or *CANCEL* to abort.`
+          });
+        }
+
+        // Fallback for legacy users without locked bank details: prompt once and lock
         await saveUser({ ...userData, state: STATES.AWAITING_WITHDRAW_DETAILS, pendingWithdrawAmount: amount });
         return sock.sendMessage(from, {
-          text: `💸 *Withdrawal Request: ₦${amount.toFixed(2)}*\n\nPlease provide your bank details:\n\nReply with your *Bank Name* and *Account Number*.\n(e.g., *GTBank 0123456789* or *GTBank0123456789*)\n\nType *CANCEL* to abort.`
+          text: `💸 *Withdrawal Request: ₦${amount.toFixed(2)}*\n\nPlease provide your payout bank details:\n\nReply with your *Bank Name* and *Account Number* (e.g. *GTBank 0123456789*):\n\nType *CANCEL* to abort.`
         });
       }
 
-      // ── AWAITING_WITHDRAW_DETAILS (bank + account) ─────────
+      // ── AWAITING_WITHDRAW_DETAILS (Fallback for unconfigured accounts) ──
       else if (userData.state === STATES.AWAITING_WITHDRAW_DETAILS) {
         if (command.toLowerCase() === 'cancel') {
           await saveUser({ ...userData, state: STATES.COMPLETED, pendingWithdrawAmount: null, pendingBank: null });
           return sock.sendMessage(from, { text: '❌ Withdrawal cancelled.' });
         }
 
-        // Smart parsing: handle "GTBank 0123456789", "GTBank0123456789", "Access Bank 0123456789"
         let bankName = '';
         let accountNumber = '';
 
-        // Try splitting on space first (handles "GTBank 0123456789" and "Access Bank 0123456789")
         const spaceMatch = command.match(/^(.+?)\s*(\d{10})$/);
         if (spaceMatch) {
           bankName = spaceMatch[1].trim();
           accountNumber = spaceMatch[2];
         } else {
-          // Fallback: no space between bank name and digits (e.g. "GTBank0123456789")
           const noSpaceMatch = command.match(/^([a-zA-Z\s]+?)(\d{10})$/);
           if (noSpaceMatch) {
             bankName = noSpaceMatch[1].trim();
@@ -614,7 +1063,6 @@ export const handleMotherMessage = async (sock, msg) => {
           });
         }
 
-        // Look up the bank code from the bank list
         await sock.sendMessage(from, { text: '🔍 Looking up your bank details...' });
         const banks = await squad.getBanks();
         const matchedBank = banks.find(b =>
@@ -628,26 +1076,27 @@ export const handleMotherMessage = async (sock, msg) => {
           });
         }
 
-        // Validate the account with Monnify
         try {
           const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
-
           const amount = userData.pendingWithdrawAmount;
           const netPayout = +(amount - WITHDRAWAL_FEES.TOTAL).toFixed(2);
+          const bankData = {
+            bankName: matchedBank.name,
+            bankCode: matchedBank.code,
+            accountNumber,
+            accountName: accountInfo.accountName
+          };
 
           await saveUser({
             ...userData,
             state: STATES.AWAITING_WITHDRAW_CONFIRM,
-            pendingBank: {
-              bankName: matchedBank.name,
-              bankCode: matchedBank.code,
-              accountNumber,
-              accountName: accountInfo.accountName
-            }
+            verifiedName: accountInfo.accountName,
+            bankDetails: bankData,
+            pendingBank: bankData
           });
 
           return sock.sendMessage(from, {
-            text: `🔍 *Account Verified!*\n\n👤 Name: *${accountInfo.accountName}*\n🏦 Bank: *${matchedBank.name}*\n🔢 Account: *${accountNumber}*\n\n💰 Requested: *₦${amount.toFixed(2)}*\n🏦 Bank Fee: *₦${WITHDRAWAL_FEES.SQUAD_FEE}*\n⚙️ Service Fee: *₦${WITHDRAWAL_FEES.SERVICE_FEE}*\n💵 You will receive: *₦${netPayout.toFixed(2)}*\n\nReply *YES* to confirm transfer or *CANCEL* to abort.`
+            text: `🔍 *Account Verified & Locked!*\n\n👤 Name: *${accountInfo.accountName}*\n🏦 Bank: *${matchedBank.name}*\n🔢 Account: *${accountNumber}*\n\n💰 Requested: *₦${amount.toFixed(2)}*\n🏦 Payout Fee: *₦${WITHDRAWAL_FEES.TOTAL.toFixed(0)}*\n💵 You will receive: *₦${netPayout.toFixed(2)}*\n\nReply *YES* to confirm transfer or *CANCEL* to abort.`
           });
         } catch (err) {
           logger.error('Bank validation failed:', err.message);
@@ -669,7 +1118,7 @@ export const handleMotherMessage = async (sock, msg) => {
         }
 
         const amount = userData.pendingWithdrawAmount;
-        const bank = userData.pendingBank;
+        const bank = userData.pendingBank || userData.bankDetails;
         const netPayout = +(amount - WITHDRAWAL_FEES.TOTAL).toFixed(2);
 
         // Re-check balance to prevent double-spend
@@ -686,29 +1135,341 @@ export const handleMotherMessage = async (sock, msg) => {
         const transferRef = `WDR_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
         try {
-          // Record as pending before calling Monnify to prevent double spend
           await wallet.recordWithdrawal(from, amount, bank, transferRef);
 
           const result = await squad.initiateTransfer(
             netPayout,
             bank.bankCode,
             bank.accountNumber,
-            `NYSC Bot payout for ${userData.name || from}`,
+            `NYSC Clarion payout for ${userData.verifiedName || userData.name || from}`,
             transferRef
           );
 
           await saveUser({ ...userData, state: STATES.COMPLETED, pendingWithdrawAmount: null, pendingBank: null });
 
           return sock.sendMessage(from, {
-            text: `✅ *Withdrawal Request Submitted!*\n\n💵 *₦${netPayout.toFixed(2)}* is on its way to:\n👤 ${bank.accountName}\n🏦 ${bank.bankName} (${bank.accountNumber})\n\nRef: ${transferRef}\n\nType *BALANCE* to check your updated wallet. Type *HISTORY* to track status.`
+            text: `✅ *Withdrawal Submitted!*\n\n💵 *₦${netPayout.toFixed(2)}* is on its way to:\n👤 ${bank.accountName || userData.verifiedName}\n🏦 ${bank.bankName} (${bank.accountNumber})\n\nRef: ${transferRef}\n\nType *BALANCE* to check your updated wallet. Type *HISTORY* to track status.`
           });
         } catch (err) {
           logger.error('Transfer failed:', err.message);
-          // Fail the withdrawal so balance is restored
           await wallet.updateWithdrawalStatus(transferRef, 'FAILED');
           await saveUser({ ...userData, state: STATES.COMPLETED, pendingWithdrawAmount: null, pendingBank: null });
           return sock.sendMessage(from, {
             text: '❌ Transfer failed. Your balance has been restored. Please try again later.'
+          });
+        }
+      }
+
+      // ── UPDATE BANK command (Security flow with ₦100 fee) ──
+      else if (command.toLowerCase() === 'update bank' || command.toLowerCase() === 'change bank') {
+        const balance = await wallet.getBalance(from);
+        if (balance < WITHDRAWAL_FEES.BANK_UPDATE_FEE) {
+          return sock.sendMessage(from, {
+            text: `❌ *Insufficient Wallet Balance*\n\nUpdating your permanently verified bank details incurs a security verification fee of *₦${WITHDRAWAL_FEES.BANK_UPDATE_FEE.toFixed(2)}*.\n\nYour current wallet balance is *₦${balance.toFixed(2)}*. You need at least ₦${WITHDRAWAL_FEES.BANK_UPDATE_FEE.toFixed(2)} to proceed.`
+          });
+        }
+
+        await saveUser({ ...userData, state: STATES.AWAITING_UPDATE_BANK });
+        return sock.sendMessage(from, {
+          text: `🏦 *Update Verified Payout Bank*\n\nPlease reply with your new *Bank Name* and *10-digit Account Number* (e.g. *Access Bank 0123456789*):\n\n⚠️ *Security Notice:* A *₦${WITHDRAWAL_FEES.BANK_UPDATE_FEE.toFixed(2)}* verification charge will be debited from your wallet upon confirmation.\n\nReply *CANCEL* to abort.`
+        });
+      }
+
+      // ── AWAITING_UPDATE_BANK ───────────────────────────────
+      else if (userData.state === STATES.AWAITING_UPDATE_BANK) {
+        if (command.toLowerCase() === 'cancel') {
+          await saveUser({ ...userData, state: STATES.COMPLETED, pendingNewBank: null });
+          return sock.sendMessage(from, { text: '❌ Bank update cancelled.' });
+        }
+
+        let bankName = '';
+        let accountNumber = '';
+        const spaceMatch = command.match(/^(.+?)\s*(\d{10})$/);
+        if (spaceMatch) {
+          bankName = spaceMatch[1].trim();
+          accountNumber = spaceMatch[2];
+        } else {
+          const noSpaceMatch = command.match(/^([a-zA-Z\s]+?)(\d{10})$/);
+          if (noSpaceMatch) {
+            bankName = noSpaceMatch[1].trim();
+            accountNumber = noSpaceMatch[2];
+          }
+        }
+
+        if (!bankName || !accountNumber) {
+          return sock.sendMessage(from, {
+            text: '❌ Could not parse bank details. Please reply with Bank Name and 10-digit Account Number.\nExample: *Access Bank 0123456789*\n\nReply *CANCEL* to abort.'
+          });
+        }
+
+        await sock.sendMessage(from, { text: '🔍 Verifying new account details with bank servers...' });
+        const banks = await squad.getBanks();
+        const matchedBank = banks.find(b =>
+          b.name.toLowerCase().replace(/\s+/g, '') === bankName.toLowerCase().replace(/\s+/g, '')
+        );
+
+        if (!matchedBank) {
+          const bankList = banks.map(b => b.name).join(', ');
+          return sock.sendMessage(from, {
+            text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks: ${bankList}\nPlease try again or reply *CANCEL*:`
+          });
+        }
+
+        try {
+          const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
+          const pendingNewBank = {
+            bankName: matchedBank.name,
+            bankCode: matchedBank.code,
+            accountNumber,
+            accountName: accountInfo.accountName
+          };
+
+          await saveUser({
+            ...userData,
+            state: STATES.AWAITING_UPDATE_BANK_CONFIRM,
+            pendingNewBank
+          });
+
+          return sock.sendMessage(from, {
+            text: `🔍 *New Account Verified!*\n\n` +
+              `👤 *Account Name:* ${accountInfo.accountName}\n` +
+              `🏦 *Bank:* ${matchedBank.name}\n` +
+              `🔢 *Account Number:* ${accountNumber}\n\n` +
+              `💳 *Security Debit:* ₦${WITHDRAWAL_FEES.BANK_UPDATE_FEE.toFixed(2)} will be debited from your wallet.\n\n` +
+              `Reply *YES* to confirm and lock this new account, or *CANCEL* to abort.`
+          });
+        } catch (err) {
+          logger.error('Update bank validation failed:', err.message);
+          return sock.sendMessage(from, {
+            text: '❌ Could not verify bank account with bank servers. Please check your account number and try again:'
+          });
+        }
+      }
+
+      // ── AWAITING_UPDATE_BANK_CONFIRM ──────────────────────
+      else if (userData.state === STATES.AWAITING_UPDATE_BANK_CONFIRM) {
+        if (command.toLowerCase() === 'cancel') {
+          await saveUser({ ...userData, state: STATES.COMPLETED, pendingNewBank: null });
+          return sock.sendMessage(from, { text: '❌ Bank update cancelled.' });
+        }
+
+        if (command.toLowerCase() !== 'yes') {
+          return sock.sendMessage(from, { text: 'Reply *YES* to confirm the update or *CANCEL* to abort.' });
+        }
+
+        const balance = await wallet.getBalance(from);
+        if (balance < WITHDRAWAL_FEES.BANK_UPDATE_FEE) {
+          await saveUser({ ...userData, state: STATES.COMPLETED, pendingNewBank: null });
+          return sock.sendMessage(from, {
+            text: `❌ Insufficient balance for ₦${WITHDRAWAL_FEES.BANK_UPDATE_FEE.toFixed(2)} verification fee. Bank update aborted.`
+          });
+        }
+
+        const newBank = userData.pendingNewBank;
+        await wallet.recordBankUpdateFee(from);
+
+        await saveUser({
+          ...userData,
+          state: STATES.COMPLETED,
+          verifiedName: newBank.accountName,
+          name: newBank.accountName,
+          bankDetails: newBank,
+          pendingNewBank: null
+        });
+
+        return sock.sendMessage(from, {
+          text: `✅ *Bank Details Successfully Updated!*\n\n` +
+            `Your payout destination is permanently locked to:\n` +
+            `👤 ${newBank.accountName}\n` +
+            `🏦 ${newBank.bankName} (${newBank.accountNumber})\n\n` +
+            `₦${WITHDRAWAL_FEES.BANK_UPDATE_FEE.toFixed(2)} security fee has been deducted from your wallet balance.`
+        });
+      }
+
+      // ── RANK / TIER command ────────────────────────────────
+      else if (command.toLowerCase() === 'rank' || command.toLowerCase() === 'tier') {
+        const tier = (userData.donationTier || 'MEMBER').toUpperCase();
+        const tierConfig = PARTNERSHIP_TIERS[tier] || PARTNERSHIP_TIERS.MEMBER;
+        const personalProfit = await wallet.getTotalPersonalProfit(from);
+        const cdsDonated = await wallet.getTotalCdsDonated(from);
+        const rankBadge = userData.rankBadge || (tier === 'PIONEER' ? 'LORD' : tier);
+
+        const rankMsg = `🎖️ *Clarion Enterprise Rank & Philanthropy Report*\n\n` +
+          `👤 *Partner:* ${userData.verifiedName || userData.name}\n` +
+          `🎖️ *Partnership Tier:* ${tierConfig.name}\n` +
+          `👑 *Clarion Rank Badge:* ${rankBadge}\n\n` +
+          `💰 *Total Personal Earnings:* ₦${personalProfit.toFixed(2)}\n` +
+          `🤝 *Total CDS Impact Pooled:* ₦${cdsDonated.toFixed(2)} (${tierConfig.displayDonate} dedication)\n\n` +
+          `🏆 *Active Privileges:*\n` +
+          (tier === 'PIONEER'
+            ? `• Clarion Lord Executive Badge & Rank\n• Maximum 64% Personal Profit Retention\n• Priority CDS Grant Proposal Consideration\n• Dedicated Enterprise Cloud Node`
+            : tier === 'LORD'
+            ? `• Clarion Lord Executive Badge & Honors\n• Highest CDS Philanthropist Standing (64% Pool)\n• VIP Community Recognition`
+            : tier === 'MASTER'
+            ? `• Clarion Master Enterprise Standing\n• Balanced 40/40 Social Enterprise Split`
+            : `• Clarion Standard Partner\n• 64% Personal Profit Retention`) +
+          `\n\n_Type *ID* anytime to download your Official Franchise Identification Card._`;
+
+        return sock.sendMessage(from, { text: rankMsg });
+      }
+
+      // ── ID / LICENSE / PROFILE command (Download Franchise Profile Card) ──
+      else if (command.toLowerCase() === 'id' || command.toLowerCase() === 'license' || command.toLowerCase() === 'profile') {
+        await sock.sendMessage(from, { text: '⏳ Rendering your Official Clarion Franchise ID Card...' });
+        try {
+          const cardBuffer = await mediaGen.generateProfileCard(userData);
+          return sock.sendMessage(from, {
+            image: cardBuffer,
+            caption: `🪪 *Clarion Franchise Identification License*\n\nPartner: *${userData.verifiedName || userData.name}*\nState Code: *${userData.stateCode || 'NYSC'}*\nTier: *${PARTNERSHIP_TIERS[userData.donationTier || 'MEMBER'].name}*`
+          });
+        } catch (e) {
+          logger.error('Error generating franchise card:', e.message);
+          return sock.sendMessage(from, { text: '❌ Failed to render card. Please try again shortly.' });
+        }
+      }
+
+      // ── CARD / AIRTIME command (Buy Airtime via Wallet) ─────
+      else if (/^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i.test(command)) {
+        const cardMatch = command.match(/^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i);
+        const amount = cardMatch && cardMatch[1] ? parseInt(cardMatch[1]) : null;
+        let targetPhone = cardMatch && cardMatch[2] ? cardMatch[2] : (userData.phoneNumber || from.split('@')[0]);
+
+        if (!amount) {
+          await saveUser({ ...userData, state: STATES.AWAITING_MB_CARD_AMOUNT, previousState: STATES.COMPLETED });
+          return sock.sendMessage(from, {
+            text: `📲 *Buy Airtime (Card)*\n\nHow much airtime would you like to buy?\n\nReply:\n👉 *CARD [amount]* (e.g. *CARD 500* for your number)\n👉 *CARD [amount] [phone]* (e.g. *CARD 500 08012345678* to gift someone)`
+          });
+        }
+
+        if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+        const network = detectNetwork(targetPhone) || 'mtn';
+
+        if (amount < 50 || amount > 50000) {
+          return sock.sendMessage(from, { text: '❌ Airtime amount must be between ₦50 and ₦50,000.' });
+        }
+
+        const balance = await wallet.getBalance(from);
+        if (balance >= amount) {
+          await sock.sendMessage(from, { text: `⏳ *Processing Airtime Top-up...*\nDeducting ₦${amount.toLocaleString()} from your Clarion Wallet.` });
+          try {
+            await wallet.recordPurchaseDebit(from, amount, `Airtime: ₦${amount} to ${targetPhone} (${network.toUpperCase()})`, { network, targetPhone, amount });
+            const result = await payflex.purchaseAirtime(network, targetPhone, amount);
+            const newBal = (balance - amount).toFixed(2);
+            return sock.sendMessage(from, {
+              text: `✅ *Airtime Vended Successfully!*\n\n📱 *Recipient:* ${targetPhone}\n🌐 *Network:* ${network.toUpperCase()}\n💰 *Amount:* ₦${amount.toLocaleString()}\n💳 *Paid via:* Clarion Wallet\n🪙 *Remaining Balance:* ₦${newBal}\n🧾 *Ref:* ${result.reference}`
+            });
+          } catch (err) {
+            logger.error('Error vending airtime to partner:', err.message);
+            return sock.sendMessage(from, { text: `❌ Airtime delivery failed: ${err.message}. Your balance was not deducted.` });
+          }
+        } else {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Insufficient Wallet Balance*\n\nYour current Clarion balance is *₦${balance.toFixed(2)}*, but this airtime order requires *₦${amount.toLocaleString()}*.\n\nTo fund your wallet, transfer to your collection account:\n🏦 *Bank:* ${userData.virtualAccount?.bankName || CENTRAL_HUB_ACCOUNT.bankName}\n🔢 *Account:* ${userData.virtualAccount?.accountNumber || CENTRAL_HUB_ACCOUNT.accountNumber}\n👤 *Name:* ${userData.virtualAccount?.accountName || userData.verifiedName}`
+          });
+        }
+      }
+
+      // ── DATA command (Wholesale Self / Gift Purchase) ────────
+      else if (/^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i.test(command) && command.toLowerCase() !== '.data') {
+        const dataMatch = command.match(/^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i);
+        const targetPrice = dataMatch && dataMatch[1] ? parseInt(dataMatch[1]) : null;
+        let targetPhone = dataMatch && dataMatch[2] ? dataMatch[2] : (userData.phoneNumber || from.split('@')[0]);
+
+        if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+        const network = detectNetwork(targetPhone) || 'mtn';
+        const plans = await payflex.getAvailablePlans();
+        let filtered = plans.filter(p => p.network.toLowerCase().includes(network.toLowerCase()));
+
+        if (targetPrice) {
+          filtered.sort((a, b) => Math.abs(a.sellPrice - targetPrice) - Math.abs(b.sellPrice - targetPrice));
+          filtered = filtered.slice(0, 4);
+        } else {
+          filtered = filtered.slice(0, 6);
+        }
+
+        let msg = `📦 *Wholesale Data Plans for ${targetPhone} (${network.toUpperCase()})*\n\n`;
+        filtered.forEach(p => {
+          msg += `👉 *${p.name}*\n   💰 *Wholesale Cost:* ₦${p.basePrice} (Retail: ₦${p.sellPrice})\n   Reply *BUYDATA ${p.serial} ${targetPhone}* to purchase from wallet.\n\n`;
+        });
+        return sock.sendMessage(from, { text: msg });
+      }
+      else if (command.toLowerCase().startsWith('buydata ')) {
+        const parts = command.split(/\s+/);
+        const serial = parts[1];
+        let targetPhone = parts[2] || userData.phoneNumber || from.split('@')[0];
+        if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+
+        const plans = await payflex.getAvailablePlans();
+        const plan = plans.find(p => p.serial.toString() === serial.toString());
+        if (!plan) {
+          return sock.sendMessage(from, { text: '❌ Invalid plan selection. Type *DATA* to view wholesale plans.' });
+        }
+
+        const balance = await wallet.getBalance(from);
+        if (balance >= plan.basePrice) {
+          await sock.sendMessage(from, { text: `⏳ *Dispensing Data...*\nDeducting wholesale price ₦${plan.basePrice} from your Clarion Wallet.` });
+          try {
+            await wallet.recordPurchaseDebit(from, plan.basePrice, `Data: ${plan.name} to ${targetPhone}`, { serial: plan.serial, planName: plan.name, targetPhone });
+            await payflex.dispenseData(targetPhone, plan.serial);
+            const newBal = (balance - plan.basePrice).toFixed(2);
+            return sock.sendMessage(from, {
+              text: `✅ *Data Vended Successfully!*\n\n📱 *Recipient:* ${targetPhone}\n📦 *Plan:* ${plan.name}\n💰 *Wholesale Cost:* ₦${plan.basePrice}\n💳 *Paid via:* Clarion Wallet\n🪙 *Remaining Balance:* ₦${newBal}`
+            });
+          } catch (err) {
+            logger.error('Error dispensing self/gift data:', err.message);
+            return sock.sendMessage(from, { text: `❌ Data vending failed: ${err.message}. Your balance was not deducted.` });
+          }
+        } else {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Insufficient Wallet Balance*\n\nYour balance is *₦${balance.toFixed(2)}*, but this wholesale plan costs *₦${plan.basePrice}*.\n\nFund your wallet by transferring to:\n🏦 *Bank:* ${userData.virtualAccount?.bankName || CENTRAL_HUB_ACCOUNT.bankName}\n🔢 *Account:* ${userData.virtualAccount?.accountNumber || CENTRAL_HUB_ACCOUNT.accountNumber}`
+          });
+        }
+      }
+
+      // ── PIN command (Exam Result Checker PINs) ─────────────
+      else if (/^\.?pin(?:\s+(waec|neco))?$/i.test(command)) {
+        const pinMatch = command.match(/^\.?pin(?:\s+(waec|neco))?$/i);
+        const exam = pinMatch && pinMatch[1] ? pinMatch[1].toUpperCase() : null;
+        const examProducts = payflex.getExamProducts();
+
+        if (!exam) {
+          let msg = `🎓 *Clarion Exam Result Checker PINs*\n\nAvailable PINs:\n`;
+          for (const [k, v] of Object.entries(examProducts)) {
+            msg += `👉 *PIN ${k}* — ₦${v.sellPrice.toLocaleString()} (${v.name})\n`;
+          }
+          msg += `\nReply *PIN WAEC* or *PIN NECO* to purchase directly from your wallet balance.`;
+          return sock.sendMessage(from, { text: msg });
+        }
+
+        const product = examProducts[exam];
+        const balance = await wallet.getBalance(from);
+        if (balance >= product.sellPrice) {
+          await sock.sendMessage(from, { text: `⏳ *Processing ${product.name}...*\nDeducting ₦${product.sellPrice.toLocaleString()} from your Clarion Wallet.` });
+          try {
+            await wallet.recordPurchaseDebit(from, product.sellPrice, `Exam PIN: ${product.name}`, { examType: exam, price: product.sellPrice });
+            const result = await payflex.purchaseExamPin(exam);
+            const newBal = (balance - product.sellPrice).toFixed(2);
+            return sock.sendMessage(from, {
+              text: `🎓 *${product.name} Purchased Successfully!*\n\n` +
+                `🔑 *PIN:* \`${result.pin}\`\n` +
+                `🔢 *Serial:* \`${result.serialNumber}\`\n` +
+                `💰 *Amount:* ₦${product.sellPrice.toLocaleString()}\n` +
+                `💳 *Paid via:* Clarion Wallet\n` +
+                `🪙 *Remaining Balance:* ₦${newBal}`
+            });
+          } catch (err) {
+            logger.error('Error vending exam pin to partner:', err.message);
+            return sock.sendMessage(from, { text: `❌ Exam PIN purchase failed: ${err.message}. Your balance was not deducted.` });
+          }
+        } else {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Insufficient Wallet Balance*\n\nYour balance is *₦${balance.toFixed(2)}*, but ${product.name} costs *₦${product.sellPrice.toLocaleString()}*.\n\nFund your wallet by transferring to:\n🏦 *Bank:* ${userData.virtualAccount?.bankName || CENTRAL_HUB_ACCOUNT.bankName}\n🔢 *Account:* ${userData.virtualAccount?.accountNumber || CENTRAL_HUB_ACCOUNT.accountNumber}`
           });
         }
       }
@@ -728,9 +1489,367 @@ export const handleMotherMessage = async (sock, msg) => {
           text: `✅ *Simulated Order Success*\n\nYou just tested ordering Plan #${serialId}.\n\nIn a real scenario, your customer would receive this, pay their unique account, and you would earn profit instantly!`
         });
       }
+
+      // ── CDS APPLY Command ──────────────────────────────────
+      else if (/^\.?cds\s+apply(?:\s+(\d+))?(?:\s+(.+))?$/i.test(command)) {
+        const match = command.match(/^\.?cds\s+apply(?:\s+(\d+))?(?:\s+(.+))?$/i);
+        const amount = match && match[1] ? parseInt(match[1]) : null;
+        const details = match && match[2] ? match[2].trim() : null;
+
+        if (!amount || !details) {
+          await saveUser({ ...userData, state: STATES.AWAITING_CDS_PROPOSAL_DETAILS });
+          return sock.sendMessage(from, {
+            text: `📋 *NYSC Community Development Service (CDS) Micro-Grant Application*\n\n` +
+              `Clarion's CDS Community Fund sponsors personal and community development projects undertaken by corps members!\n\n` +
+              `Please reply with your project details:\n` +
+              `👉 *[Amount] [Project Title & Brief Details]*\n\n` +
+              `*Example:* 75000 Primary School Science Lab Upgrade\n\n` +
+              `_Reply CANCEL at anytime to exit._`
+          });
+        }
+
+        const rawStateCode = (userData.stateCode || 'NYSC').replace(/[^a-zA-Z0-9]/g, '');
+        const proposalId = `CDS-${rawStateCode}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const tier = (userData.donationTier || 'MEMBER').toUpperCase();
+        const priorityMap = { PIONEER: 100, LORD: 90, MASTER: 70, MEMBER: 50 };
+        const priorityScore = priorityMap[tier] || 50;
+
+        const newProposal = {
+          id: proposalId,
+          proposalId,
+          userId: from,
+          verifiedName: userData.verifiedName || userData.name || 'Corps Member',
+          stateCode: userData.stateCode || 'NYSC',
+          donationTier: tier,
+          priorityScore,
+          grantAmountRequested: amount,
+          title: details.split('\n')[0].slice(0, 60),
+          description: details,
+          status: 'PENDING',
+          submittedAt: new Date().toISOString()
+        };
+
+        if (db.cdsProposals) {
+          await db.cdsProposals.doc(proposalId).set(newProposal).catch(err => {
+            logger.warn('Firestore proposal save failed, using memory:', err.message);
+          });
+        }
+        mockCdsProposals.set(proposalId, newProposal);
+
+        return sock.sendMessage(from, {
+          text: `✅ *CDS Micro-Grant Proposal Submitted!*\n\n` +
+            `🔖 *Tracking ID:* \`${proposalId}\`\n` +
+            `💰 *Grant Requested:* ₦${amount.toLocaleString()}\n` +
+            `📋 *Project:* ${newProposal.title}\n` +
+            `🎖️ *Priority Standing:* ${PARTNERSHIP_TIERS[tier]?.name || tier} (${priorityScore}/100 Priority)\n\n` +
+            `_Your proposal has been logged to the Clarion CDS Allocation Board. Type *CDS STATUS* anytime to check review status._`
+        });
+      }
+
+      // ── CDS STATUS Command ─────────────────────────────────
+      else if (/^\.?cds\s+status$/i.test(command)) {
+        let userProposals = [];
+        if (db.cdsProposals) {
+          try {
+            const snap = await db.cdsProposals.where('userId', '==', from).get();
+            if (!snap.empty) {
+              userProposals = snap.docs.map(doc => doc.data());
+            }
+          } catch (e) {}
+        }
+        if (userProposals.length === 0 && mockCdsProposals.size > 0) {
+          userProposals = Array.from(mockCdsProposals.values()).filter(p => p.userId === from);
+        }
+
+        if (userProposals.length === 0) {
+          return sock.sendMessage(from, {
+            text: `ℹ️ *No CDS Grant Proposals Found*\n\nYou haven't submitted any micro-grant applications yet.\n\nType *CDS APPLY* to submit a project for community funding!`
+          });
+        }
+
+        let report = `📋 *Your Clarion CDS Micro-Grant Applications:*\n\n`;
+        userProposals.forEach(p => {
+          const statusIcon = p.status === 'APPROVED' ? '✅ APPROVED' : (p.status === 'REJECTED' ? '❌ NOT APPROVED' : '⏳ UNDER REVIEW');
+          report += `🔖 *ID:* \`${p.proposalId || p.id}\`\n` +
+            `📌 *Project:* ${p.title}\n` +
+            `💰 *Requested:* ₦${Number(p.grantAmountRequested || 0).toLocaleString()}\n` +
+            (p.status === 'APPROVED' ? `🎉 *Approved Grant:* ₦${Number(p.approvedAmount || p.grantAmountRequested || 0).toLocaleString()}\n` : '') +
+            `🚦 *Status:* ${statusIcon}\n` +
+            (p.reviewNotes ? `📝 *Board Notes:* "${p.reviewNotes}"\n` : '') +
+            `\n`;
+        });
+        report += `_Clarion allocates profit to sponsor impactful NYSC Community Development Service projects!_`;
+        return sock.sendMessage(from, { text: report });
+      }
+
+      // ── IMPACT command ─────────────────────────────────────
+      else if (/^\.?impact$/i.test(command)) {
+        const totalCds = await wallet.getTotalCdsDonated(from);
+        const impact = wallet.getImpactLevel(totalCds);
+
+        const filledBars = Math.round((impact.percentage || 0) / 10);
+        const emptyBars = Math.max(0, 10 - filledBars);
+        const progressVisual = '▓'.repeat(filledBars) + '░'.repeat(emptyBars);
+
+        const currentBadge = impact.current ? `${impact.current.badge} *${impact.current.title}*` : '🌱 *Community Contributor*';
+
+        let impactMsg = `🏆 *Your NYSC Community Impact Score*\n\n` +
+          `${currentBadge}\n` +
+          `₦${totalCds.toLocaleString()} pooled to NYSC CDS\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+        if (impact.next) {
+          impactMsg += `Next Milestone: ${impact.next.badge} *${impact.next.title}* (₦${impact.next.threshold.toLocaleString()})\n` +
+            `${progressVisual} ${impact.percentage}% complete (₦${impact.remaining.toLocaleString()} needed)\n`;
+        } else {
+          impactMsg += `💎 *Maximum Impact Achieved! NYSC Hero of Service*\n`;
+        }
+
+        impactMsg += `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `_Every airtime, data, and exam pin sale automatically contributes to community projects! Type *PROFILE* to view your upgraded ID card._ 🚀`;
+
+        return sock.sendMessage(from, { text: impactMsg });
+      }
+
+      // ── PROFILE command ────────────────────────────────────
+      else if (/^\.?profile$/i.test(command)) {
+        await sock.sendMessage(from, { text: '🎨 Generating your Clarion Franchise Profile Card...' });
+        try {
+          const totalCds = await wallet.getTotalCdsDonated(from);
+          const cardUser = {
+            ...userData,
+            totalCdsDonated: totalCds,
+            phone: userData.phoneNumber || from.split('@')[0]
+          };
+          const cardBuffer = await mediaGen.generateProfileCard(cardUser);
+          return sock.sendMessage(from, {
+            image: cardBuffer,
+            caption: `🪪 *Clarion Franchise Partner License*\n\n` +
+              `👤 *Name:* ${cardUser.verifiedName || cardUser.name || 'Corps Member'}\n` +
+              `🎖️ *Tier:* ${cardUser.donationTier || 'MEMBER'}\n` +
+              `🏆 *CDS Impact:* ₦${totalCds.toLocaleString()} donated\n\n` +
+              `_Save this to your phone and post it on your WhatsApp Status!_`
+          });
+        } catch (err) {
+          logger.error('Error generating profile card for user:', err.message);
+          return sock.sendMessage(from, { text: `❌ Could not generate profile card: ${err.message}` });
+        }
+      }
+
+      // ── KIT / LAUNCH command ───────────────────────────────
+      else if (/^\.?(?:kit|launch)$/i.test(command)) {
+        const partnerPhone = (userData.phoneNumber || from.split('@')[0]).replace(/[^0-9]/g, '');
+        const waPhone = partnerPhone.startsWith('0') ? `234${partnerPhone.substring(1)}` : (partnerPhone.startsWith('234') ? partnerPhone : `234${partnerPhone}`);
+        const isSame = checkIsSameNumber(from, partnerPhone);
+
+        let promoText = '';
+        if (isSame) {
+          promoText = `⚡ *Need Cheap & Fast Data?* 📶\n\n` +
+            `I sell MTN, Airtel, Glo & 9mobile data at subsidized rates — instant automated delivery in 20 seconds!\n\n` +
+            `👉 *To order right now, just reply to ME right here with:*\n` +
+            `*DATA*\n\n` +
+            `_Available 24/7 • 100% automated • Works right here on this number!_ 🚀`;
+        } else {
+          promoText = `⚡ *Need Cheap & Fast Data?* 📶\n\n` +
+            `Get MTN, Airtel, Glo & 9mobile data delivered in 20 seconds!\n\n` +
+            `👉 *Tap here to order from my 24/7 store line:*\n` +
+            `https://wa.me/${waPhone}?text=DATA\n\n` +
+            `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡\n\n` +
+            `_Available 24/7 • Instant automated top-up • Low rates guaranteed!_`;
+        }
+
+        await sock.sendMessage(from, { text: promoText });
+
+        try {
+          const shareBuffer = await mediaGen.generateShareCard({
+            ...userData,
+            phone: partnerPhone,
+            isSameNumber: isSame
+          });
+
+          const captionText = isSame
+            ? `📢 *Your Safe Launch Promotional Share Card!*\n\n` +
+              `1️⃣ Save this image to your gallery.\n` +
+              `2️⃣ Copy the message above.\n` +
+              `3️⃣ Post both to your WhatsApp Status!\n\n` +
+              `_When your contacts view your status and reply 'DATA', your automated bot takes over and sells data instantly!_ 🚀`
+            : `📢 *Your Safe Launch Promotional Share Card!*\n\n` +
+              `1️⃣ Save this image to your gallery.\n` +
+              `2️⃣ Copy the message above.\n` +
+              `3️⃣ Post both to your WhatsApp Status and forward to 20 friends or groups.\n\n` +
+              `_When they tap your wa.me link, your bot takes over and sells data automatically!_ 🚀`;
+
+          await sock.sendMessage(from, {
+            image: shareBuffer,
+            caption: captionText
+          });
+        } catch (cardErr) {
+          logger.error('Error generating share card for KIT command:', cardErr.message);
+        }
+
+        return;
+      }
+
+      // ── PROMO / GIVEAWAY / FUEL command ─────────────────────
+      else if (/^\.?(?:promo|giveaway|fuel)$/i.test(command)) {
+        const partnerPhone = (userData.phoneNumber || from.split('@')[0]).replace(/[^0-9]/g, '');
+        const isSame = checkIsSameNumber(from, partnerPhone);
+        const balance = await wallet.getBalance(from);
+        const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+
+        if (balance < 250) {
+          return sock.sendMessage(from, {
+            text: `⛽ *Promo Fuel: Kickstart Your Store Engagement!* 🚀\n\n` +
+              `Clarion is 100% free with ₦0 startup capital. BUT vendors who add *₦500 – ₦2,000* to their wallet on Day 1 to run a *Launch Giveaway* see 4x faster sales!\n\n` +
+              `*How to load Promo Fuel:*\n` +
+              `1️⃣ Transfer ₦500 or ₦1,000 to your Dedicated Store Account:\n` +
+              `   🏦 *Bank:* ${virtualAcct.bankName}\n` +
+              `   🔢 *Account:* ${virtualAcct.accountNumber}\n` +
+              `   👤 *Name:* ${virtualAcct.accountName || userData.verifiedName}\n\n` +
+              `2️⃣ Once loaded, we automatically generate your custom *Launch Giveaway Poster* and status text to gift free 500MB to your first 5 friends!\n\n` +
+              `_Transfer anytime to unlock your Launch Giveaway kit._ ⚡`
+          });
+        }
+
+        await sock.sendMessage(from, { text: '🎨 Generating your custom Launch Giveaway Poster...' });
+        try {
+          const promoBuffer = await mediaGen.generateGiveawayPromoCard({
+            ...userData,
+            phone: partnerPhone,
+            isSameNumber: isSame
+          }, balance);
+
+          const giveawayStatusText = isSame
+            ? `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
+              `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+              `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
+              `Watch the bot reply and vend your data in 20 seconds! ⚡`
+            : `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
+              `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+              `👉 *To claim: Tap this link to message my bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
+              `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
+
+          await sock.sendMessage(from, {
+            image: promoBuffer,
+            caption: `🎁 *YOUR EXCLUSIVE LAUNCH GIVEAWAY POSTER!* 🎨\n\n` +
+              `You have *₦${balance.toFixed(2)}* Promo Fuel in your wallet.\n\n` +
+              `📋 *Copy the text below and post it on your WhatsApp Status with this image:*`
+          });
+
+          return sock.sendMessage(from, { text: giveawayStatusText });
+        } catch (err) {
+          logger.error('Error generating giveaway promo card:', err.message);
+          return sock.sendMessage(from, { text: `❌ Could not generate giveaway poster: ${err.message}` });
+        }
+      }
+
+      // ── GIFT command ───────────────────────────────────────
+      else if (/^\.?gift\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})(?:\s+(\S+))?$/i.test(command)) {
+        const giftMatch = command.match(/^\.?gift\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})(?:\s+(\S+))?$/i);
+        let targetPhone = giftMatch[1];
+        if (targetPhone.startsWith('234') && targetPhone.length === 13) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+        const planArg = giftMatch[2] || '500MB';
+        const network = detectNetwork(targetPhone) || 'mtn';
+
+        const plans = await payflex.getAvailablePlans();
+        const networkPlans = plans.filter(p => p.network.toLowerCase().includes(network.toLowerCase()));
+
+        let matchedPlan = networkPlans.find(p => p.name.toLowerCase().includes(planArg.toLowerCase())) || networkPlans[0];
+
+        if (!matchedPlan) {
+          return sock.sendMessage(from, { text: `❌ No matching data plan found for ${network.toUpperCase()}.` });
+        }
+
+        const balance = await wallet.getBalance(from);
+        if (balance < matchedPlan.basePrice) {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Insufficient Wallet Balance to Gift Data*\n\n` +
+              `Gifting *${matchedPlan.name}* costs *₦${matchedPlan.basePrice}* wholesale, but your balance is *₦${balance.toFixed(2)}*.\n\n` +
+              `To fund your wallet, transfer to:\n` +
+              `🏦 *Bank:* ${userData.virtualAccount?.bankName || CENTRAL_HUB_ACCOUNT.bankName}\n` +
+              `🔢 *Account:* ${userData.virtualAccount?.accountNumber || CENTRAL_HUB_ACCOUNT.accountNumber}`
+          });
+        }
+
+        await sock.sendMessage(from, { text: `⏳ Dispensing promotional gift of *${matchedPlan.name}* to *${targetPhone}* (${network.toUpperCase()})...` });
+
+        try {
+          await wallet.recordPurchaseDebit(from, matchedPlan.basePrice, `Promo Gift: ${matchedPlan.name} to ${targetPhone}`, { targetPhone, planName: matchedPlan.name });
+          await payflex.dispenseData(targetPhone, matchedPlan.serial);
+          const newBal = (balance - matchedPlan.basePrice).toFixed(2);
+
+          return sock.sendMessage(from, {
+            text: `🎁 *Promo Data Gift Vended Successfully!*\n\n` +
+              `📱 *Recipient:* ${targetPhone}\n` +
+              `📦 *Plan:* ${matchedPlan.name} (${network.toUpperCase()})\n` +
+              `💰 *Wholesale Cost:* ₦${matchedPlan.basePrice}\n` +
+              `🪙 *Remaining Balance:* ₦${newBal}\n\n` +
+              `_Your contact just experienced your 20-second automated delivery firsthand!_ 🚀`
+          });
+        } catch (giftErr) {
+          logger.error('Error vending promo gift:', giftErr.message);
+          return sock.sendMessage(from, { text: `❌ Gift delivery failed: ${giftErr.message}. Balance was not deducted.` });
+        }
+      }
     }
 
   } catch (error) {
     logger.error('Mother Bot Error:', error);
+  }
+};
+
+/**
+ * Checks if an updated CDS donation crosses an impact milestone.
+ * Dispatches congratulatory message and an updated Profile Card to the partner.
+ */
+export const handleMilestoneCheck = async (userId, previousCdsTotal, newCdsTotal, userData = null) => {
+  try {
+    const crossed = wallet.checkMilestone(previousCdsTotal, newCdsTotal);
+    if (!crossed) return null;
+
+    logger.info(`[MILESTONE] User ${userId} crossed milestone: ${crossed.title} (₦${crossed.threshold})`);
+
+    const sock = sessionManager.motherSock;
+    const targetJid = userId.includes('@') ? userId : `${userId}@s.whatsapp.net`;
+
+    let user = userData;
+    if (!user && db.users) {
+      try {
+        const doc = await db.users.doc(userId).get();
+        if (doc.exists) user = doc.data();
+      } catch (e) {
+        logger.warn(`Could not fetch user doc for milestone check: ${e.message}`);
+      }
+    }
+    if (!user) {
+      user = mockUserStore.get(userId) || { uid: userId, name: 'Corps Member', totalCdsDonated: newCdsTotal };
+    }
+    user.totalCdsDonated = newCdsTotal;
+
+    const congratsText = `🎉 *CONGRATULATIONS CORPS MEMBER!* 🏆\n\n` +
+      `You just unlocked a new community impact milestone:\n` +
+      `🎖️ *${crossed.badge} ${crossed.title}*!\n\n` +
+      `Your automated sales have contributed over *₦${crossed.threshold.toLocaleString()}* directly into the NYSC Community Development Fund.\n\n` +
+      `_Here is your upgraded Clarion Franchise ID Card featuring your new honor:_`;
+
+    if (sock) {
+      await sock.sendMessage(targetJid, { text: congratsText });
+      try {
+        const cardBuffer = await mediaGen.generateProfileCard(user);
+        await sock.sendMessage(targetJid, {
+          image: cardBuffer,
+          caption: `🪪 *Official Clarion Franchise License — ${crossed.badge} ${crossed.title}*\nTotal CDS Contributed: ₦${newCdsTotal.toLocaleString()}`
+        });
+      } catch (imgErr) {
+        logger.error('Error generating milestone profile card image:', imgErr.message);
+      }
+    }
+
+    return crossed;
+  } catch (error) {
+    logger.error('Error handling milestone check:', error);
+    return null;
   }
 };

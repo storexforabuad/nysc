@@ -19,6 +19,8 @@ import broadcastQueue from './services/BroadcastQueue.js';
 import adminService from './services/AdminService.js';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
+import { CENTRAL_HUB_ACCOUNT, handleMilestoneCheck, checkIsSameNumber } from './bot/MotherBot.js';
+import networkRecoveryNotifier from './services/NetworkRecoveryNotifier.js';
 
 // ── HTTP Rate Limiters ──
 const webhookLimiter = rateLimit({
@@ -187,6 +189,119 @@ async function startServer() {
     }
   });
 
+  app.get('/api/admin/hub-account', verifyAdminToken, async (req, res) => {
+    try {
+      res.json({
+        success: true,
+        account: CENTRAL_HUB_ACCOUNT,
+        mode: config.mockMode ? 'MOCK' : 'LIVE'
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/scale-advisor', verifyAdminToken, async (req, res) => {
+    try {
+      const metrics = await adminService.getScaleAdvisorMetrics();
+      res.json({ success: true, ...metrics });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/cds-proposals', verifyAdminToken, async (req, res) => {
+    try {
+      const proposals = await adminService.listCdsProposals();
+      res.json({ success: true, proposals });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/cds-proposals/:id/decision', verifyAdminToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { decision, approvedAmount, reviewNotes } = req.body;
+      const result = await adminService.decideCdsProposal(id, decision, approvedAmount, reviewNotes);
+      res.json({ success: true, proposal: result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/trigger-network-recovery', verifyAdminToken, async (req, res) => {
+    try {
+      const { network } = req.body;
+      const result = await networkRecoveryNotifier.scanAndNotify(network || 'MTN');
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- BROADCAST ADMIN ROUTES ---
+  app.get('/api/admin/broadcasts/partners', verifyAdminToken, async (req, res) => {
+    try {
+      const tier = req.query.tier || 'ALL';
+      const partners = await adminService.getPartnersByTier(tier);
+      res.json({ success: true, partners });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/broadcasts/history', verifyAdminToken, async (req, res) => {
+    try {
+      const history = await adminService.getBroadcastHistory();
+      res.json({ success: true, history });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/broadcasts/queue', verifyAdminToken, async (req, res) => {
+    try {
+      const { messageTemplate, targetTier, targetPhone } = req.body;
+      if (!messageTemplate || !messageTemplate.trim()) {
+        return res.status(400).json({ error: 'Message template is required' });
+      }
+
+      let recipients = [];
+      let targetPartners = [];
+
+      if (targetPhone && targetPhone.trim()) {
+        const cleanPhone = targetPhone.replace(/[^0-9]/g, '');
+        const partnerJid = cleanPhone.startsWith('0') ? `234${cleanPhone.substring(1)}@s.whatsapp.net` : (cleanPhone.startsWith('234') ? `${cleanPhone}@s.whatsapp.net` : `234${cleanPhone}@s.whatsapp.net`);
+        recipients = [partnerJid];
+        targetPartners = [{ id: partnerJid, name: 'Target Partner', phone: cleanPhone }];
+      } else {
+        const tier = targetTier || 'ALL';
+        targetPartners = await adminService.getPartnersByTier(tier);
+        recipients = targetPartners.map(p => {
+          const ph = (p.phone || p.id).replace(/[^0-9]/g, '');
+          return ph.startsWith('0') ? `234${ph.substring(1)}@s.whatsapp.net` : (ph.startsWith('234') ? `${ph}@s.whatsapp.net` : `234${ph}@s.whatsapp.net`);
+        });
+      }
+
+      if (recipients.length === 0) {
+        return res.status(400).json({ error: 'No recipients found for the selected audience' });
+      }
+
+      await broadcastQueue.queueBroadcast('ADMIN', messageTemplate, recipients);
+
+      res.json({
+        success: true,
+        queued: true,
+        recipientCount: recipients.length,
+        targetPartnersCount: targetPartners.length
+      });
+    } catch (error) {
+      logger.error('Error queuing broadcast:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Squad Webhook (rate-limited: 30 req/min per IP)
   app.post('/webhook/squad', webhookLimiter, async (req, res) => {
     const signature = req.headers['x-squad-signature'];
@@ -203,11 +318,19 @@ async function startServer() {
       logger.info(`Received successful payment: ${TransactionRef}`);
 
       try {
-        const ledgerSnapshot = await db.ledger
-          .where('type', '==', 'PENDING_DATA')
+        let ledgerSnapshot = await db.ledger
+          .where('status', '==', 'AWAITING_PAYMENT')
           .where('amount', '==', Body.amount)
           .limit(1)
           .get();
+
+        if (ledgerSnapshot.empty) {
+          ledgerSnapshot = await db.ledger
+            .where('type', '==', 'PENDING_DATA')
+            .where('amount', '==', Body.amount)
+            .limit(1)
+            .get();
+        }
 
         if (!ledgerSnapshot.empty) {
           const order = ledgerSnapshot.docs[0].data();
@@ -222,25 +345,69 @@ async function startServer() {
 
           if (sessionManager.motherSock) {
             await sessionManager.motherSock.sendMessage(destinationJid, {
-              text: `⏳ *Payment Received!*\n\nYour payment of *₦${order.amount}* for ${order.planName || 'your data'} has been confirmed. We are dispensing your data now.\n\n_If there is a slight network delay, please be patient._`
+              text: `⏳ *Payment Received!*\n\nYour payment of *₦${order.amount.toLocaleString()}* has been confirmed. Fulfilling your order now.\n\n_If there is a slight network delay, please be patient._`
             }).catch(() => { });
           }
 
           try {
-            // 2. Attempt Delivery
-            await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId);
+            // 2. Attempt Delivery according to product type
+            let fulfillmentResult;
+            if (order.type === 'PENDING_AIRTIME' || order.orderType === 'airtime') {
+              const target = order.targetPhone || order.buyerPhone.split('@')[0];
+              fulfillmentResult = await payflex.purchaseAirtime(order.network, target, order.amount);
+              if (sessionManager.motherSock) {
+                await sessionManager.motherSock.sendMessage(destinationJid, {
+                  text: `✅ *Airtime Vended Successfully!*\n\n📱 *Recipient:* ${target}\n🌐 *Network:* ${(order.network || '').toUpperCase()}\n💰 *Amount:* ₦${order.amount.toLocaleString()}\n\nThank you for using Clarion A.I!`
+                }).catch(() => {});
+              }
+            } else if (order.type === 'PENDING_EXAM_PIN' || order.orderType === 'exam_pin') {
+              fulfillmentResult = await payflex.purchaseExamPin(order.examType);
+              if (sessionManager.motherSock) {
+                await sessionManager.motherSock.sendMessage(destinationJid, {
+                  text: `🎓 *${fulfillmentResult.productName || 'Exam PIN'} Delivered!*\n\n🔑 *PIN:* \`${fulfillmentResult.pin}\`\n🔢 *Serial:* \`${fulfillmentResult.serialNumber}\`\n💰 *Amount:* ₦${order.amount.toLocaleString()}\n\nThank you for using Clarion A.I!`
+                }).catch(() => {});
+              }
+            } else {
+              // Data delivery
+              fulfillmentResult = await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId || order.serial);
+            }
 
             // 3. COMPLETE
-            const netProfit = order.markup ?? +(Body.amount - order.baseCost).toFixed(2);
-            const coMemberShare = +(netProfit * 0.50).toFixed(2); // Proxy Bot Owner
-            const systemShare = +(netProfit * 0.30).toFixed(2); // Platform
-            const cdsShare = +(netProfit * 0.20).toFixed(2); // CDS Group
+            const netProfit = order.markup ?? +(Body.amount - (order.baseCost || Body.amount * 0.9)).toFixed(2);
+            let userTier = order.donationTier;
+            if (order.userId === 'HUB') {
+              userTier = 'HUB';
+            } else if (!userTier && db.users && order.userId) {
+              try {
+                const userDoc = await db.users.doc(order.userId).get();
+                if (userDoc.exists) userTier = userDoc.data().donationTier;
+              } catch (e) {}
+            }
+            const settlement = wallet.calculateSettlement(netProfit, userTier || 'MEMBER');
 
             await db.ledger.doc(orderId).update({
               status: 'COMPLETED',
-              settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
+              settlement,
               updatedAt: new Date().toISOString()
             });
+
+            // Atomically increment CDS pool on user doc
+            if (db.users && order.userId && order.userId !== 'HUB' && settlement.cdsShare > 0) {
+              let prevCds = 0;
+              let userData = null;
+              try {
+                const uDoc = await db.users.doc(order.userId).get();
+                if (uDoc.exists) {
+                  userData = uDoc.data();
+                  prevCds = Number(userData.totalCdsDonated) || 0;
+                }
+              } catch (e) {}
+              const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
+              await db.users.doc(order.userId).set({
+                totalCdsDonated: admin.firestore.FieldValue.increment(settlement.cdsShare)
+              }, { merge: true }).catch(() => {});
+              handleMilestoneCheck(order.userId, prevCds, newCds, userData).catch(() => {});
+            }
 
             // Attempt to generate and send a receipt image to the buyer
             try {
@@ -278,6 +445,82 @@ async function startServer() {
               lastError: dispenseError.message,
               updatedAt: new Date().toISOString()
             });
+          }
+        } else {
+          // Direct wallet funding / Promo Fuel deposit
+          logger.info(`Direct wallet funding / Promo Fuel detected for ₦${Body.amount}`);
+          const virtualAccountNo = Body.virtual_account_number || Body.account_number;
+          let matchedUser = null;
+          let matchedUserId = null;
+
+          if (virtualAccountNo && db.users) {
+            try {
+              const userSnap = await db.users.where('virtualAccount.accountNumber', '==', virtualAccountNo).limit(1).get();
+              if (!userSnap.empty) {
+                matchedUser = userSnap.docs[0].data();
+                matchedUserId = userSnap.docs[0].id;
+              }
+            } catch (uErr) {
+              logger.warn('Could not query user by virtual account:', uErr.message);
+            }
+          }
+
+          if (matchedUserId) {
+            const fundingRef = `PROMO_FUEL_${Date.now()}`;
+            if (db.ledger) {
+              await db.ledger.doc(fundingRef).set({
+                type: 'WALLET_DEPOSIT',
+                userId: matchedUserId,
+                amount: Body.amount,
+                settlement: {
+                  coMemberShare: Body.amount,
+                  systemShare: 0,
+                  cdsShare: 0
+                },
+                status: 'COMPLETED',
+                createdAt: new Date().toISOString()
+              });
+            }
+
+            const partnerPhone = (matchedUser.phoneNumber || matchedUserId.split('@')[0]).replace(/[^0-9]/g, '');
+            const isSame = checkIsSameNumber(matchedUserId, partnerPhone);
+            const userJid = matchedUserId.includes('@') ? matchedUserId : `${matchedUserId}@s.whatsapp.net`;
+
+            if (sessionManager.motherSock) {
+              await sessionManager.motherSock.sendMessage(userJid, {
+                text: `💰 *PROMO FUEL LOADED!* 🚀\n\n` +
+                  `Your wallet has been credited with *₦${Body.amount.toLocaleString()}*.\n\n` +
+                  `🎨 Generating your custom *Launch Giveaway Poster* now...`
+              }).catch(() => {});
+
+              try {
+                const promoBuffer = await mediaGen.generateGiveawayPromoCard({
+                  ...matchedUser,
+                  phone: partnerPhone,
+                  isSameNumber: isSame
+                }, Body.amount);
+
+                const giveawayStatusText = isSame
+                  ? `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
+                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+                    `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
+                    `Watch the bot reply and vend your data in 20 seconds! ⚡`
+                  : `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
+                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+                    `👉 *To claim: Tap this link to message my bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
+                    `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
+
+                await sessionManager.motherSock.sendMessage(userJid, {
+                  image: promoBuffer,
+                  caption: `🎁 *YOUR EXCLUSIVE LAUNCH GIVEAWAY POSTER IS READY!* 🎨\n\n` +
+                    `📋 *Copy the text below and post it on your WhatsApp Status with this image:*`
+                });
+
+                await sessionManager.motherSock.sendMessage(userJid, { text: giveawayStatusText });
+              } catch (posterErr) {
+                logger.error('Failed to generate giveaway poster on wallet funding:', posterErr.message);
+              }
+            }
           }
         }
       } catch (error) {

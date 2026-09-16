@@ -4,6 +4,7 @@ import qrcode from 'qrcode-terminal';
 import { logger } from '../config/env.js';
 import { db } from '../services/firebase.js';
 import { handleMotherMessage } from './MotherBot.js';
+import mediaGen from '../services/mediaGen.js';
 import path from 'path';
 import fs from 'fs';
 import { Worker } from 'worker_threads';
@@ -128,7 +129,7 @@ class SessionManager {
           }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
         }
         if (this.motherSock) {
-          this._sendActivationSuccessMessages(phoneJid);
+          this._sendActivationSuccessMessages(phoneJid, user);
         }
       }
 
@@ -280,16 +281,87 @@ class SessionManager {
     return [];
   }
 
-  async _sendActivationSuccessMessages(phoneJid) {
+  async _sendActivationSuccessMessages(phoneJid, user) {
     if (!this.motherSock) return;
-    const msg1 = `🥳 *ACTIVATION SUCCESSFUL!*\n\nYour Clarion Digital Store is now live and ready to generate revenue! 🚀\n\n*How to manage your store:*\nSimply text me these keywords anytime:\n\n💰 *BALANCE* - Check your earnings\n📜 *HISTORY* - View recent orders & payouts\n💸 *WITHDRAW [amount]* - Cash out your profits`;
-    const broadcastTemplate = `🚀 Great news! I've just launched my own automated 24/7 data enterprise powered by Clarion A.I (An NYSC SAED Inspired Project). You can now get high-speed data at affordable prices directly through my number!\n\nIf you ever need data, simply reply to my number with:\n\n*DATA* - See all plans for your network\n*DATA [price]* - Find plans around your budget\n*DATA [price] [number]* - Send to a friend\n\nFeel free to ignore this if you're not interested right now! 😊`;
-    const msg2 = `📢 *Launch your automated store!*\n\nWould you like Clarion A.I. to announce your new enterprise to specific WhatsApp contacts?\n\n*Here is a preview of what they will see:*\n---\n${broadcastTemplate}\n---\n\n*How to broadcast:*\nSimply share the contact cards or type the phone numbers here (e.g. 08012345678) of the people you want to send this to.\n\nWhen you are ready, reply *DONE* to send the broadcast to them, or *SKIP* if you prefer not to broadcast.`;
+
+    let fullUser = user;
+    if (db.users && user?.uid) {
+      try {
+        const uDoc = await db.users.doc(user.uid).get();
+        if (uDoc.exists) fullUser = { uid: user.uid, ...uDoc.data() };
+      } catch (e) { }
+    }
+
+    const botNumber = (fullUser.phoneNumber || phoneJid.split('@')[0]);
+    const partnerName = fullUser.verifiedName || fullUser.name || 'Partner';
+    const botDigits = String(fullUser.phoneNumber || '').replace(/[^0-9]/g, '');
+    const partnerDigits = String(phoneJid).replace(/[^0-9]/g, '');
+    const isSameNumber = botDigits.length >= 10 && partnerDigits.length >= 10 && botDigits.slice(-10) === partnerDigits.slice(-10);
+    const virtualAcct = fullUser.virtualAccount || { bankName: 'HabariPay (GTCO)', accountNumber: '0123456789' };
+
+    // 1. Dispatch Clarion Franchise ID Card
+    try {
+      const cardBuffer = await mediaGen.generateProfileCard(fullUser);
+      await this.motherSock.sendMessage(phoneJid, {
+        image: cardBuffer,
+        caption: `🪪 *OFFICIAL CLARION FRANCHISE LICENSE*\n\nCongratulations, *${partnerName}*! Your digital enterprise is officially licensed and active under the NYSC SAED Initiative.`
+      });
+    } catch (cardErr) {
+      logger.error('Failed to generate activation profile card:', cardErr.message);
+    }
+
+    // 2. Operational Control Deck
+    const controlDeckMsg = `🥳 *STOREFRONT FULLY OPERATIONAL!*\n\n` +
+      `Your automated 24/7 data bot is live on *+${botNumber}*.\n\n` +
+      `*Enterprise Commands (text me anytime):*\n` +
+      `💰 *BALANCE* — View available wallet balance & earnings\n` +
+      `🎖️ *RANK* — Check your partnership tier & CDS donation impact\n` +
+      `💸 *WITHDRAW [amount]* — Cash out profits to your locked bank (₦90 fee)\n` +
+      `🏦 *UPDATE BANK* — Change payout account (₦100 security fee)\n` +
+      `📜 *HISTORY* — View recent transactions and payout logs\n` +
+      `📢 *KIT* — Download your promotional status kit & share card\n` +
+      `⛽ *PROMO* — View Launch Giveaway Poster & Promo Fuel details\n` +
+      `🎁 *GIFT [phone] [plan]* — Gift promotional data to your friends\n` +
+      `🪪 *CARD* — Re-download your Franchise License Card`;
+
+    // 3. Safe Launch Copy-Paste Forwarding Kit (Context-Aware)
+    const safeLaunchMsg = isSameNumber
+      ? `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
+        `*Copy and post the text below to your WhatsApp Status:*\n\n` +
+        `────────────────────────\n` +
+        `Big news! 🚀 I just launched my automated 24/7 Data Store powered by Clarion A.I (NYSC SAED Project).\n\n` +
+        `Get MTN, Airtel, Glo & 9mobile data delivered instantly in 20 seconds!\n\n` +
+        `👉 *To order right now, just reply to ME with:*\n` +
+        `*DATA*\n\n` +
+        `_My automated bot replies and vends your data immediately! Every purchase helps fund NYSC community projects._ 🇳🇬\n` +
+        `────────────────────────`
+      : `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
+        `*Copy and forward the text below to your WhatsApp Status & contacts:*\n\n` +
+        `────────────────────────\n` +
+        `Big news! 🚀 I just launched my automated 24/7 Data Store powered by Clarion A.I (NYSC SAED Project).\n\n` +
+        `Get MTN, Airtel, Glo & 9mobile data delivered instantly in 20 seconds!\n\n` +
+        `👉 *Click here to order from my store bot instantly:*\n` +
+        `https://wa.me/234${botDigits.slice(-10)}?text=Data%20500\n\n` +
+        `Or text *DATA* to 0${botDigits.slice(-10)}!\n\n` +
+        `_Every purchase helps fund NYSC community development projects._ 🇳🇬\n` +
+        `────────────────────────`;
+
+    // 4. Optional Promo Fuel Invitation
+    const promoFuelPitch = `⛽ *OPTIONAL: KICKSTART ENGAGEMENT WITH PROMO FUEL*\n\n` +
+      `💡 *Pro-Partner Secret:*\n` +
+      `Clarion requires *₦0 startup capital*. But vendors who add *₦500 – ₦1,000* to their wallet on Day 1 to gift free 500MB to 3 close friends or host a launch giveaway see *4x more sales*!\n\n` +
+      `🏦 *Bank:* ${virtualAcct.bankName}\n` +
+      `🔢 *Account:* ${virtualAcct.accountNumber}\n` +
+      `👤 *Name:* ${virtualAcct.accountName || partnerName}\n\n` +
+      `_Transfer anytime to load Promo Fuel, then text *PROMO* to get your exclusive Giveaway Poster!_ 🎨`;
 
     try {
-      await this.motherSock.sendMessage(phoneJid, { text: msg1 });
+      await new Promise(r => setTimeout(r, 1200));
+      await this.motherSock.sendMessage(phoneJid, { text: controlDeckMsg });
       await new Promise(r => setTimeout(r, 1500));
-      await this.motherSock.sendMessage(phoneJid, { text: msg2 });
+      await this.motherSock.sendMessage(phoneJid, { text: safeLaunchMsg });
+      await new Promise(r => setTimeout(r, 1500));
+      await this.motherSock.sendMessage(phoneJid, { text: promoFuelPitch });
     } catch (err) { }
   }
 }

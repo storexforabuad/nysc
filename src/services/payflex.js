@@ -11,6 +11,16 @@ const getTieredMarkup = (basePrice) => {
   return 15;
 };
 
+// Airtime parameters: sold at face value
+export const AIRTIME_MIN = 50;
+export const AIRTIME_MAX = 50000;
+
+// Exam PIN products (WAEC & NECO)
+export const EXAM_PIN_PRODUCTS = {
+  WAEC: { name: 'WAEC Result Checker PIN', sellPrice: 4500, productCode: 'waec' },
+  NECO: { name: 'NECO Result Checker PIN', sellPrice: 1500, productCode: 'neco' }
+};
+
 // Deterministic plan_code → officialPrice map, built from master_pricing_strategy_dashboard.html.
 // Keyed by Payflex plan_code so it is IMMUNE to API ordering/count changes.
 // MTN Share plan codes that collide with Gifting (e.g. M2GBS) are prefixed with their network.
@@ -376,6 +386,117 @@ class PayflexService {
       throw new Error(error.response?.data?.message || error.message);
     }
   }
+
+  getExamProducts() {
+    return EXAM_PIN_PRODUCTS;
+  }
+
+  async purchaseAirtime(network, phoneNumber, amount) {
+    const parsedAmount = Number(amount);
+    if (isNaN(parsedAmount) || parsedAmount < AIRTIME_MIN || parsedAmount > AIRTIME_MAX) {
+      throw new Error(`Airtime amount must be between ₦${AIRTIME_MIN} and ₦${AIRTIME_MAX.toLocaleString()}`);
+    }
+
+    const normalizedNetwork = (network || '').toLowerCase().trim();
+
+    if (config.mockMode) {
+      if (phoneNumber === '08000000000') {
+        logger.warn(`MOCK: Simulating Payflex Airtime API failure for ${phoneNumber}`);
+        throw new Error('MOCK TELCO NETWORK ERROR (AIRTIME)');
+      }
+
+      logger.info(`MOCK: Dispensed ₦${parsedAmount} ${normalizedNetwork.toUpperCase()} airtime to ${phoneNumber}`);
+      return {
+        status: 'success',
+        reference: `MOCK_AIRTIME_${Date.now()}`,
+        amount: parsedAmount,
+        network: normalizedNetwork,
+        phoneNumber,
+        apiResponse: { status: 'SUCCESS', reference: `MOCK_AIRTIME_${Date.now()}` }
+      };
+    }
+
+    logger.info(`Dispensing real airtime: ₦${parsedAmount} ${normalizedNetwork.toUpperCase()} to ${phoneNumber}`);
+    try {
+      const response = await this.postBreaker.fire('/api/topup/', {
+        network: normalizedNetwork,
+        mobile_number: phoneNumber,
+        amount: parsedAmount
+      });
+
+      if (response.data.status === 'SUCCESS') {
+        logger.info(`Airtime vended successfully to ${phoneNumber}. Ref: ${response.data.reference}`);
+        return {
+          status: 'success',
+          reference: response.data.reference,
+          amount: parsedAmount,
+          network: normalizedNetwork,
+          phoneNumber,
+          apiResponse: response.data
+        };
+      } else {
+        throw new Error(response.data.message || 'Airtime vending failed at provider');
+      }
+    } catch (error) {
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      logger.error(`Error vending airtime to ${phoneNumber}: ${detail}`);
+      throw new Error(error.response?.data?.message || error.message);
+    }
+  }
+
+  async purchaseExamPin(examType) {
+    const normalizedExam = (examType || '').toUpperCase().trim();
+    const product = EXAM_PIN_PRODUCTS[normalizedExam];
+
+    if (!product) {
+      throw new Error(`Unsupported exam type: ${examType}. Supported: WAEC, NECO`);
+    }
+
+    if (config.mockMode) {
+      const mockPin = `MOCK-${normalizedExam}-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+      const mockSerial = `${normalizedExam === 'WAEC' ? 'WC' : 'NC'}-MOCK-${Date.now().toString().slice(-6)}`;
+      logger.info(`MOCK: Dispensed ${product.name}. PIN: ${mockPin}, Serial: ${mockSerial}`);
+      return {
+        status: 'success',
+        reference: `MOCK_EXAM_${Date.now()}`,
+        pin: mockPin,
+        serialNumber: mockSerial,
+        examType: normalizedExam,
+        productName: product.name,
+        price: product.sellPrice,
+        apiResponse: { status: 'SUCCESS' }
+      };
+    }
+
+    logger.info(`Purchasing real exam PIN: ${product.name}`);
+    try {
+      const response = await this.postBreaker.fire('/api/education/', {
+        exam_type: product.productCode
+      });
+
+      if (response.data.status === 'SUCCESS') {
+        const pin = response.data.pin || response.data.token || response.data.cards?.[0]?.pin || 'N/A';
+        const serialNumber = response.data.serial || response.data.serial_number || response.data.cards?.[0]?.serial || 'N/A';
+        return {
+          status: 'success',
+          reference: response.data.reference,
+          pin,
+          serialNumber,
+          examType: normalizedExam,
+          productName: product.name,
+          price: product.sellPrice,
+          apiResponse: response.data
+        };
+      } else {
+        throw new Error(response.data.message || 'Exam PIN vending failed at provider');
+      }
+    } catch (error) {
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      logger.error(`Error purchasing exam PIN ${product.name}: ${detail}`);
+      throw new Error(error.response?.data?.message || error.message);
+    }
+  }
 }
 
 export default new PayflexService();
+

@@ -1,6 +1,7 @@
 import { logger } from '../config/env.js';
 import { db } from './firebase.js';
 import payflex from './payflex.js';
+import wallet from './WalletService.js';
 import admin from 'firebase-admin';
 
 class RetryQueue {
@@ -51,24 +52,57 @@ class RetryQueue {
                 logger.info(`[RETRY-QUEUE] Retrying order ${orderId} (attempt ${currentRetry}/${this.maxRetries})`);
 
                 try {
-                    const result = await payflex.dispenseData(
-                        order.buyerPhone.split('@')[0],
-                        order.serial || order.planId
-                    );
+                    let result;
+                    if (order.orderType === 'airtime' || order.type === 'PENDING_AIRTIME' || order.type === 'FAILED_AIRTIME') {
+                        const target = order.targetPhone || order.buyerPhone.split('@')[0];
+                        result = await payflex.purchaseAirtime(order.network, target, order.amount);
+                    } else if (order.orderType === 'exam_pin' || order.type === 'PENDING_EXAM_PIN' || order.type === 'FAILED_EXAM_PIN') {
+                        result = await payflex.purchaseExamPin(order.examType);
+                    } else {
+                        result = await payflex.dispenseData(
+                            order.buyerPhone.split('@')[0],
+                            order.serial || order.planId
+                        );
+                    }
 
                     // SUCCESS — update order to COMPLETED
                     const netProfit = order.markup ?? +(order.amount - (order.baseCost || order.amount)).toFixed(2);
-                    const coMemberShare = +(netProfit * 0.50).toFixed(2);
-                    const systemShare = +(netProfit * 0.30).toFixed(2);
-                    const cdsShare = +(netProfit * 0.20).toFixed(2);
+                    let userTier = order.donationTier;
+                    if (!userTier && db.users && order.userId) {
+                        try {
+                            const uDoc = await db.users.doc(order.userId).get();
+                            if (uDoc.exists) userTier = uDoc.data().donationTier;
+                        } catch (e) {}
+                    }
+                    const settlement = wallet.calculateSettlement(netProfit, userTier);
 
                     await db.ledger.doc(orderId).update({
                         status: 'COMPLETED',
-                        settlement: { coMemberShare, systemShare, cdsShare, totalProfit: netProfit },
+                        settlement,
                         retryCount: currentRetry,
                         resolvedAt: new Date().toISOString(),
                         updatedAt: new Date().toISOString()
                     });
+
+                    // Increment CDS pool on user doc
+                    if (db.users && order.userId && settlement.cdsShare > 0) {
+                        let prevCds = 0;
+                        let userData = null;
+                        try {
+                            const uDoc = await db.users.doc(order.userId).get();
+                            if (uDoc.exists) {
+                                userData = uDoc.data();
+                                prevCds = Number(userData.totalCdsDonated) || 0;
+                            }
+                        } catch (e) {}
+                        const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
+                        await db.users.doc(order.userId).set({
+                            totalCdsDonated: admin.firestore.FieldValue.increment(settlement.cdsShare)
+                        }, { merge: true }).catch(() => {});
+                        import('../bot/MotherBot.js').then(mb => {
+                            if (mb.handleMilestoneCheck) mb.handleMilestoneCheck(order.userId, prevCds, newCds, userData).catch(() => {});
+                        }).catch(() => {});
+                    }
 
                     // Increment contact stats
                     if (db.users && order.buyerPhone && order.userId) {

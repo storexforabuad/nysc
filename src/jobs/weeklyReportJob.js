@@ -34,17 +34,47 @@ export function startWeeklyReportJob() {
                 const stats = await reportService.generateWeeklyStats(userId);
 
                 if (stats) {
-                    const msg = `📈 *Weekly Enterprise Report: Clarion A.I.*\n\n` +
-                        `Total Orders: ${stats.totalOrders}\n` +
-                        `Gross Revenue: ₦${stats.grossRevenue}\n` +
-                        `Net Profit Earned: ₦${stats.netProfit}\n` +
-                        `Active Customer Base: ${stats.activeCustomers}\n\n` +
-                        `_Keep scaling your digital enterprise! Have a highly profitable weekend._ 🚀`;
+                    const badgeTitle = stats.impactMilestone?.current
+                        ? `${stats.impactMilestone.current.badge} ${stats.impactMilestone.current.title}`
+                        : '🌱 Community Contributor';
+
+                    let msg = `📈 *Your Weekly Clarion Enterprise Report*\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                        `📊 *This Week's Sales*\n` +
+                        `• Total Orders: ${stats.totalOrders}\n` +
+                        `• Data Orders: ${stats.dataOrders || 0}\n` +
+                        `• Airtime Orders: ${stats.airtimeOrders || 0}\n` +
+                        `• Exam PINs Sold: ${stats.examPinOrders || 0}\n` +
+                        `• Gross Revenue: ₦${stats.grossRevenue.toLocaleString()}\n` +
+                        `• Your Net Profit: ₦${stats.netProfit.toLocaleString()}\n` +
+                        `• Active Customers: ${stats.activeCustomers}\n\n` +
+                        `🏆 *Your NYSC CDS Impact*\n` +
+                        `• Standing: ${badgeTitle}\n` +
+                        `• Total Donated to Date: ₦${(stats.totalCdsDonated || 0).toLocaleString()}\n`;
+
+                    if (stats.impactMilestone?.next) {
+                        msg += `• Next Milestone: ${stats.impactMilestone.next.badge} ${stats.impactMilestone.next.title} (₦${stats.impactMilestone.next.threshold.toLocaleString()})\n\n`;
+                    } else {
+                        msg += `• 💎 Maximum NYSC Hero of Service Impact Achieved!\n\n`;
+                    }
+
+                    if (stats.topCustomers && stats.topCustomers.length > 0) {
+                        msg += `👑 *Top VIP Customers This Week*\n`;
+                        stats.topCustomers.slice(0, 3).forEach((c, idx) => {
+                            const maskedPhone = c.phone.length > 7
+                                ? `${c.phone.substring(0, 4)}****${c.phone.substring(c.phone.length - 4)}`
+                                : c.phone;
+                            msg += `${idx + 1}. ${maskedPhone} — ₦${c.amount.toLocaleString()} (${c.orders} orders)\n`;
+                        });
+                        msg += `\n`;
+                    }
+
+                    msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `_Keep building your digital enterprise! Have a highly profitable weekend._ 🚀`;
 
                     try {
                         await sock.sendMessage(userId, { text: msg });
                         logger.info(`Report sent to ${userId}`);
-                        // Small delay to prevent WhatsApp rate limits
                         await new Promise(r => setTimeout(r, 1000));
                     } catch (sendErr) {
                         logger.error(`Failed to send report to ${userId}:`, sendErr.message);

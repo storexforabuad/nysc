@@ -5,6 +5,7 @@ import { ShieldCheck, Zap, BarChart3, Users, MessageSquare, Terminal } from 'luc
 import AdminLogin from './components/AdminLogin';
 import MetricsDisplay from './components/admin/MetricsDisplay';
 import ManagementViews from './components/admin/ManagementViews';
+import ScaleAdvisor from './components/admin/ScaleAdvisor';
 
 function LandingPage() {
   const navigate = useNavigate();
@@ -184,6 +185,7 @@ function AdminDashboard() {
 
       {/* Main Content Area */}
       <main className="flex-1 p-4 md:p-8 overflow-y-auto space-y-8">
+        <ScaleAdvisor />
         <MetricsDisplay />
 
         {/* Phase 3: Partner & Payout Management */}

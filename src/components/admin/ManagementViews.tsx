@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save } from 'lucide-react';
 import { motion } from 'motion/react';
+import CdsProposals from './CdsProposals';
+import BroadcastPanel from './BroadcastPanel';
 
 export default function ManagementViews() {
     const [partners, setPartners] = useState<any[]>([]);
@@ -153,6 +155,16 @@ export default function ManagementViews() {
                         </div>
                     ))}
                 </div>
+            </div>
+
+            {/* ── CDS GRANT PROPOSALS PANEL ── */}
+            <div className="pt-8 border-t border-zinc-800">
+                <CdsProposals />
+            </div>
+
+            {/* ── BROADCAST CONTROL CENTER ── */}
+            <div className="pt-8 border-t border-zinc-800">
+                <BroadcastPanel />
             </div>
 
             {/* ── MARKETING PREVIEW PANEL */}
