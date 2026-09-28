@@ -1,0 +1,143 @@
+# 🏆 Clarion A.I. × Squad (HabariPay) Go-Live & UAT Playbook
+
+**Merchant Name:** Clarion A.I. (Clarion Digital Hub)  
+**Lead Representative:** Mustapha Lawal  
+**Merchant ID (MID):** `SBL4ECW7UW`  
+**Primary Integration:** Squad Static Virtual Account Service (B2C & B2B) + Real-Time Webhook Processing  
+**HabariPay Contacts:** `smes@habaripay.com`, `william.udousoro@habaripay.com`, `growth@squadco.com`
+
+---
+
+## 1. 📬 The Official Go-Live Request Email
+
+Send this email to formally request production switch-over.
+
+```text
+To: smes@habaripay.com
+Cc: william.udousoro@habaripay.com, growth@squadco.com
+Subject: Request to Go Live – Static Virtual Account Service – Clarion A.I. (Clarion Digital Hub) [MID: SBL4ECW7UW]
+
+Dear HabariPay SME & Squad Onboarding Team,
+
+Following our successful sandbox integration and preliminary UAT review with William Udousoro, we are pleased to submit our formal request to go live with the Squad Static Virtual Account Service for Clarion A.I. (Clarion Digital Hub).
+
+Merchant & Integration Details:
+• Business / Legal Name: Clarion A.I. (Clarion Digital Hub)
+• Merchant ID (MID): SBL4ECW7UW
+• Contact Person: Mustapha Lawal (Founder / Technical Lead)
+• Services Integrated:
+    1. Static Virtual Accounts API (Individual & Business B2C/B2B)
+    2. Simulated Payment & Real-Time Credit Webhooks
+    3. Customer & Merchant Transaction Query APIs
+    4. Account Details Lookup APIs
+
+Compliance & Security Verification:
+1. UAT Sign-Off: All 7 required test scenarios have been executed with expected status 200 responses (attached).
+2. Webhook Signature Validation: Every webhook received is cryptographically validated using HMAC-SHA512 against the `x-squad-signature` header before processing.
+3. Idempotency & Duplicate Checker: An active duplicate transaction checker is implemented to guarantee single-execution and prevent duplicate credits or fulfillments.
+
+Please find attached our completed and signed "Virtual Accounts Integration Sign Off" document.
+
+We kindly request our Production API Keys and live account activation. We are available for any final review or live screen-share demonstration.
+
+Warm regards,
+Mustapha Lawal
+Clarion A.I. (Clarion Digital Hub)
+```
+
+---
+
+## 2. 🎙️ Spoken Presentation Script (For UAT Call)
+
+When sharing your screen or speaking on the call, use these exact talking points.
+
+### Part 1: Business & Use Case Overview (Section 1 of Guide)
+> *"Clarion A.I. is an automated telecommunications vending franchise platform built for National Youth Service Corps (NYSC) members across Nigeria.*  
+> *Under the NYSC SAED (Skill Acquisition and Entrepreneurship Development) initiative, we empower corps members to operate 24/7 autonomous data and utility vending businesses directly from their WhatsApp numbers without upfront capital or physical inventory.*  
+> *Beyond enterprise, Clarion has an embedded social mission: a customizable percentage of every transaction's profit is automatically directed into our NYSC CDS Community Fund to renovate corps members' lodges, equip schools at primary assignments, and fund local community projects.*  
+> *We have integrated Squad’s Static Virtual Accounts to assign dedicated GTCO payment accounts to our users for seamless wallet funding and instant order settlements."*
+
+### Part 2: End-to-End User Journey (Section 2 of Guide)
+> 1. **Virtual Account Generation:** When a corps member registers, our system calls Squad's `POST /virtual-account` API, returning a dedicated GTCO/Squad account number.
+> 2. **Transaction Initiation:** A customer requests data or the member funds their wallet by transferring funds to the virtual account.
+> 3. **Real-time Webhook:** Squad detects the transfer and posts a real-time event to our `/webhook/squad` endpoint.
+> 4. **Validation & Duplicate Protection:** Our server validates the HMAC-SHA512 signature from the `x-squad-signature` header and checks our duplicate transaction checker to guarantee idempotency.
+> 5. **Instant Fulfillment & Profit Split:** The data is dispensed immediately, the profit is split between the corps member's wallet and the CDS community fund, and a branded receipt is sent on WhatsApp in under 30 seconds.
+
+---
+
+## 3. 💻 Screen-Share Demonstration Guide (Section 3 of Guide)
+
+Have these **three windows** open side-by-side:
+
+### Window 1: API Execution Terminal
+Run your sandbox verification script:
+```bash
+node tmp_squad_uat_runner.mjs
+```
+*Show the tester that all endpoints return clean 200 responses and the payload mirrors `SQUAD_UAT_RESULTS.txt`.*
+
+### Window 2: Webhook Signature Verification Code
+Open [src/services/SquadService.js](file:///c:/Users/m/Downloads/nysc/src/services/SquadService.js#L103) and point out lines 103–118:
+```javascript
+verifyWebhook(payload, signature) {
+    if (config.mockMode) return true;
+
+    if (!config.squad.secretKey) {
+        logger.error("SQUAD_SECRET_KEY is missing, cannot verify webhook");
+        return false;
+    }
+
+    const computedSignature = crypto
+        .createHmac('sha512', config.squad.secretKey)
+        .update(JSON.stringify(payload))
+        .digest('hex');
+
+    // Squad sends header as x-squad-signature
+    return computedSignature.toUpperCase() === (signature || "").toUpperCase();
+}
+```
+> **Talking Point:** *"We compute the HMAC-SHA512 digest of the raw incoming payload using our Squad secret key and compare it case-insensitively with the `x-squad-signature` header. Unsigned or invalid requests receive a 400 Bad Request immediately."*
+
+### Window 3: Webhook Normalization & Duplicate Checker
+Open [src/server.js](file:///c:/Users/m/Downloads/nysc/src/server.js#L306) and point out lines 312–372:
+```javascript
+// Duplicate Transaction Checker (Idempotency)
+if (TransactionRef) {
+  if (processedTxnRefs.has(TransactionRef)) {
+    logger.warn(`[DUPLICATE-CHECKER] Memory suppression: transaction ${TransactionRef} already processed.`);
+    return res.status(200).json({ status: 'success', message: 'Duplicate transaction ignored (idempotent)' });
+  }
+
+  if (db.processedTransactions) {
+    const docSnap = await db.processedTransactions.doc(TransactionRef).get();
+    if (docSnap.exists) {
+      processedTxnRefs.add(TransactionRef);
+      return res.status(200).json({ status: 'success', message: 'Duplicate transaction ignored (idempotent)' });
+    }
+  }
+}
+```
+> **Talking Point:** *"We have a two-tier duplicate transaction checker: a high-speed in-memory set and persistent Firestore storage under `processed_transactions`. If Squad retries a webhook or network duplication occurs, our system detects the existing transaction reference, prevents double-crediting, and returns HTTP 200."*
+
+---
+
+## 4. 🛡️ Technical Defense & FAQ Cheat Sheet
+
+| Question | Winning Response |
+| :--- | :--- |
+| **"What happens if our webhook fires multiple times for the same transaction?"** | *"Our duplicate transaction checker catches the transaction reference on arrival, logs the replay attempt, and returns HTTP 200 with `{ status: 'success', message: 'Duplicate transaction ignored' }` without double-dispensing."* |
+| **"How do you handle differences between Checkout webhooks and Virtual Account webhooks?"** | *"Our webhook controller normalizes both formats: it extracts `transaction_reference`, `virtual_account_number`, and `principal_amount` regardless of whether they arrive at root or nested under `Body`."* |
+| **"Are you rate-limiting webhook requests to protect your infrastructure?"** | *"Yes, our `/webhook/squad` endpoint is protected by an Express rate-limiter allowing up to 30 requests per minute per IP, alongside circuit breakers for third-party dispatch."* |
+| **"What is your target settlement account for payout withdrawals?"** | *"Withdrawals are handled through verified NUBAN accounts looked up via Squad's account lookup API (`/payout/account/lookup`) and dispatched via Squad Transfer (`/payout/transfer`)."* |
+
+---
+
+## 5. ✅ Final Pre-Flight Checklist Before Starting
+
+- [x] Dual payload normalization implemented in [src/server.js](file:///c:/Users/m/Downloads/nysc/src/server.js)
+- [x] Duplicate transaction checker implemented and unit-tested in [scratch/test_squad_webhook_unit.mjs](file:///c:/Users/m/Downloads/nysc/scratch/test_squad_webhook_unit.mjs)
+- [x] `processedTransactions` collection added to [src/services/firebase.js](file:///c:/Users/m/Downloads/nysc/src/services/firebase.js)
+- [x] Signed UAT PDF file ready to attach (`SQUAD B2C-B2B static VA UAT sign off ...`)
+- [x] Email draft prepared with all relevant recipients
+- [x] Pitch script practiced for a confident, professional delivery

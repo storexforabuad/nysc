@@ -1,0 +1,795 @@
+{
+  "mtn_data_share": [
+    {
+      "plan_code": "M500MBS",
+      "label": "500MB = N350 (7 Days)",
+      "cost": 350,
+      "official": 500,
+      "recommended": 400,
+      "margin": 50,
+      "pct": "14.3"
+    },
+    {
+      "plan_code": "M1GBS",
+      "label": "1GB = N450 (7 Days)",
+      "cost": 450,
+      "official": 800,
+      "recommended": 500,
+      "margin": 50,
+      "pct": "11.1"
+    },
+    {
+      "plan_code": "M2GBS",
+      "label": "2GB = N850 (7 Days)",
+      "cost": 850,
+      "official": 1000,
+      "recommended": 940,
+      "margin": 90,
+      "pct": "10.6"
+    },
+    {
+      "plan_code": "M3GBS",
+      "label": "3GB = N1200 (7 Days)",
+      "cost": 1200,
+      "official": 1500,
+      "recommended": 1290,
+      "margin": 90,
+      "pct": "7.5"
+    },
+    {
+      "plan_code": "M1GBS2",
+      "label": "1GB = N580 (30 Days)",
+      "cost": 580,
+      "official": 1000,
+      "recommended": 630,
+      "margin": 50,
+      "pct": "8.6"
+    },
+    {
+      "plan_code": "M2GBS2",
+      "label": "2GB = N950 (30 Days)",
+      "cost": 950,
+      "official": 1500,
+      "recommended": 1040,
+      "margin": 90,
+      "pct": "9.5"
+    },
+    {
+      "plan_code": "M3GBS2",
+      "label": "3GB = N1250 (30 Days)",
+      "cost": 1250,
+      "official": 2000,
+      "recommended": 1340,
+      "margin": 90,
+      "pct": "7.2"
+    },
+    {
+      "plan_code": "M5GBS",
+      "label": "5GB = N1800 (30 Days)",
+      "cost": 1800,
+      "official": 3000,
+      "recommended": 1940,
+      "margin": 140,
+      "pct": "7.8"
+    }
+  ],
+  "mtn_gifting_data": [
+    {
+      "plan_code": "M110MBS",
+      "label": "110MB = N99 (1 Day)",
+      "cost": 99,
+      "official": 100,
+      "recommended": 100,
+      "margin": 1,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "M1m2GB",
+      "label": "1.2GB = N495 (1 month) Access All Social Apps",
+      "cost": 495,
+      "official": 500,
+      "recommended": 500,
+      "margin": 5,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "M2m5GB",
+      "label": "2.5GB = N650 (2 Days)12hrs YouTube Buffer",
+      "cost": 650,
+      "official": 800,
+      "recommended": 740,
+      "margin": 90,
+      "pct": "13.8"
+    },
+    {
+      "plan_code": "M2m5GBS",
+      "label": "2.5GB = N893 (2 Days)",
+      "cost": 893,
+      "official": 1000,
+      "recommended": 985,
+      "margin": 92,
+      "pct": "10.3"
+    },
+    {
+      "plan_code": "M2GBS",
+      "label": "2GB = N745 (2 Days)",
+      "cost": 745,
+      "official": 1000,
+      "recommended": 835,
+      "margin": 90,
+      "pct": "12.1"
+    },
+    {
+      "plan_code": "M3m2GBS",
+      "label": "3.2GB =N990 (2 Days)",
+      "cost": 990,
+      "official": 1200,
+      "recommended": 1080,
+      "margin": 90,
+      "pct": "9.1"
+    },
+    {
+      "plan_code": "M1GBS",
+      "label": "1GB = N796 (7Days)",
+      "cost": 796,
+      "official": 800,
+      "recommended": 800,
+      "margin": 4,
+      "pct": "0.5"
+    },
+    {
+      "plan_code": "M2m5GBS1",
+      "label": "2.5GB = N2480 (1 Month)",
+      "cost": 2480,
+      "official": 2500,
+      "recommended": 2500,
+      "margin": 20,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "M2m7GBS",
+      "label": "2.7GB = N1990 (1Month)",
+      "cost": 1990,
+      "official": 2000,
+      "recommended": 2000,
+      "margin": 10,
+      "pct": "0.5"
+    },
+    {
+      "plan_code": "M3m5GBS",
+      "label": "3.5GB = N2480 (1 Month)",
+      "cost": 2480,
+      "official": 2500,
+      "recommended": 2500,
+      "margin": 20,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "M6GBS",
+      "label": "6GB = N2480 (Weekly)",
+      "cost": 2480,
+      "official": 2500,
+      "recommended": 2500,
+      "margin": 20,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "M7GBS",
+      "label": "7GB = N3450 (1 Month) +2GB All Night Streaming",
+      "cost": 3450,
+      "official": 3500,
+      "recommended": 3490,
+      "margin": 40,
+      "pct": "1.2"
+    },
+    {
+      "plan_code": "M11GBS",
+      "label": "11GB = N3500 (Weekly)",
+      "cost": 3500,
+      "official": 4000,
+      "recommended": 3700,
+      "margin": 200,
+      "pct": "5.7"
+    },
+    {
+      "plan_code": "M12m5GBS",
+      "label": "12.5GB = N5435(1 Month)",
+      "cost": 5435,
+      "official": 5500,
+      "recommended": 5490,
+      "margin": 55,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "M14m5GBS",
+      "label": "14.5GB = N4950 (1 Month)",
+      "cost": 4950,
+      "official": 5000,
+      "recommended": 4990,
+      "margin": 40,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "M20GBS",
+      "label": "20GB = N7380 (1MONTH) + 4GB All Night Streaming",
+      "cost": 7380,
+      "official": 7500,
+      "recommended": 7490,
+      "margin": 110,
+      "pct": "1.5"
+    },
+    {
+      "plan_code": "M25GBS",
+      "label": "25GB = N8850 (1 Month)",
+      "cost": 8850,
+      "official": 9000,
+      "recommended": 8990,
+      "margin": 140,
+      "pct": "1.6"
+    },
+    {
+      "plan_code": "M36GBS",
+      "label": "36GB = N10850 (1 Month)",
+      "cost": 10850,
+      "official": 11000,
+      "recommended": 10990,
+      "margin": 140,
+      "pct": "1.3"
+    },
+    {
+      "plan_code": "M65GBS",
+      "label": "65GB = N15800 (1 Month)",
+      "cost": 15800,
+      "official": 16000,
+      "recommended": 15990,
+      "margin": 190,
+      "pct": "1.2"
+    },
+    {
+      "plan_code": "M75GBS",
+      "label": "75GB = N17800 (1 Month)",
+      "cost": 17800,
+      "official": 18000,
+      "recommended": 17990,
+      "margin": 190,
+      "pct": "1.1"
+    },
+    {
+      "plan_code": "M90GBS",
+      "label": "90GB = N24650 (2 Months)",
+      "cost": 24650,
+      "official": 25000,
+      "recommended": 24990,
+      "margin": 340,
+      "pct": "1.4"
+    },
+    {
+      "plan_code": "M150GBS",
+      "label": "150GB = N39500 (2 Months)",
+      "cost": 39500,
+      "official": 40000,
+      "recommended": 39850,
+      "margin": 350,
+      "pct": "0.9"
+    },
+    {
+      "plan_code": "M165GBS",
+      "label": "165GB = N34500 (1 Month)",
+      "cost": 34500,
+      "official": 35000,
+      "recommended": 34850,
+      "margin": 350,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "M200GBS",
+      "label": "200GB = N49200 (2 Months)",
+      "cost": 49200,
+      "official": 50000,
+      "recommended": 49550,
+      "margin": 350,
+      "pct": "0.7"
+    },
+    {
+      "plan_code": "M250GBS",
+      "label": "250GB  = N54500 (1 Month)",
+      "cost": 54500,
+      "official": 55000,
+      "recommended": 54850,
+      "margin": 350,
+      "pct": "0.6"
+    },
+    {
+      "plan_code": "M800GBS",
+      "label": "800GB  = N123500 (1 Year)",
+      "cost": 123500,
+      "official": 125000,
+      "recommended": 123850,
+      "margin": 350,
+      "pct": "0.3"
+    }
+  ],
+  "airtel_data": [
+    {
+      "plan_code": "A200MB",
+      "label": "200MB =N199 (2Days)  social plan",
+      "cost": 199,
+      "official": 200,
+      "recommended": 200,
+      "margin": 1,
+      "pct": "0.5"
+    },
+    {
+      "plan_code": "A300MB",
+      "label": "300MB =N298 (2Days)  social plan",
+      "cost": 298,
+      "official": 300,
+      "recommended": 300,
+      "margin": 2,
+      "pct": "0.7"
+    },
+    {
+      "plan_code": "A1GBS",
+      "label": "1GB =N338 (3Days) social plan",
+      "cost": 338,
+      "official": 350,
+      "recommended": 350,
+      "margin": 12,
+      "pct": "3.6"
+    },
+    {
+      "plan_code": "A2GBS",
+      "label": "2GB =N745 (2 Days)  social plan",
+      "cost": 745,
+      "official": 800,
+      "recommended": 790,
+      "margin": 45,
+      "pct": "6.0"
+    },
+    {
+      "plan_code": "A4GBS",
+      "label": "4GB = N990 (2Days) Bing plan",
+      "cost": 990,
+      "official": 1200,
+      "recommended": 1080,
+      "margin": 90,
+      "pct": "9.1"
+    },
+    {
+      "plan_code": "A6GBS",
+      "label": "6GB = N1485 (2Days)",
+      "cost": 1485,
+      "official": 1600,
+      "recommended": 1575,
+      "margin": 90,
+      "pct": "6.1"
+    },
+    {
+      "plan_code": "A1GB",
+      "label": "1GB =N795 (7Days)",
+      "cost": 795,
+      "official": 800,
+      "recommended": 800,
+      "margin": 5,
+      "pct": "0.6"
+    },
+    {
+      "plan_code": "A1a5GB",
+      "label": "1.5GB =N530 (7Days) Social Plan",
+      "cost": 530,
+      "official": 600,
+      "recommended": 580,
+      "margin": 50,
+      "pct": "9.4"
+    },
+    {
+      "plan_code": "A1a5GBS",
+      "label": "1.5GB =N995 (7Days) Weekly Plan",
+      "cost": 995,
+      "official": 1000,
+      "recommended": 1000,
+      "margin": 5,
+      "pct": "0.5"
+    },
+    {
+      "plan_code": "A3a5GB",
+      "label": "3.5GB = N1488 (7Days)",
+      "cost": 1488,
+      "official": 1500,
+      "recommended": 1500,
+      "margin": 12,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "A6GB",
+      "label": "6GB = N1970 (7Days)",
+      "cost": 1970,
+      "official": 2000,
+      "recommended": 2000,
+      "margin": 30,
+      "pct": "1.5"
+    },
+    {
+      "plan_code": "A8GBS",
+      "label": "8GB = N2487 (7Days)",
+      "cost": 2487,
+      "official": 2600,
+      "recommended": 2590,
+      "margin": 103,
+      "pct": "4.1"
+    },
+    {
+      "plan_code": "A10GBS",
+      "label": "10GB = N2975 (7Days)",
+      "cost": 2975,
+      "official": 3200,
+      "recommended": 3115,
+      "margin": 140,
+      "pct": "4.7"
+    },
+    {
+      "plan_code": "A20GB",
+      "label": "20GB =N4950 (7Days)",
+      "cost": 4950,
+      "official": 5500,
+      "recommended": 5150,
+      "margin": 200,
+      "pct": "4.0"
+    },
+    {
+      "plan_code": "A35GB",
+      "label": "35GB =N9900 (7Days) Ulimited Ultra Router",
+      "cost": 9900,
+      "official": 10500,
+      "recommended": 10100,
+      "margin": 200,
+      "pct": "2.0"
+    },
+    {
+      "plan_code": "A2GB2",
+      "label": "2GB = N1478 (30Days)",
+      "cost": 1478,
+      "official": 1500,
+      "recommended": 1500,
+      "margin": 22,
+      "pct": "1.5"
+    },
+    {
+      "plan_code": "A3GB",
+      "label": "3GB =N1980 (30Days)",
+      "cost": 1980,
+      "official": 2000,
+      "recommended": 2000,
+      "margin": 20,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "A4GB",
+      "label": "4GB =N2477 (30Days)",
+      "cost": 2477,
+      "official": 2500,
+      "recommended": 2500,
+      "margin": 23,
+      "pct": "0.9"
+    },
+    {
+      "plan_code": "A8GB",
+      "label": "8GB =N2975 (30Days)",
+      "cost": 2975,
+      "official": 3000,
+      "recommended": 3000,
+      "margin": 25,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "A10GB",
+      "label": "10GB =N3950 (30Days)",
+      "cost": 3950,
+      "official": 4000,
+      "recommended": 3990,
+      "margin": 40,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "A13GB",
+      "label": "13GB =N4955 (30Days)",
+      "cost": 4955,
+      "official": 5000,
+      "recommended": 4990,
+      "margin": 35,
+      "pct": "0.7"
+    },
+    {
+      "plan_code": "A18GB",
+      "label": "18GB =N5940 (30Days)",
+      "cost": 5940,
+      "official": 6000,
+      "recommended": 5990,
+      "margin": 50,
+      "pct": "0.8"
+    },
+    {
+      "plan_code": "A25GB",
+      "label": "25GB =N7900 (30Days)",
+      "cost": 7900,
+      "official": 8000,
+      "recommended": 7990,
+      "margin": 90,
+      "pct": "1.1"
+    },
+    {
+      "plan_code": "A60GB",
+      "label": "60GB =N14900 (30Days)",
+      "cost": 14900,
+      "official": 15000,
+      "recommended": 14990,
+      "margin": 90,
+      "pct": "0.6"
+    },
+    {
+      "plan_code": "A75GB",
+      "label": "75GB =N14980 (30Days) Router Plan",
+      "cost": 14980,
+      "official": 15500,
+      "recommended": 15330,
+      "margin": 350,
+      "pct": "2.3"
+    },
+    {
+      "plan_code": "A100GB",
+      "label": "100GB =N19800 (30Days)",
+      "cost": 19800,
+      "official": 20000,
+      "recommended": 19990,
+      "margin": 190,
+      "pct": "1.0"
+    },
+    {
+      "plan_code": "A160GB",
+      "label": "160GB =N29750 (1 month)",
+      "cost": 29750,
+      "official": 30000,
+      "recommended": 29990,
+      "margin": 240,
+      "pct": "0.8"
+    }
+  ],
+  "glo_data": [
+    {
+      "plan_code": "G500MB",
+      "label": "500MB = N245 (30 DAYS)",
+      "cost": 245,
+      "official": 300,
+      "recommended": 275,
+      "margin": 30,
+      "pct": "12.2"
+    },
+    {
+      "plan_code": "G1GB1",
+      "label": "1GB = N335 ( 3 DAYS)",
+      "cost": 335,
+      "official": 400,
+      "recommended": 385,
+      "margin": 50,
+      "pct": "14.9"
+    },
+    {
+      "plan_code": "G3GB1",
+      "label": "3GB = N850 ( 3 DAYS)",
+      "cost": 850,
+      "official": 1000,
+      "recommended": 940,
+      "margin": 90,
+      "pct": "10.6"
+    },
+    {
+      "plan_code": "G5GB1",
+      "label": "5GB = N1380 (3 DAYS)",
+      "cost": 1380,
+      "official": 1500,
+      "recommended": 1470,
+      "margin": 90,
+      "pct": "6.5"
+    },
+    {
+      "plan_code": "G1GB2",
+      "label": "1GB = N360 (7 DAYS)",
+      "cost": 360,
+      "official": 400,
+      "recommended": 390,
+      "margin": 30,
+      "pct": "8.3"
+    },
+    {
+      "plan_code": "G3GB2",
+      "label": "3GB = N990 (7 DAYS)",
+      "cost": 990,
+      "official": 1100,
+      "recommended": 1080,
+      "margin": 90,
+      "pct": "9.1"
+    },
+    {
+      "plan_code": "G5GB2",
+      "label": "5GB = N1580 (7DAYS)",
+      "cost": 1580,
+      "official": 1700,
+      "recommended": 1690,
+      "margin": 110,
+      "pct": "7.0"
+    },
+    {
+      "plan_code": "G1GB3",
+      "label": "1GB = N360 (14 DAYS) Night Plan",
+      "cost": 360,
+      "official": 400,
+      "recommended": 390,
+      "margin": 30,
+      "pct": "8.3"
+    },
+    {
+      "plan_code": "G3GB3",
+      "label": "3GB = N990 (14 DAYS) Night Plan",
+      "cost": 990,
+      "official": 1100,
+      "recommended": 1080,
+      "margin": 90,
+      "pct": "9.1"
+    },
+    {
+      "plan_code": "G5GB3",
+      "label": "5GB = N1640   (14 DAYS)Night Plan",
+      "cost": 1640,
+      "official": 1800,
+      "recommended": 1780,
+      "margin": 140,
+      "pct": "8.5"
+    },
+    {
+      "plan_code": "G10GB1",
+      "label": "10GB = N3300   (14 DAYS)Night Plan",
+      "cost": 3300,
+      "official": 3500,
+      "recommended": 3490,
+      "margin": 190,
+      "pct": "5.8"
+    },
+    {
+      "plan_code": "G1GB4",
+      "label": "1GB = N450 (30 DAYS)",
+      "cost": 450,
+      "official": 500,
+      "recommended": 490,
+      "margin": 40,
+      "pct": "8.9"
+    },
+    {
+      "plan_code": "G2GB4",
+      "label": "2GB = N900  (30 DAYS)",
+      "cost": 900,
+      "official": 1000,
+      "recommended": 990,
+      "margin": 90,
+      "pct": "10.0"
+    },
+    {
+      "plan_code": "G3GB4",
+      "label": "3GB = N1350 (30 DAYS)",
+      "cost": 1350,
+      "official": 1500,
+      "recommended": 1440,
+      "margin": 90,
+      "pct": "6.7"
+    },
+    {
+      "plan_code": "G5GB4",
+      "label": "5GB = N2200 (30 DAYS)",
+      "cost": 2200,
+      "official": 2500,
+      "recommended": 2340,
+      "margin": 140,
+      "pct": "6.4"
+    },
+    {
+      "plan_code": "G10GB2",
+      "label": "10GB = N4250 (30 DAYS)",
+      "cost": 4250,
+      "official": 4500,
+      "recommended": 4450,
+      "margin": 200,
+      "pct": "4.7"
+    }
+  ],
+  "9mobile_data": [
+    {
+      "plan_code": "E300MB",
+      "label": "300MB = N200 (30 Days)",
+      "cost": 200,
+      "official": 250,
+      "recommended": 230,
+      "margin": 30,
+      "pct": "15.0"
+    },
+    {
+      "plan_code": "E500MB",
+      "label": "500MB = NGN300 (30 Days)",
+      "cost": 300,
+      "official": 350,
+      "recommended": 340,
+      "margin": 40,
+      "pct": "13.3"
+    },
+    {
+      "plan_code": "E1GB",
+      "label": "1GB = NGN500 (30 Days)",
+      "cost": 500,
+      "official": 600,
+      "recommended": 550,
+      "margin": 50,
+      "pct": "10.0"
+    },
+    {
+      "plan_code": "E2GB",
+      "label": "2GB  = NGN980 (30 Days)",
+      "cost": 980,
+      "official": 1100,
+      "recommended": 1070,
+      "margin": 90,
+      "pct": "9.2"
+    },
+    {
+      "plan_code": "E3GB",
+      "label": "3GB = NGN1500 (30 Days)",
+      "cost": 1500,
+      "official": 1600,
+      "recommended": 1590,
+      "margin": 90,
+      "pct": "6.0"
+    },
+    {
+      "plan_code": "E5GB",
+      "label": "5GB = NGN2500 (30 Days)",
+      "cost": 2500,
+      "official": 2600,
+      "recommended": 2590,
+      "margin": 90,
+      "pct": "3.6"
+    },
+    {
+      "plan_code": "E10GB",
+      "label": "10GB = NGN5000 (30 Days)",
+      "cost": 5000,
+      "official": 5200,
+      "recommended": 5190,
+      "margin": 190,
+      "pct": "3.8"
+    },
+    {
+      "plan_code": "E15GB",
+      "label": "15GB = NGN6950 (30 Days){Gifting}",
+      "cost": 6950,
+      "official": 7200,
+      "recommended": 7150,
+      "margin": 200,
+      "pct": "2.9"
+    },
+    {
+      "plan_code": "E20GB",
+      "label": "20GB = NGN9500 (30 Days)",
+      "cost": 9500,
+      "official": 9800,
+      "recommended": 9700,
+      "margin": 200,
+      "pct": "2.1"
+    },
+    {
+      "plan_code": "E40GB",
+      "label": "40GB = NGN18800 (30 Days)",
+      "cost": 18800,
+      "official": 19000,
+      "recommended": 18990,
+      "margin": 190,
+      "pct": "1.0"
+    }
+  ]
+}

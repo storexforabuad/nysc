@@ -1,5 +1,9 @@
 import dotenv from 'dotenv';
 import pino from 'pino';
+import dns from 'dns';
+
+// Fix Windows Node DNS getaddrinfo ENOTFOUND for Squad endpoints
+dns.setDefaultResultOrder('ipv4first');
 
 dotenv.config();
 

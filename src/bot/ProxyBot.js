@@ -1,9 +1,10 @@
 import { logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
 import payflex from '../services/payflex.js';
-import wallet from '../services/WalletService.js';
+import wallet, { SUBSCRIPTION_PLANS, BOT_MODES } from '../services/WalletService.js';
+import sessionManager from './SessionManager.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
-import { handleMilestoneCheck } from './MotherBot.js';
+import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
 import { detectNetwork } from '../utils/networkUtils.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 
@@ -74,6 +75,67 @@ export const handleProxyMessage = async (sock, msg, user) => {
       } catch (e) {
         logger.warn(`Failed to update customer contacts profile for ${actionableJid}`);
       }
+    }
+
+    // ── Mode Gate & Subscription Verification ──
+    if (user.botMode === BOT_MODES.AUTONOMOUS && user.subscription?.expiresAt) {
+      const now = new Date();
+      const expiry = new Date(user.subscription.expiresAt);
+
+      if (now > expiry) {
+        let renewed = false;
+        if (user.subscription.autoRenew !== false) {
+          const planKey = user.subscription.plan || 'MONTHLY';
+          const planConfig = SUBSCRIPTION_PLANS[planKey] || SUBSCRIPTION_PLANS.MONTHLY;
+          const currentBalance = await wallet.getBalance(user.uid);
+
+          if (currentBalance >= planConfig.price) {
+            await wallet.recordSubscriptionDebit(user.uid, planConfig.price, planKey, { reason: 'auto_renew' });
+            const startedAt = now.toISOString();
+            const expiresAt = new Date(now.getTime() + planConfig.durationDays * 24 * 60 * 60 * 1000).toISOString();
+            const updatedSub = {
+              plan: planKey,
+              price: planConfig.price,
+              durationDays: planConfig.durationDays,
+              startedAt,
+              expiresAt,
+              autoRenew: true
+            };
+            if (db.users) {
+              await db.users.doc(user.uid).set({ botMode: BOT_MODES.AUTONOMOUS, subscription: updatedSub }, { merge: true });
+            }
+            user.subscription = updatedSub;
+            renewed = true;
+
+            if (sessionManager.motherSock) {
+              const partnerJid = user.uid.includes('@') ? user.uid : `${user.uid}@s.whatsapp.net`;
+              await sessionManager.motherSock.sendMessage(partnerJid, {
+                text: `🔄 *Autonomous Mode Auto-Renewed!*\n\nYour ${planConfig.label} has renewed for ₦${planConfig.price.toLocaleString()} from your wallet.\nNext renewal: ${new Date(expiresAt).toLocaleDateString('en-GB')}.`
+              }).catch(() => {});
+            }
+          }
+        }
+
+        if (!renewed) {
+          if (db.users) {
+            await db.users.doc(user.uid).set({ botMode: BOT_MODES.MANUAL }, { merge: true });
+          }
+          user.botMode = BOT_MODES.MANUAL;
+
+          if (sessionManager.motherSock) {
+            const partnerJid = user.uid.includes('@') ? user.uid : `${user.uid}@s.whatsapp.net`;
+            await sessionManager.motherSock.sendMessage(partnerJid, {
+              text: `⚠️ *Autonomous Mode Expired*\n\nYour ${user.subscription?.plan || 'subscription'} has ended and could not auto-renew.\nYour store is now in Manual Mode.\n\nText *UPGRADE WEEKLY* (₦500) or *UPGRADE MONTHLY* (₦1,500) to reactivate 24/7 automation.`
+            }).catch(() => {});
+          }
+          return; // Silent for this message
+        }
+      }
+    }
+
+    // ── Mode Gate: Manual mode = silent ProxyBot (partner handles chats manually) ──
+    if (user.botMode !== BOT_MODES.AUTONOMOUS) {
+      return;
     }
 
     // Handle Data/Menu request
@@ -189,7 +251,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }).catch(() => {});
       }
 
-      const bankInfo = user.virtualAccount || { bankName: 'Wema Bank', accountNumber: '0123456789' };
+      const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
       return sock.sendMessage(from, {
         text: `💳 *Airtime Order: ₦${amount.toLocaleString()}*\n\n` +
           `📱 *Recipient:* ${targetPhone} (${network.toUpperCase()})\n` +
@@ -197,7 +259,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `To complete your purchase, please transfer *₦${amount.toLocaleString()}* to:\n\n` +
           `🏦 *Bank:* ${bankInfo.bankName}\n` +
           `🔢 *Account:* ${bankInfo.accountNumber}\n` +
-          `👤 *Name:* Clarion - ${user.name || 'Store'}\n\n` +
+          `👤 *Name:* ${bankInfo.accountName || ('Clarion - ' + (user.name || 'Store'))}\n\n` +
           `✅ Your airtime will be dispensed automatically upon payment detection.`
       });
     }
@@ -282,14 +344,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }).catch(() => {});
       }
 
-      const bankInfo = user.virtualAccount || { bankName: 'Wema Bank', accountNumber: '0123456789' };
+      const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
       return sock.sendMessage(from, {
         text: `🎓 *Order Confirmation: ${product.name}*\n\n` +
           `💰 *Price:* ₦${product.sellPrice.toLocaleString()}\n\n` +
           `To complete your purchase, please transfer *₦${product.sellPrice.toLocaleString()}* to:\n\n` +
           `🏦 *Bank:* ${bankInfo.bankName}\n` +
           `🔢 *Account:* ${bankInfo.accountNumber}\n` +
-          `👤 *Name:* Clarion - ${user.name || 'Store'}\n\n` +
+          `👤 *Name:* ${bankInfo.accountName || ('Clarion - ' + (user.name || 'Store'))}\n\n` +
           `✅ Your PIN and Serial Number will be sent automatically upon payment detection.`
       });
     }

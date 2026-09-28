@@ -3,7 +3,7 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { logger } from '../config/env.js';
 import { db } from '../services/firebase.js';
-import { handleMotherMessage } from './MotherBot.js';
+import { handleMotherMessage, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
 import mediaGen from '../services/mediaGen.js';
 import path from 'path';
 import fs from 'fs';
@@ -120,16 +120,23 @@ class SessionManager {
     worker.on('message', async (msg) => {
       if (msg.type === 'new_login') {
         logger.info(`✅ Activation payload accepted for ${user.uid}!`);
+        const ownerJid = user.ownerJid || user.motherJid || phoneJid;
+        const activationData = {
+          state: 'COMPLETED',
+          botMode: 'manual',
+          phoneJid,
+          phoneNumber,
+          pairedAt: new Date().toISOString()
+        };
+
         if (db.users) {
-          db.users.doc(user.uid).set({
-            state: 'AWAITING_BROADCAST_CONTACTS',
-            phoneJid,
-            phoneNumber,
-            pairedAt: new Date().toISOString()
-          }, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
+          db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
+          if (ownerJid && ownerJid !== user.uid) {
+            db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
+          }
         }
         if (this.motherSock) {
-          this._sendActivationSuccessMessages(phoneJid, user);
+          this._sendActivationSuccessMessages(ownerJid, user);
         }
       }
 
@@ -137,6 +144,22 @@ class SessionManager {
         hasEverConnected = true;
         logger.info(`✅ Clarion Digital Store for ${user.uid} fully operational (Worker).`);
         this.pendingPairings.delete(user.uid);
+
+        const ownerJid = user.ownerJid || user.motherJid || phoneJid;
+        const activationData = {
+          state: 'COMPLETED',
+          botMode: 'manual',
+          phoneJid,
+          phoneNumber,
+          pairedAt: new Date().toISOString()
+        };
+
+        if (db.users) {
+          db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
+          if (ownerJid && ownerJid !== user.uid) {
+            db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
+          }
+        }
       }
 
       if (msg.type === 'close') {
@@ -297,7 +320,14 @@ class SessionManager {
     const botDigits = String(fullUser.phoneNumber || '').replace(/[^0-9]/g, '');
     const partnerDigits = String(phoneJid).replace(/[^0-9]/g, '');
     const isSameNumber = botDigits.length >= 10 && partnerDigits.length >= 10 && botDigits.slice(-10) === partnerDigits.slice(-10);
-    const virtualAcct = fullUser.virtualAccount || { bankName: 'HabariPay (GTCO)', accountNumber: '0123456789' };
+    const virtualAcct = fullUser.virtualAccount || CENTRAL_HUB_ACCOUNT;
+
+    // Ensure botMode is set to manual on activation
+    if (db.users && user?.uid) {
+      try {
+        await db.users.doc(user.uid).set({ botMode: 'manual' }, { merge: true });
+      } catch (e) { }
+    }
 
     // 1. Dispatch Clarion Franchise ID Card
     try {
@@ -310,39 +340,47 @@ class SessionManager {
       logger.error('Failed to generate activation profile card:', cardErr.message);
     }
 
-    // 2. Operational Control Deck
-    const controlDeckMsg = `🥳 *STOREFRONT FULLY OPERATIONAL!*\n\n` +
-      `Your automated 24/7 data bot is live on *+${botNumber}*.\n\n` +
-      `*Enterprise Commands (text me anytime):*\n` +
-      `💰 *BALANCE* — View available wallet balance & earnings\n` +
-      `🎖️ *RANK* — Check your partnership tier & CDS donation impact\n` +
+    // 2. Operational Control Deck (Manual Storefront Quick Start)
+    const controlDeckMsg = `🎉 *STOREFRONT FULLY OPERATIONAL!*\n\n` +
+      `Your Clarion Digital Store is live on *+${botNumber}* (Manual Mode).\n\n` +
+      `📋 *Quick Start — How to Process Your First Sale:*\n\n` +
+      `1️⃣ Customer asks for data? Text me:\n` +
+      `   👉 *CHECK 0801 1GB*\n` +
+      `   _(I will detect their network and show you retail prices)_\n\n` +
+      `2️⃣ Customer picks a plan? Text me:\n` +
+      `   👉 *ORDER 1GB 08012345678*\n` +
+      `   _(Network auto-detected! I will create the order and give you a payment invoice to forward)_\n\n` +
+      `3️⃣ Customer transfers payment → Data delivers AUTOMATICALLY!\n` +
+      `   I will send you a confirmation and customer receipt to forward. Done! 💰\n\n` +
+      `*Store Management Commands (text me anytime):*\n` +
+      `📋 *ORDERS* — View recent orders & status\n` +
+      `🚫 *CANCEL MO-1234* — Cancel an unpaid order\n` +
+      `💰 *BALANCE* — Check available profits & earnings\n` +
       `💸 *WITHDRAW [amount]* — Cash out profits to your locked bank (₦90 fee)\n` +
-      `🏦 *UPDATE BANK* — Change payout account (₦100 security fee)\n` +
-      `📜 *HISTORY* — View recent transactions and payout logs\n` +
+      `🤖 *MODE* — Check your current bot mode\n` +
       `📢 *KIT* — Download your promotional status kit & share card\n` +
-      `⛽ *PROMO* — View Launch Giveaway Poster & Promo Fuel details\n` +
-      `🎁 *GIFT [phone] [plan]* — Gift promotional data to your friends\n` +
-      `🪪 *CARD* — Re-download your Franchise License Card`;
+      `⛽ *PROMO* — View Launch Giveaway Poster & Promo Fuel details\n\n` +
+      `💡 *Want 24/7 full automation?*\n` +
+      `Text *UPGRADE* to see subscription plans (from ₦500/week)!`;
 
     // 3. Safe Launch Copy-Paste Forwarding Kit (Context-Aware)
     const safeLaunchMsg = isSameNumber
       ? `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
         `*Copy and post the text below to your WhatsApp Status:*\n\n` +
         `────────────────────────\n` +
-        `Big news! 🚀 I just launched my automated 24/7 Data Store powered by Clarion A.I (NYSC SAED Project).\n\n` +
-        `Get MTN, Airtel, Glo & 9mobile data delivered instantly in 20 seconds!\n\n` +
-        `👉 *To order right now, just reply to ME with:*\n` +
-        `*DATA*\n\n` +
-        `_My automated bot replies and vends your data immediately! Every purchase helps fund NYSC community projects._ 🇳🇬\n` +
+        `Big news! 🚀 I now sell MTN, Airtel, Glo & 9mobile data directly!\n\n` +
+        `Get cheap & fast data delivered instantly in under 20 seconds! ⚡\n\n` +
+        `👉 *To order right now, message me right here with your network & budget!*\n\n` +
+        `_Every purchase helps fund NYSC community development projects._ 🇳🇬\n` +
         `────────────────────────`
       : `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
         `*Copy and forward the text below to your WhatsApp Status & contacts:*\n\n` +
         `────────────────────────\n` +
-        `Big news! 🚀 I just launched my automated 24/7 Data Store powered by Clarion A.I (NYSC SAED Project).\n\n` +
-        `Get MTN, Airtel, Glo & 9mobile data delivered instantly in 20 seconds!\n\n` +
-        `👉 *Click here to order from my store bot instantly:*\n` +
-        `https://wa.me/234${botDigits.slice(-10)}?text=Data%20500\n\n` +
-        `Or text *DATA* to 0${botDigits.slice(-10)}!\n\n` +
+        `Big news! 🚀 I just launched my Clarion Digital Store!\n\n` +
+        `Get MTN, Airtel, Glo & 9mobile data delivered in 20 seconds! ⚡\n\n` +
+        `👉 *Message my store line to order:* \n` +
+        `https://wa.me/234${botDigits.slice(-10)}\n\n` +
+        `Or text 0${botDigits.slice(-10)}!\n\n` +
         `_Every purchase helps fund NYSC community development projects._ 🇳🇬\n` +
         `────────────────────────`;
 

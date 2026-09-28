@@ -1,5 +1,5 @@
 === SQUAD B2C-B2B STATIC VA UAT SIGN OFF RESULTS ===
-Generated on: 2026-08-17T17:04:31.025Z
+Generated on: 2026-09-25T06:58:54.347Z
 
 --- Pre-fetch: VA Details ---
 Method: GET
@@ -120,6 +120,26 @@ Endpoint: https://sandbox-api-d.squadco.com/virtual-account/customer/transaction
   "message": "Success",
   "data": [
     {
+      "transaction_reference": "REFWTV9XZYZL1790319505348",
+      "virtual_account_number": "9298876974",
+      "principal_amount": "59000.00",
+      "settled_amount": "58852.50",
+      "fee_charged": "147.50",
+      "transaction_date": "2026-09-25T06:58:25.348Z",
+      "transaction_indicator": "C",
+      "remarks": "Transfer from MG💯 Clarion to sandbox | [161856060690464]",
+      "currency": "NGN",
+      "alerted_merchant": true,
+      "merchant_settlement_date": null,
+      "frozen_transaction": null,
+      "customer": {
+        "customer_identifier": "161856060690464"
+      },
+      "virtual_account": {
+        "account_type": "static"
+      }
+    },
+    {
       "transaction_reference": "REF4YRYV6TYD1786986259648",
       "virtual_account_number": "9298876974",
       "principal_amount": "59000.00",
@@ -177,6 +197,26 @@ Endpoint: https://sandbox-api-d.squadco.com/virtual-account/merchant/transaction
   "success": true,
   "message": "Success",
   "data": [
+    {
+      "transaction_reference": "REFWTV9XZYZL1790319505348",
+      "virtual_account_number": "9298876974",
+      "principal_amount": "59000.00",
+      "settled_amount": "58852.50",
+      "fee_charged": "147.50",
+      "transaction_date": "2026-09-25T06:58:25.348Z",
+      "transaction_indicator": "C",
+      "remarks": "Transfer from MG💯 Clarion to sandbox | [161856060690464]",
+      "currency": "NGN",
+      "alerted_merchant": true,
+      "merchant_settlement_date": null,
+      "frozen_transaction": null,
+      "customer": {
+        "customer_identifier": "161856060690464"
+      },
+      "virtual_account": {
+        "account_type": "static"
+      }
+    },
     {
       "transaction_reference": "REF4YRYV6TYD1786986259648",
       "virtual_account_number": "9298876974",

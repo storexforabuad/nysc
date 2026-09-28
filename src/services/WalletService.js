@@ -10,6 +10,17 @@ export const WITHDRAWAL_FEES = {
     BANK_UPDATE_FEE: 100.00 // Fee debited from wallet to update locked bank details
 };
 
+// Bot Modes & Subscription Tiers
+export const BOT_MODES = {
+    MANUAL: 'manual',
+    AUTONOMOUS: 'autonomous'
+};
+
+export const SUBSCRIPTION_PLANS = {
+    WEEKLY:  { key: 'WEEKLY',  price: 500,  durationDays: 7,  label: 'Weekly (₦500/week)' },
+    MONTHLY: { key: 'MONTHLY', price: 1500, durationDays: 30, label: 'Monthly (₦1,500/month)' }
+};
+
 // Clarion Partnership Tiers (Dynamic Tripartite Settlement)
 export const PARTNERSHIP_TIERS = {
     PIONEER: {
@@ -184,7 +195,7 @@ class WalletService {
                     totalDebits += data.amount || 0;
                 } else if (data.type === 'BANK_UPDATE_FEE' && data.status === 'SUCCESS') {
                     totalDebits += data.amount || WITHDRAWAL_FEES.BANK_UPDATE_FEE;
-                } else if ((data.type === 'PURCHASE_DEBIT' || data.type === 'SELF_PURCHASE_DEBIT') && data.status === 'SUCCESS') {
+                } else if ((data.type === 'PURCHASE_DEBIT' || data.type === 'SELF_PURCHASE_DEBIT' || data.type === 'SUBSCRIPTION_DEBIT') && data.status === 'SUCCESS') {
                     totalDebits += data.amount || 0;
                 }
             });
@@ -193,6 +204,30 @@ class WalletService {
         } catch (error) {
             logger.error(`Error calculating balance for ${userId}:`, error.message);
             return 0;
+        }
+    }
+
+    /**
+     * Record a subscription debit for autonomous mode upgrade.
+     */
+    async recordSubscriptionDebit(userId, amount, plan, metadata = {}) {
+        if (!db.ledger) return null;
+        try {
+            const ref = db.ledger.doc();
+            await ref.set({
+                type: 'SUBSCRIPTION_DEBIT',
+                userId,
+                amount,
+                plan,
+                description: `Autonomous Mode Subscription (${plan})`,
+                status: 'SUCCESS',
+                metadata,
+                createdAt: new Date().toISOString()
+            });
+            return ref.id;
+        } catch (err) {
+            logger.error(`Error recording subscription debit for ${userId}:`, err.message);
+            return null;
         }
     }
 

@@ -192,7 +192,7 @@ class MediaGenerator {
       const rankBadge = userData.rankBadge || (tier === 'PIONEER' ? 'LORD' : tier);
       const bank = userData.bankDetails?.bankName || 'Verified Bank';
       const acctNum = userData.bankDetails?.accountNumber || '0000000000';
-      const virtualAcct = userData.virtualAccount || { bankName: 'HabariPay (GTCO)', accountNumber: '0123456789' };
+      const virtualAcct = userData.virtualAccount || { bankName: 'HabariPay (GTCO)', accountNumber: '5005005594' };
       const totalCds = Number(userData.totalCdsDonated) || 0;
       const impact = getImpactLevel(totalCds);
 
@@ -310,7 +310,7 @@ class MediaGenerator {
       ctx.fillText('Account Number:', 110, 710);
       ctx.fillStyle = '#FF5722'; // Orange highlight
       ctx.font = 'bold 44px Arial';
-      ctx.fillText(virtualAcct.accountNumber || '0123456789', 280, 712);
+      ctx.fillText(virtualAcct.accountNumber || '5005005594', 280, 712);
 
       ctx.fillStyle = '#666666';
       ctx.font = '20px Arial';

@@ -47,14 +47,16 @@ export const db = firestore ? {
   ledger: firestore.collection('ledger'),
   sessions: firestore.collection('sessions'),
   optouts: firestore.collection('optouts'),
-  cdsProposals: firestore.collection('cds_proposals')
+  cdsProposals: firestore.collection('cds_proposals'),
+  processedTransactions: firestore.collection('processed_transactions')
 } : {
   users: null,
   plansCache: null,
   ledger: null,
   sessions: null,
   optouts: null,
-  cdsProposals: null
+  cdsProposals: null,
+  processedTransactions: null
 };
 
 export default admin;

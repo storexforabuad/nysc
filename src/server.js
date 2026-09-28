@@ -19,7 +19,7 @@ import broadcastQueue from './services/BroadcastQueue.js';
 import adminService from './services/AdminService.js';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
-import { CENTRAL_HUB_ACCOUNT, handleMilestoneCheck, checkIsSameNumber } from './bot/MotherBot.js';
+import { CENTRAL_HUB_ACCOUNT, handleMilestoneCheck, checkIsSameNumber, mockManualOrders } from './bot/MotherBot.js';
 import networkRecoveryNotifier from './services/NetworkRecoveryNotifier.js';
 
 // ── HTTP Rate Limiters ──
@@ -302,22 +302,261 @@ async function startServer() {
     }
   });
 
+  // Memory cache for duplicate transaction prevention (bounded to 10,000 entries)
+  const processedTxnRefs = new Set();
+
   // Squad Webhook (rate-limited: 30 req/min per IP)
   app.post('/webhook/squad', webhookLimiter, async (req, res) => {
     const signature = req.headers['x-squad-signature'];
-    const payload = req.body;
+    const payload = req.body || {};
 
     if (!squad.verifyWebhook(payload, signature)) {
       logger.warn('Invalid signature received for Squad Webhook');
       return res.status(400).send('Invalid signature');
     }
 
-    const { Event, TransactionRef, Body } = payload;
+    // ── 1. Payload Normalization (Standard Checkout vs Squad Virtual Account Webhook) ──
+    const rawTxnRef = payload.TransactionRef || payload.transaction_reference || payload.Body?.transaction_reference;
+    const TransactionRef = rawTxnRef ? String(rawTxnRef).trim() : null;
+
+    // Detect event: Standard checkout provides payload.Event; Virtual Account credits send channel: 'virtual-account' or virtual_account_number
+    const isVirtualAccountCredit = payload.channel === 'virtual-account' || !!payload.virtual_account_number || !!payload.Body?.virtual_account_number;
+    const Event = payload.Event || (isVirtualAccountCredit ? 'charge_successful' : null);
+
+    // Extract amount: handle principal_amount ("59000.00"), Body.amount, or payload.amount
+    const rawAmount = payload.Body?.amount ?? payload.principal_amount ?? payload.amount;
+    const parsedAmount = rawAmount !== undefined && rawAmount !== null ? Number(rawAmount) : 0;
+
+    // Normalize Body fields
+    const Body = {
+      ...(payload.Body || {}),
+      amount: parsedAmount,
+      virtual_account_number: payload.Body?.virtual_account_number || payload.virtual_account_number || payload.account_number,
+      account_number: payload.Body?.account_number || payload.virtual_account_number || payload.account_number,
+      customer_identifier: payload.Body?.customer_identifier || payload.customer_identifier,
+      transaction_reference: TransactionRef,
+      sender_name: payload.Body?.sender_name || payload.sender_name,
+      transaction_date: payload.Body?.transaction_date || payload.transaction_date
+    };
+
+    // ── 2. Duplicate Transaction Checker (Idempotency) ──
+    if (TransactionRef) {
+      if (processedTxnRefs.has(TransactionRef)) {
+        logger.warn(`[DUPLICATE-CHECKER] Memory suppression: transaction ${TransactionRef} already processed.`);
+        return res.status(200).json({ status: 'success', message: 'Duplicate transaction ignored (idempotent)' });
+      }
+
+      if (db.processedTransactions) {
+        try {
+          const docSnap = await db.processedTransactions.doc(TransactionRef).get();
+          if (docSnap.exists) {
+            processedTxnRefs.add(TransactionRef);
+            logger.warn(`[DUPLICATE-CHECKER] Database suppression: transaction ${TransactionRef} already processed.`);
+            return res.status(200).json({ status: 'success', message: 'Duplicate transaction ignored (idempotent)' });
+          }
+        } catch (dbErr) {
+          logger.warn(`[DUPLICATE-CHECKER] DB lookup error: ${dbErr.message}`);
+        }
+      }
+
+      // Mark transaction reference in memory and persist in DB
+      processedTxnRefs.add(TransactionRef);
+      if (processedTxnRefs.size > 10000) {
+        const first = processedTxnRefs.values().next().value;
+        processedTxnRefs.delete(first);
+      }
+      if (db.processedTransactions) {
+        db.processedTransactions.doc(TransactionRef).set({
+          processedAt: new Date().toISOString(),
+          amount: Body.amount,
+          virtualAccountNumber: Body.virtual_account_number || null,
+          channel: payload.channel || 'virtual-account',
+          event: Event,
+          rawPayload: payload
+        }).catch(err => logger.warn(`Failed to persist processed transaction ${TransactionRef}:`, err.message));
+      }
+    }
 
     if (Event === 'charge_successful') {
-      logger.info(`Received successful payment: ${TransactionRef}`);
+      logger.info(`Received successful payment: ${TransactionRef} (Amount: ₦${Body.amount})`);
 
       try {
+        // ── 0. Check for Matching Manual Order (Manual Storefront Mode) ──
+        const virtualAccountNo = Body.virtual_account_number || Body.account_number;
+        let matchedPartner = null;
+        let matchedPartnerId = null;
+
+        if (virtualAccountNo && db.users) {
+          try {
+            const userSnap = await db.users.where('virtualAccount.accountNumber', '==', virtualAccountNo).limit(1).get();
+            if (!userSnap.empty) {
+              matchedPartner = userSnap.docs[0].data();
+              matchedPartnerId = userSnap.docs[0].id;
+            }
+          } catch (uErr) {
+            logger.warn('Could not query user by virtual account:', uErr.message);
+          }
+        }
+
+        let manualOrder = null;
+        let manualOrderDocRef = null;
+
+        if (matchedPartnerId && db.users) {
+          try {
+            const mOrderSnap = await db.users.doc(matchedPartnerId).collection('manualOrders')
+              .where('status', '==', 'PENDING_PAYMENT')
+              .where('amount', '==', Body.amount)
+              .get();
+            if (!mOrderSnap.empty) {
+              const now = new Date();
+              const validDoc = mOrderSnap.docs.find(d => {
+                const data = d.data();
+                return !data.expiresAt || new Date(data.expiresAt) > now;
+              });
+              if (validDoc) {
+                manualOrder = validDoc.data();
+                manualOrderDocRef = validDoc.ref;
+              }
+            }
+          } catch (mErr) {
+            logger.warn('Could not query partner manual orders:', mErr.message);
+          }
+        }
+
+        if (!manualOrder && mockManualOrders) {
+          const now = new Date();
+          for (const [id, o] of mockManualOrders.entries()) {
+            if (o.status === 'PENDING_PAYMENT' && o.amount === Body.amount) {
+              if (!o.expiresAt || new Date(o.expiresAt) > now) {
+                manualOrder = o;
+                matchedPartnerId = o.partnerId;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!manualOrder && db.users) {
+          try {
+            const anyOrderSnap = await db.collectionGroup('manualOrders')
+              .where('status', '==', 'PENDING_PAYMENT')
+              .where('amount', '==', Body.amount)
+              .limit(1)
+              .get();
+            if (!anyOrderSnap.empty) {
+              const validDoc = anyOrderSnap.docs[0];
+              manualOrder = validDoc.data();
+              manualOrderDocRef = validDoc.ref;
+              matchedPartnerId = manualOrder.partnerId;
+            }
+          } catch (cgErr) {
+            logger.warn('Could not query collectionGroup manualOrders:', cgErr.message);
+          }
+        }
+
+        if (manualOrder) {
+          logger.info(`Fulfilling Manual Order ${manualOrder.orderId} for partner ${matchedPartnerId}`);
+
+          if (manualOrderDocRef) {
+            await manualOrderDocRef.update({
+              status: 'DISPENSING',
+              updatedAt: new Date().toISOString()
+            }).catch(() => {});
+          }
+          manualOrder.status = 'DISPENSING';
+
+          try {
+            await payflex.dispenseData(manualOrder.targetPhone, manualOrder.planSerial);
+
+            const netProfit = +(manualOrder.amount - manualOrder.baseCost).toFixed(2);
+            const userTier = matchedPartner?.donationTier || 'MEMBER';
+            const settlement = wallet.calculateSettlement(netProfit, userTier);
+
+            if (manualOrderDocRef) {
+              await manualOrderDocRef.update({
+                status: 'FULFILLED',
+                fulfilledAt: new Date().toISOString(),
+                settlement
+              }).catch(() => {});
+            }
+            manualOrder.status = 'FULFILLED';
+            if (mockManualOrders) mockManualOrders.set(manualOrder.orderId, manualOrder);
+
+            if (db.ledger) {
+              await db.ledger.add({
+                type: 'COMPLETED_DATA',
+                userId: matchedPartnerId,
+                buyerPhone: manualOrder.targetPhone,
+                orderId: manualOrder.orderId,
+                amount: manualOrder.amount,
+                settlement,
+                status: 'COMPLETED',
+                source: 'MANUAL_ORDER',
+                squadTransactionRef: TransactionRef,
+                createdAt: new Date().toISOString()
+              }).catch(() => {});
+            }
+
+            if (db.users && matchedPartnerId && settlement.cdsShare > 0) {
+              let prevCds = Number(matchedPartner?.totalCdsDonated) || 0;
+              const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
+              await db.users.doc(matchedPartnerId).set({
+                totalCdsDonated: admin.firestore.FieldValue.increment(settlement.cdsShare)
+              }, { merge: true }).catch(() => {});
+              handleMilestoneCheck(matchedPartnerId, prevCds, newCds, matchedPartner).catch(() => {});
+            }
+
+            if (sessionManager.motherSock) {
+              const partnerJid = matchedPartnerId.includes('@') ? matchedPartnerId : `${matchedPartnerId}@s.whatsapp.net`;
+
+              const confirmMsg = `✅ *ORDER ${manualOrder.orderId} FULFILLED!*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📱 *Customer:* ${manualOrder.targetPhone}\n` +
+                `📦 *Plan:* ${manualOrder.planName}\n` +
+                `💰 *Amount:* ₦${manualOrder.amount.toLocaleString()}\n` +
+                `💵 *Your Earnings:* ₦${settlement.coMemberShare.toFixed(2)}\n` +
+                `🎖️ *CDS Contribution:* ₦${settlement.cdsShare.toFixed(2)}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+              const deliveryTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+              const receiptMsg = `👇 *Forward this receipt to your customer:*\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `✅ *DATA DELIVERED!*\n\n` +
+                `📱 *Number:* ${manualOrder.targetPhone}\n` +
+                `📦 *Plan:* ${manualOrder.planName}\n` +
+                `🕐 *Delivered:* ${deliveryTime}\n` +
+                `🔖 *Ref:* ${manualOrder.orderId}\n\n` +
+                `Powered by Clarion A.I. ⚡\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+              await sessionManager.motherSock.sendMessage(partnerJid, { text: confirmMsg }).catch(() => {});
+              await sessionManager.motherSock.sendMessage(partnerJid, { text: receiptMsg }).catch(() => {});
+            }
+
+            if (db.users && manualOrder.targetPhone) {
+              try {
+                const cleanCustomer = manualOrder.targetPhone.includes('@') ? manualOrder.targetPhone : `${manualOrder.targetPhone}@s.whatsapp.net`;
+                await db.users.doc(matchedPartnerId).collection('contacts').doc(cleanCustomer).set({
+                  totalSpent: admin.firestore.FieldValue.increment(manualOrder.amount),
+                  totalOrders: admin.firestore.FieldValue.increment(1)
+                }, { merge: true });
+              } catch (e) {}
+            }
+
+            return res.status(200).json({ status: 'success', message: 'Manual order fulfilled' });
+          } catch (dispenseErr) {
+            logger.error(`Manual order ${manualOrder.orderId} dispense failed:`, dispenseErr.message);
+            if (manualOrderDocRef) {
+              await manualOrderDocRef.update({
+                status: 'FAILED_DISPENSE',
+                lastError: dispenseErr.message,
+                updatedAt: new Date().toISOString()
+              }).catch(() => {});
+            }
+            return res.status(500).json({ error: 'Manual order dispense failed', details: dispenseErr.message });
+          }
+        }
+
         let ledgerSnapshot = await db.ledger
           .where('status', '==', 'AWAITING_PAYMENT')
           .where('amount', '==', Body.amount)
@@ -388,6 +627,7 @@ async function startServer() {
             await db.ledger.doc(orderId).update({
               status: 'COMPLETED',
               settlement,
+              squadTransactionRef: TransactionRef,
               updatedAt: new Date().toISOString()
             });
 
@@ -472,6 +712,7 @@ async function startServer() {
                 type: 'WALLET_DEPOSIT',
                 userId: matchedUserId,
                 amount: Body.amount,
+                squadTransactionRef: TransactionRef,
                 settlement: {
                   coMemberShare: Body.amount,
                   systemShare: 0,

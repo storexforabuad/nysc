@@ -418,7 +418,7 @@ class PayflexService {
 
     logger.info(`Dispensing real airtime: ₦${parsedAmount} ${normalizedNetwork.toUpperCase()} to ${phoneNumber}`);
     try {
-      const response = await this.postBreaker.fire('/api/topup/', {
+      const response = await this.postBreaker.fire('/api/airtime/topup/', {
         network: normalizedNetwork,
         mobile_number: phoneNumber,
         amount: parsedAmount

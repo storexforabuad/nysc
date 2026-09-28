@@ -1,6 +1,10 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
+import dns from 'dns';
+
+// Ensure IPv4 is prioritized to avoid Windows getaddrinfo ENOTFOUND on Squad endpoints
+dns.setDefaultResultOrder('ipv4first');
 
 // Using Sandbox Secret Key directly to ensure correct environment
 const API_KEY = "sandbox_sk_e5418278e26551d651df4c2c6484adfc00f76b2cb2f4";

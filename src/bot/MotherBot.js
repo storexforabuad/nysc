@@ -1,9 +1,9 @@
-import { logger } from '../config/env.js';
+import { config, logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
 import squad from '../services/SquadService.js';
 import payflex from '../services/payflex.js';
 import sessionManager from './SessionManager.js';
-import wallet, { WITHDRAWAL_FEES, PARTNERSHIP_TIERS } from '../services/WalletService.js';
+import wallet, { WITHDRAWAL_FEES, PARTNERSHIP_TIERS, BOT_MODES, SUBSCRIPTION_PLANS } from '../services/WalletService.js';
 import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import mediaGen from '../services/mediaGen.js';
@@ -37,11 +37,11 @@ const STATES = {
   AWAITING_CDS_PROPOSAL_DETAILS: 'AWAITING_CDS_PROPOSAL_DETAILS'
 };
 
-// Central ClarionHub Virtual Account for public orders (mock for now, connected via Squad later)
+// Central ClarionHub Virtual Account for public orders (Live GTCO collection account from Squad)
 export const CENTRAL_HUB_ACCOUNT = {
-  bankName: 'Wema Bank',
-  accountNumber: '0123456789',
-  accountName: 'ClarionHub Central'
+  bankName: 'HabariPay (GTCO)',
+  accountNumber: '5005005594',
+  accountName: 'CLARION DIGITAL HUB'
 };
 
 /**
@@ -57,7 +57,22 @@ export function checkIsSameNumber(userJid, botPhoneNumber) {
 }
 
 // In-memory fallback if Firestore is slow/down
-const mockUserStore = new Map();
+export const mockUserStore = new Map();
+export const mockManualOrders = new Map();
+
+/**
+ * Simulates WhatsApp typing indicator ("composing") before sending responses.
+ */
+export const simulateTyping = async (sock, toJid, durationMs = 1500) => {
+  if (!sock || !toJid) return;
+  try {
+    await sock.sendPresenceUpdate('composing', toJid);
+    await new Promise(r => setTimeout(r, durationMs));
+    await sock.sendPresenceUpdate('paused', toJid);
+  } catch (e) {
+    // Gracefully ignore presence update errors
+  }
+};
 
 const startQRImageDelivery = async (sock, from, user, saveUser) => {
   const targetNumber = user.phoneNumber;
@@ -67,6 +82,8 @@ const startQRImageDelivery = async (sock, from, user, saveUser) => {
     await sessionManager.startQRPairingForUser(
       {
         ...user,
+        ownerJid: from,
+        motherJid: from,
         uid: targetNumber.includes('@') ? targetNumber : `${targetNumber}@s.whatsapp.net`
       },
       async (rawQR) => {
@@ -155,6 +172,9 @@ export const handleMotherMessage = async (sock, msg) => {
     };
 
     logger.info(`Mother Bot handling message from ${pushName} (${userData.state})`);
+
+    // Simulate typing presence on WhatsApp before generating response
+    await simulateTyping(sock, from, 1500);
 
     if (userData.state === STATES.START) {
       if (command.toLowerCase() === 'connect 000') {
@@ -504,15 +524,21 @@ export const handleMotherMessage = async (sock, msg) => {
 
       await sock.sendMessage(from, { text: '🔍 Verifying account details with bank servers...' });
       const banks = await squad.getBanks();
-      const matchedBank = banks.find(b =>
-        b.name.toLowerCase().replace(/\s+/g, '') === bankName.toLowerCase().replace(/\s+/g, '')
-      );
+      const normBank = bankName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      let matchedBank = banks.find(b => {
+        const normB = b.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normB === normBank || normB.includes(normBank) || normBank.includes(normB);
+      });
 
       if (!matchedBank) {
-        const supported = banks.map(b => b.name).join(', ');
-        return sock.sendMessage(from, {
-          text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include: ${supported}.\nPlease try again:`
-        });
+        if (config.mockMode || config.squad?.secretKey?.includes('sandbox')) {
+          matchedBank = { name: bankName.toUpperCase(), code: '000' };
+        } else {
+          const supported = banks.slice(0, 10).map(b => b.name).join(', ');
+          return sock.sendMessage(from, {
+            text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include: ${supported}, etc.\nPlease try again:`
+          });
+        }
       }
 
       try {
@@ -608,9 +634,17 @@ export const handleMotherMessage = async (sock, msg) => {
       await startQRImageDelivery(sock, from, updatedUser, saveUser);
     }
     else if (userData.state === STATES.AWAITING_QR_SCAN) {
-      if (command.toUpperCase() === 'RESEND' || command.toUpperCase() === 'RETRY') {
+      const isCompletedCommand = /^(?:promo|fuel|giveaway|balance|bal|orders|order|check|kit|launch|help|commands|\?|mode|upgrade|downgrade|withdraw|impact|profile|rank|history|tx|vip|cds)/i.test(command);
+      const isAlreadyPaired = Boolean(userData.pairedAt || userData.botMode || sessionManager.sessions.has(userData.phoneJid || userData.phoneNumber || from));
+
+      if (isCompletedCommand || isAlreadyPaired) {
+        userData.state = STATES.COMPLETED;
+        userData.botMode = userData.botMode || 'manual';
+        await saveUser(userData);
+      } else if (command.toUpperCase() === 'RESEND' || command.toUpperCase() === 'RETRY') {
         await sock.sendMessage(from, { text: `⏳ Regenerating a fresh QR code image...` });
         await startQRImageDelivery(sock, from, userData, saveUser);
+        return;
       } else {
         const destNum = (userData.qrDeliveryJid || from).split('@')[0];
         return sock.sendMessage(from, {
@@ -618,7 +652,8 @@ export const handleMotherMessage = async (sock, msg) => {
         });
       }
     }
-    else if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
+
+    if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 
       // --- Helper for contact extraction ---
       const extractContacts = () => {
@@ -885,6 +920,532 @@ export const handleMotherMessage = async (sock, msg) => {
         }
       }
 
+      // ── CHECK Command (Manual Mode: Query Plans by Network Prefix & Size/Budget) ──
+      else if (userData.state === STATES.COMPLETED && /^check\s+(0\d{3})\s+([\d]+(?:gb|mb)?|all)$/i.test(command)) {
+        const checkMatch = command.match(/^check\s+(0\d{3})\s+([\d]+(?:gb|mb)?|all)$/i);
+        const prefix = checkMatch[1];
+        const queryArg = checkMatch[2].toLowerCase();
+
+        // 1. Detect network from prefix
+        const network = detectNetwork(prefix);
+        if (!network) {
+          return sock.sendMessage(from, {
+            text: `❌ Could not detect network for prefix *${prefix}*.\nPlease check the 4-digit prefix (e.g. 0803, 0802, 0805, 0809).`
+          });
+        }
+
+        const allPlans = await payflex.getAvailablePlans();
+        const networkPlans = allPlans.filter(p => p.network.toLowerCase().includes(network.toLowerCase()));
+
+        if (networkPlans.length === 0) {
+          return sock.sendMessage(from, {
+            text: `❌ No plans currently available for *${network.toUpperCase()}*.`
+          });
+        }
+
+        let matchedPlans = [];
+
+        if (queryArg === 'all') {
+          matchedPlans = networkPlans.slice().sort((a, b) => a.sellPrice - b.sellPrice).slice(0, 15);
+        } else if (queryArg.endsWith('gb') || queryArg.endsWith('mb')) {
+          const exactMatches = networkPlans.filter(p => p.name.toLowerCase().includes(queryArg));
+          if (exactMatches.length > 0) {
+            matchedPlans = exactMatches.sort((a, b) => a.sellPrice - b.sellPrice);
+          } else {
+            const targetVal = parseFloat(queryArg);
+            const isGb = queryArg.endsWith('gb');
+            const targetMb = isGb ? targetVal * 1024 : targetVal;
+
+            const parsePlanMb = (name) => {
+              const gbM = name.match(/(\d+(?:\.\d+)?)\s*gb/i);
+              if (gbM) return parseFloat(gbM[1]) * 1024;
+              const mbM = name.match(/(\d+(?:\.\d+)?)\s*mb/i);
+              if (mbM) return parseFloat(mbM[1]);
+              return 0;
+            };
+
+            matchedPlans = networkPlans
+              .map(p => ({ plan: p, mb: parsePlanMb(p.name) }))
+              .filter(p => p.mb > 0)
+              .sort((a, b) => Math.abs(a.mb - targetMb) - Math.abs(b.mb - targetMb))
+              .slice(0, 5)
+              .map(p => p.plan)
+              .sort((a, b) => a.sellPrice - b.sellPrice);
+          }
+        } else {
+          const budget = parseFloat(queryArg);
+          matchedPlans = networkPlans
+            .slice()
+            .sort((a, b) => Math.abs(a.sellPrice - budget) - Math.abs(b.sellPrice - budget))
+            .slice(0, 5)
+            .sort((a, b) => a.sellPrice - b.sellPrice);
+        }
+
+        if (matchedPlans.length === 0) {
+          matchedPlans = networkPlans.slice(0, 5);
+        }
+
+        let msg = `📶 *${network.toUpperCase()} Plans for Prefix ${prefix}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        matchedPlans.forEach(p => {
+          msg += `👉 *${p.name}* — ₦${p.sellPrice.toLocaleString()}\n`;
+        });
+        msg += `\n━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💡 *To create an order:* \n` +
+          `Text *ORDER [Size/Price] [Phone]*\n` +
+          `Example: *ORDER 1GB ${prefix}1234567* (network auto-detected!)`;
+
+        return sock.sendMessage(from, { text: msg });
+      }
+
+      // ── ORDER Command (Manual Mode: Network auto-detected from phone, optional override) ──
+      else if (userData.state === STATES.COMPLETED && /^order(?:\s+(mtn|airtel|glo|9mobile))?\s+([\d]+(?:gb|mb)?|\d+)\s+(0\d{10}|\+?234\d{10})$/i.test(command)) {
+        const orderMatch = command.match(/^order(?:\s+(mtn|airtel|glo|9mobile))?\s+([\d]+(?:gb|mb)?|\d+)\s+(0\d{10}|\+?234\d{10})$/i);
+        let reqNetwork = orderMatch[1] ? orderMatch[1].toLowerCase() : null;
+        const planArg = orderMatch[2].toLowerCase();
+        let targetPhone = orderMatch[3];
+
+        if (targetPhone.startsWith('+234')) {
+          targetPhone = '0' + targetPhone.slice(4);
+        } else if (targetPhone.startsWith('234')) {
+          targetPhone = '0' + targetPhone.slice(3);
+        }
+
+        const detectedNet = detectNetwork(targetPhone);
+
+        // Auto-detect network from phone if not explicitly provided
+        if (!reqNetwork) {
+          reqNetwork = detectedNet;
+          if (!reqNetwork) {
+            return sock.sendMessage(from, {
+              text: `❌ Could not auto-detect network for ${targetPhone}.\nPlease specify network: *ORDER [network] ${planArg} ${targetPhone}*`
+            });
+          }
+        }
+
+        let warningText = '';
+        if (detectedNet && detectedNet !== reqNetwork) {
+          warningText = `⚠️ *Note:* ${targetPhone} appears to be ${detectedNet.toUpperCase()}, but ordering on ${reqNetwork.toUpperCase()} as requested.\n\n`;
+        }
+
+        const allPlans = await payflex.getAvailablePlans();
+        const networkPlans = allPlans.filter(p => p.network.toLowerCase().includes(reqNetwork));
+        if (networkPlans.length === 0) {
+          return sock.sendMessage(from, { text: `❌ No plans found for ${reqNetwork.toUpperCase()}.` });
+        }
+
+        let selectedPlan = null;
+        if (planArg.endsWith('gb') || planArg.endsWith('mb')) {
+          selectedPlan = networkPlans.find(p => p.name.toLowerCase().includes(planArg));
+          if (!selectedPlan) {
+            const targetVal = parseFloat(planArg);
+            const isGb = planArg.endsWith('gb');
+            const targetMb = isGb ? targetVal * 1024 : targetVal;
+            const parsePlanMb = (name) => {
+              const gbM = name.match(/(\d+(?:\.\d+)?)\s*gb/i);
+              if (gbM) return parseFloat(gbM[1]) * 1024;
+              const mbM = name.match(/(\d+(?:\.\d+)?)\s*mb/i);
+              if (mbM) return parseFloat(mbM[1]);
+              return 0;
+            };
+            const sorted = networkPlans
+              .map(p => ({ plan: p, diff: Math.abs(parsePlanMb(p.name) - targetMb) }))
+              .sort((a, b) => a.diff - b.diff);
+            selectedPlan = sorted[0]?.plan;
+          }
+        } else {
+          const targetPrice = parseFloat(planArg);
+          selectedPlan = networkPlans.find(p => p.sellPrice === targetPrice) ||
+            networkPlans.slice().sort((a, b) => Math.abs(a.sellPrice - targetPrice) - Math.abs(b.sellPrice - targetPrice))[0];
+        }
+
+        if (!selectedPlan) {
+          return sock.sendMessage(from, {
+            text: `❌ Could not find a suitable ${reqNetwork.toUpperCase()} plan for "${planArg}".\nText *CHECK ${targetPhone.slice(0, 4)} ALL* to see available plans.`
+          });
+        }
+
+        const orderId = `MO-${Math.floor(1000 + Math.random() * 9000)}`;
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + 30 * 60 * 1000); // 30 minutes
+        const partnerUid = userData.uid || from;
+        const partnerName = userData.verifiedName || userData.name || 'Vendor';
+        const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+
+        const manualOrderData = {
+          orderId,
+          partnerId: partnerUid,
+          type: 'data',
+          network: reqNetwork.toUpperCase(),
+          planSerial: selectedPlan.serial,
+          planName: selectedPlan.name,
+          amount: selectedPlan.sellPrice,
+          baseCost: selectedPlan.basePrice,
+          targetPhone,
+          status: 'PENDING_PAYMENT',
+          createdAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString()
+        };
+
+        if (db.users) {
+          try {
+            await db.users.doc(partnerUid).collection('manualOrders').doc(orderId).set(manualOrderData);
+          } catch (e) {
+            logger.warn(`Could not save manual order in Firestore: ${e.message}`);
+          }
+        }
+        mockManualOrders.set(orderId, manualOrderData);
+
+        const expiryTimeStr = expiresAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+        const partnerBlock = `${warningText}✅ *Order ${orderId} Created*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📦 *Plan:* ${selectedPlan.name}\n` +
+          `📱 *Customer:* ${targetPhone}\n` +
+          `💰 *Price:* ₦${selectedPlan.sellPrice.toLocaleString()}\n` +
+          `💵 *Your Profit:* ₦${(selectedPlan.sellPrice - selectedPlan.basePrice).toLocaleString()}\n` +
+          `⏰ *Expires:* ${expiryTimeStr} (in 30 mins)\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `👇 *Forward the message below to your customer:*\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💳 *Payment Transfer Details*\n` +
+          `🏦 *Bank:* ${virtualAcct.bankName}\n` +
+          `🔢 *Account:* ${virtualAcct.accountNumber}\n` +
+          `👤 *Name:* ${virtualAcct.accountName || `Clarion - ${partnerName}`}\n` +
+          `💰 *Amount:* ₦${selectedPlan.sellPrice.toLocaleString()} exactly\n\n` +
+          `⚡ Once paid, your *${selectedPlan.name}* will be delivered automatically to *${targetPhone}* in under 20 seconds!\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+        return sock.sendMessage(from, { text: partnerBlock });
+      }
+
+      // ── ORDERS Command (Manual Mode: List recent manual orders) ──
+      else if (userData.state === STATES.COMPLETED && /^orders$/i.test(command)) {
+        const partnerUid = userData.uid || from;
+        let orders = [];
+
+        if (db.users) {
+          try {
+            const snap = await db.users.doc(partnerUid).collection('manualOrders')
+              .orderBy('createdAt', 'desc')
+              .limit(10)
+              .get();
+            orders = snap.docs.map(d => d.data());
+          } catch (e) {
+            logger.warn(`Could not query manual orders: ${e.message}`);
+          }
+        }
+
+        if (orders.length === 0) {
+          orders = Array.from(mockManualOrders.values())
+            .filter(o => o.partnerId === partnerUid)
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            .slice(0, 10);
+        }
+
+        if (orders.length === 0) {
+          return sock.sendMessage(from, {
+            text: `📭 *No Manual Orders Found*\n\nYou haven't created any customer orders yet.\n\nText *ORDER [size] [phone]* (e.g. *ORDER 1GB 08012345678*) to create one!`
+          });
+        }
+
+        let ordersMsg = `📋 *Your Recent Customer Orders*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        const now = new Date();
+
+        orders.forEach(o => {
+          let statusEmoji = '⏳';
+          let statusLabel = 'PENDING';
+          const isExpired = new Date(o.expiresAt) < now;
+
+          if (o.status === 'FULFILLED') {
+            statusEmoji = '✅';
+            statusLabel = 'FULFILLED';
+          } else if (o.status === 'CANCELLED') {
+            statusEmoji = '🚫';
+            statusLabel = 'CANCELLED';
+          } else if (o.status === 'EXPIRED' || (o.status === 'PENDING_PAYMENT' && isExpired)) {
+            statusEmoji = '❌';
+            statusLabel = 'EXPIRED';
+          }
+
+          ordersMsg += `${statusEmoji} *${o.orderId}* | ${o.network} ${o.planName}\n` +
+            `   📱 ${o.targetPhone} | ₦${o.amount.toLocaleString()} (${statusLabel})\n\n`;
+        });
+
+        ordersMsg += `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `Text *CANCEL [orderId]* to cancel a pending order.`;
+
+        return sock.sendMessage(from, { text: ordersMsg.trim() });
+      }
+
+      // ── CANCEL [orderId] Command (Manual Mode: Cancel pending order) ──
+      else if (userData.state === STATES.COMPLETED && /^cancel\s+(MO-\d+)$/i.test(command)) {
+        const orderIdMatch = command.match(/^cancel\s+(MO-\d+)$/i);
+        const orderId = orderIdMatch[1].toUpperCase();
+        const partnerUid = userData.uid || from;
+
+        let order = null;
+        let docRef = null;
+
+        if (db.users) {
+          try {
+            docRef = db.users.doc(partnerUid).collection('manualOrders').doc(orderId);
+            const snap = await docRef.get();
+            if (snap.exists) order = snap.data();
+          } catch (e) {}
+        }
+
+        if (!order) {
+          order = mockManualOrders.get(orderId);
+        }
+
+        if (!order || order.partnerId !== partnerUid) {
+          return sock.sendMessage(from, { text: `❌ Order *${orderId}* not found.` });
+        }
+
+        if (order.status !== 'PENDING_PAYMENT') {
+          return sock.sendMessage(from, {
+            text: `❌ Order *${orderId}* cannot be cancelled because its status is *${order.status}*.`
+          });
+        }
+
+        order.status = 'CANCELLED';
+        order.cancelledAt = new Date().toISOString();
+
+        if (docRef) {
+          await docRef.update({ status: 'CANCELLED', cancelledAt: order.cancelledAt }).catch(() => {});
+        }
+        mockManualOrders.set(orderId, order);
+
+        return sock.sendMessage(from, {
+          text: `✅ Order *${orderId}* has been cancelled.`
+        });
+      }
+
+      // ── UPGRADE Command (Freemium: Upgrade to Autonomous Mode) ──
+      else if (userData.state === STATES.COMPLETED && /^upgrade(?:\s+(weekly|monthly))?$/i.test(command)) {
+        const upMatch = command.match(/^upgrade(?:\s+(weekly|monthly))?$/i);
+        const tierChoice = upMatch[1] ? upMatch[1].toUpperCase() : null;
+        const balance = await wallet.getBalance(from);
+
+        const currentMode = userData.botMode || BOT_MODES.MANUAL;
+        const now = new Date();
+        const activeSub = userData.subscription;
+        const isCurrentlyAutonomous = currentMode === BOT_MODES.AUTONOMOUS && activeSub?.expiresAt && new Date(activeSub.expiresAt) > now;
+
+        if (!tierChoice) {
+          let msg = `🚀 *Upgrade to Clarion Autonomous Mode*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `Turn your WhatsApp into a 24/7 automated digital store! While you're in CDS, at PPA, or sleeping:\n\n` +
+            `⚡ Bot answers customer messages instantly\n` +
+            `📊 Shows data catalogs & pricing\n` +
+            `💳 Collects payment via dedicated account\n` +
+            `📦 Dispenses data automatically in 20 seconds\n` +
+            `💰 Automatically credits your profit wallet\n\n` +
+            `*Available Subscription Plans:*\n` +
+            `1️⃣ *Weekly Plan* — ₦${SUBSCRIPTION_PLANS.WEEKLY.price}/week\n` +
+            `   👉 Reply *UPGRADE WEEKLY*\n\n` +
+            `2️⃣ *Monthly Plan* — ₦${SUBSCRIPTION_PLANS.MONTHLY.price}/month (Best Value!)\n` +
+            `   👉 Reply *UPGRADE MONTHLY*\n\n` +
+            `💰 *Your Profit Wallet Balance:* ₦${balance.toFixed(2)}\n`;
+
+          if (isCurrentlyAutonomous) {
+            const expDate = new Date(activeSub.expiresAt).toLocaleDateString('en-GB');
+            msg += `\n✨ *Current Status:* Active (${activeSub.plan}) until ${expDate}.\nUpgrading now will extend your subscription!`;
+          }
+
+          if (balance < SUBSCRIPTION_PLANS.WEEKLY.price) {
+            const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+            msg += `\n⚠️ *Fund your wallet to subscribe:*\n` +
+              `🏦 Bank: ${virtualAcct.bankName}\n` +
+              `🔢 Account: ${virtualAcct.accountNumber}\n` +
+              `👤 Name: ${virtualAcct.accountName || userData.verifiedName}`;
+          }
+
+          return sock.sendMessage(from, { text: msg });
+        }
+
+        const planConfig = SUBSCRIPTION_PLANS[tierChoice];
+        if (!planConfig) {
+          return sock.sendMessage(from, { text: '❌ Invalid plan choice. Reply *UPGRADE WEEKLY* or *UPGRADE MONTHLY*.' });
+        }
+
+        if (balance < planConfig.price) {
+          const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+          return sock.sendMessage(from, {
+            text: `⚠️ *Insufficient Wallet Balance*\n\nThe ${planConfig.label} requires *₦${planConfig.price.toLocaleString()}*, but your wallet balance is *₦${balance.toFixed(2)}*.\n\nFund your wallet by transferring to your store account:\n🏦 *Bank:* ${virtualAcct.bankName}\n🔢 *Account:* ${virtualAcct.accountNumber}\n👤 *Name:* ${virtualAcct.accountName || userData.verifiedName}\n\nOnce transferred, reply *UPGRADE ${tierChoice}* again!`
+          });
+        }
+
+        // Deduct from wallet
+        await wallet.recordSubscriptionDebit(from, planConfig.price, tierChoice, { durationDays: planConfig.durationDays });
+
+        // Calculate start and end date (extend if already active)
+        let baseDate = now;
+        if (isCurrentlyAutonomous && activeSub?.expiresAt) {
+          baseDate = new Date(activeSub.expiresAt);
+        }
+        const expiresAt = new Date(baseDate.getTime() + planConfig.durationDays * 24 * 60 * 60 * 1000);
+
+        const newSub = {
+          plan: tierChoice,
+          price: planConfig.price,
+          durationDays: planConfig.durationDays,
+          startedAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          autoRenew: true
+        };
+
+        const updatedUser = {
+          ...userData,
+          botMode: BOT_MODES.AUTONOMOUS,
+          subscription: newSub
+        };
+
+        await saveUser(updatedUser);
+
+        const expFormatted = expiresAt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+        const confirmMsg = `🎉 *Autonomous Mode Activated!* 🚀\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `Your ProxyBot is now running *24/7 in Autonomous Mode* (${planConfig.label})!\n\n` +
+          `⚡ *What happens next:*\n` +
+          `• When customers text *DATA*, *CARD*, or *PIN*, your bot responds instantly\n` +
+          `• Full automated catalogs & payment generation\n` +
+          `• Instant data delivery upon transfer\n\n` +
+          `📅 *Valid Until:* ${expFormatted}\n` +
+          `🔄 *Auto-Renewal:* Enabled (renews from wallet on expiry)\n\n` +
+          `_Text *MODE* anytime to check your subscription, or *DOWNGRADE* to revert to manual._`;
+
+        return sock.sendMessage(from, { text: confirmMsg });
+      }
+
+      // ── DOWNGRADE Command (Cancel recurring subscription, disable at end of billing cycle) ──
+      else if (userData.state === STATES.COMPLETED && /^downgrade$/i.test(command)) {
+        if (userData.botMode === BOT_MODES.MANUAL || !userData.botMode) {
+          return sock.sendMessage(from, {
+            text: `ℹ️ Your store is already in *Manual Mode*.\n\nProxyBot is silent and you handle customer chats manually.\nText *UPGRADE* to activate 24/7 automation!`
+          });
+        }
+
+        const activeSub = userData.subscription;
+        const now = new Date();
+        const isNotExpired = activeSub?.expiresAt && new Date(activeSub.expiresAt) > now;
+
+        if (isNotExpired && activeSub.autoRenew === false) {
+          const expDate = new Date(activeSub.expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+          return sock.sendMessage(from, {
+            text: `ℹ️ *Auto-renewal is already cancelled.*\n\nYour Autonomous Mode will remain active until *${expDate}* (end of current billing cycle). After that date, your store will automatically switch to Manual Mode.`
+          });
+        }
+
+        if (isNotExpired) {
+          // Keep autonomous until expiresAt, but cancel recurring billing
+          const updatedUser = {
+            ...userData,
+            subscription: {
+              ...(userData.subscription || {}),
+              autoRenew: false
+            }
+          };
+          await saveUser(updatedUser);
+
+          const expDate = new Date(activeSub.expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+          return sock.sendMessage(from, {
+            text: `🛑 *Auto-Renewal Cancelled*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+              `You have successfully cancelled subscription renewal.\n\n` +
+              `✨ *Good news:* You've already paid for your current cycle, so your ProxyBot will stay *24/7 Autonomous until ${expDate}*!\n\n` +
+              `After *${expDate}*, your store will switch to *Manual Mode* without charging your wallet again.\n\n` +
+              `_Changed your mind? Text *UPGRADE* anytime to keep automation going._`
+          });
+        }
+
+        // If subscription has already passed expiry, revert to manual immediately
+        const updatedUser = {
+          ...userData,
+          botMode: BOT_MODES.MANUAL,
+          subscription: {
+            ...(userData.subscription || {}),
+            autoRenew: false
+          }
+        };
+        await saveUser(updatedUser);
+
+        return sock.sendMessage(from, {
+          text: `🛑 *Switched to Manual Mode*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `Your ProxyBot is now silent. You will handle customer inquiries manually and process sales using MotherBot:\n\n` +
+            `👉 *CHECK [prefix] [size]* — Find prices\n` +
+            `👉 *ORDER [size] [phone]* — Generate order & payment details\n\n` +
+            `_Text *UPGRADE* anytime to reactivate 24/7 automation._`
+        });
+      }
+
+      // ── HELP / COMMANDS Command (Full Categorized Reference) ──
+      else if (userData.state === STATES.COMPLETED && /^(?:help|commands|\?)$/i.test(command)) {
+        const isAutonomous = userData.botMode === BOT_MODES.AUTONOMOUS;
+        const modeBadge = isAutonomous ? '🤖 AUTONOMOUS' : '👤 MANUAL';
+
+        const helpMsg = `📖 *Clarion Command Center* (${modeBadge})\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `🛒 *STOREFRONT & SALES:*\n` +
+          `• *CHECK [prefix] [size]* — E.g. *CHECK 0801 1GB* or *CHECK 0802 ALL*\n` +
+          `• *ORDER [size] [phone]* — E.g. *ORDER 1GB 08012345678* (auto-detects network!)\n` +
+          `• *ORDERS* — View your pending & recent orders\n` +
+          `• *CANCEL [MO-ID]* — Cancel an unpaid customer order\n\n` +
+          `🤖 *AUTOMATION & SUBSCRIPTION:*\n` +
+          `• *MODE* — Check current bot mode & remaining subscription days\n` +
+          `• *UPGRADE* — View pricing & turn on 24/7 auto-bot\n` +
+          `• *DOWNGRADE* — Cancel recurring auto-renew at end of billing cycle\n\n` +
+          `💰 *WALLET & EARNINGS:*\n` +
+          `• *BALANCE* — Check profit balance & pending cashouts\n` +
+          `• *WITHDRAW [amount]* — Cash out profits to your locked bank\n` +
+          `• *HISTORY* — View your transaction log\n\n` +
+          `📢 *MARKETING & VIRAL GROWTH:*\n` +
+          `• *KIT* — Download your promotional status text & share card\n` +
+          `• *PROMO* — View Launch Giveaway Poster & Promo Fuel\n` +
+          `• *GIFT [phone] [plan]* — Gift promotional data to friends\n\n` +
+          `🎖️ *COMMUNITY & IMPACT:*\n` +
+          `• *RANK* / *PROFILE* — View your Official NYSC Franchise License\n` +
+          `• *IMPACT* — View your CDS donation milestone score\n` +
+          `• *CDS APPLY* — Apply for a community micro-grant\n` +
+          `• *CDS STATUS* — Check status of grant applications\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `_Tip: Text any command above to trigger it instantly!_ ⚡`;
+
+        return sock.sendMessage(from, { text: helpMsg });
+      }
+
+      // ── MODE Command (Check current bot operating mode & subscription status) ──
+      else if (userData.state === STATES.COMPLETED && /^mode$/i.test(command)) {
+        const currentMode = userData.botMode || BOT_MODES.MANUAL;
+        const sub = userData.subscription;
+        const now = new Date();
+
+        if (currentMode === BOT_MODES.AUTONOMOUS && sub?.expiresAt) {
+          const expDate = new Date(sub.expiresAt);
+          const isExpired = now > expDate;
+          const daysLeft = Math.max(0, Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)));
+
+          if (!isExpired) {
+            return sock.sendMessage(from, {
+              text: `🤖 *Bot Operating Mode: AUTONOMOUS* ⚡\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `📦 *Plan:* ${sub.plan} (${daysLeft} days remaining)\n` +
+                `📅 *Expires:* ${expDate.toLocaleDateString('en-GB')}\n` +
+                `🔄 *Auto-Renew:* ${sub.autoRenew !== false ? '✅ Active' : '❌ Inactive'}\n\n` +
+                `Your ProxyBot is actively responding to customer chats 24/7.\n\n` +
+                `_Commands: *DOWNGRADE* to switch to manual, or *UPGRADE* to extend._`
+            });
+          }
+        }
+
+        return sock.sendMessage(from, {
+          text: `👤 *Bot Operating Mode: MANUAL (Free)*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `Your ProxyBot is *silent*. You handle customer chats yourself and use MotherBot for quick processing:\n\n` +
+            `• *CHECK 0801 1GB* — Lookup network plans\n` +
+            `• *ORDER 1GB 08012345678* — Create order\n` +
+            `• *ORDERS* — View recent orders\n\n` +
+            `🚀 *Want 24/7 automated sales?*\n` +
+            `Text *UPGRADE* to see subscription plans (from ₦500/week)!`
+        });
+      }
+
       // ── BALANCE command ────────────────────────────────────
       else if ((userData.state === STATES.COMPLETED && command.toLowerCase() === 'balance') || (userData.state === STATES.COMPLETED && command.toLowerCase() === 'bal')) {
         const balance = await wallet.getBalance(from);
@@ -1065,15 +1626,21 @@ export const handleMotherMessage = async (sock, msg) => {
 
         await sock.sendMessage(from, { text: '🔍 Looking up your bank details...' });
         const banks = await squad.getBanks();
-        const matchedBank = banks.find(b =>
-          b.name.toLowerCase().replace(/\s+/g, '') === bankName.toLowerCase().replace(/\s+/g, '')
-        );
+        const normBank = bankName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let matchedBank = banks.find(b => {
+          const normB = b.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return normB === normBank || normB.includes(normBank) || normBank.includes(normB);
+        });
 
         if (!matchedBank) {
-          const bankList = banks.map(b => b.name).join(', ');
-          return sock.sendMessage(from, {
-            text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include:\n${bankList}\n\nPlease try again.`
-          });
+          if (config.mockMode || config.squad?.secretKey?.includes('sandbox')) {
+            matchedBank = { name: bankName.toUpperCase(), code: '000' };
+          } else {
+            const bankList = banks.slice(0, 10).map(b => b.name).join(', ');
+            return sock.sendMessage(from, {
+              text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include:\n${bankList}, etc.\nPlease try again.`
+            });
+          }
         }
 
         try {
