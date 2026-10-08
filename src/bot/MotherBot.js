@@ -7,19 +7,41 @@ import wallet, { WITHDRAWAL_FEES, PARTNERSHIP_TIERS, BOT_MODES, SUBSCRIPTION_PLA
 import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import mediaGen from '../services/mediaGen.js';
-import { detectNetwork } from '../utils/networkUtils.js';
+import { detectNetwork, parseNyscBatch } from '../utils/networkUtils.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import QRCode from 'qrcode';
 import { mockCdsProposals } from '../services/AdminService.js';
+import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import path from 'path';
+
+const DESIGNS_DIR = path.resolve('storage/designs');
+const PITCHES_DIR = path.resolve('storage/pitches');
+if (!fs.existsSync(DESIGNS_DIR)) fs.mkdirSync(DESIGNS_DIR, { recursive: true });
+if (!fs.existsSync(PITCHES_DIR)) fs.mkdirSync(PITCHES_DIR, { recursive: true });
+
+export const mockPitches = new Map();
+export const mockDesigns = new Map();
+export const mockContributors = new Map();
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const motherMessageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
 
 const STATES = {
   START: 'START',
+  AWAITING_PORTAL_STATE_CODE: 'AWAITING_PORTAL_STATE_CODE',
+  AWAITING_PORTAL_STATE_CODE_CONFIRM: 'AWAITING_PORTAL_STATE_CODE_CONFIRM',
+  PORTAL_MENU: 'PORTAL_MENU',
+  AWAITING_EARN_CHOICE: 'AWAITING_EARN_CHOICE',
+  AWAITING_PITCH_SUBMISSION: 'AWAITING_PITCH_SUBMISSION',
+  AWAITING_DESIGN_SUBMISSION: 'AWAITING_DESIGN_SUBMISSION',
+  AWAITING_CONTRIBUTOR_SUBMISSION: 'AWAITING_CONTRIBUTOR_SUBMISSION',
+  AWAITING_ADMIN_APPROVAL: 'AWAITING_ADMIN_APPROVAL',
   AWAITING_NYSC_CODE: 'AWAITING_NYSC_CODE',
   AWAITING_TIER_SELECTION: 'AWAITING_TIER_SELECTION',
   AWAITING_INITIAL_BANK: 'AWAITING_INITIAL_BANK',
+  AWAITING_INITIAL_BANK_CONFIRM: 'AWAITING_INITIAL_BANK_CONFIRM',
+  AWAITING_FRANCHISE_NAME: 'AWAITING_FRANCHISE_NAME',
   AWAITING_PROXY_NUMBER: 'AWAITING_PROXY_NUMBER',
   AWAITING_QR_DELIVERY_NUMBER: 'AWAITING_QR_DELIVERY_NUMBER',
   AWAITING_QR_SCAN: 'AWAITING_QR_SCAN',
@@ -36,6 +58,169 @@ const STATES = {
   AWAITING_MB_CARD_AMOUNT: 'AWAITING_MB_CARD_AMOUNT',
   AWAITING_CDS_PROPOSAL_DETAILS: 'AWAITING_CDS_PROPOSAL_DETAILS'
 };
+
+/**
+ * Truncates a name to fit NIBSS virtual account limits (max 20 chars).
+ * Strategy:
+ *   1. If full name <= 20 chars -> use as-is
+ *   2. If first 2 names <= 20 chars -> use first 2 names
+ *   3. Otherwise -> use first name + "Store"
+ */
+function truncateForNIBSS(fullName) {
+  if (!fullName) return 'Store';
+  const clean = fullName.trim();
+  if (clean.length <= 20) return clean;
+
+  const parts = clean.split(/\s+/);
+  const twoNames = parts.slice(0, 2).join(' ');
+  if (twoNames.length <= 20) return twoNames;
+
+  const firstName = parts[0];
+  const withStore = firstName + ' Store';
+  if (withStore.length <= 20) return withStore;
+
+  return firstName.substring(0, 20);
+}
+
+export function getPortalMenuText(stateCode) {
+  return `📡 *CLARION A.I | NYSC HUB* 🇳🇬\n` +
+    `_Dashboard:* \`${stateCode || 'Active'}\` (Verified)\n` +
+    `──────────────\n\n` +
+    `Select a department to explore:\n\n` +
+    `1️⃣ 🧠 *LEARN* — Camp Survival, PPA Guides & High-Income Skills\n` +
+    `2️⃣ 💼 *EARN* — 24/7 Telecom Franchise, Storefronts & Jobs\n` +
+    `3️⃣ 🏗️ *BUILD* — Startup Accelerator, Production & Distribution Foundry\n` +
+    `4️⃣ 🛍️ *MERCH* — Clarion Supply Co. (Corps Member Co-Designed Apparel & Kits)\n` +
+    `5️⃣ 🎪 *EVENTS* — Online Drops, Camp Pop-Ups, Raffles & Sponsored Meetups\n` +
+    `6️⃣ 💚 *IMPACT* — Live Community Fund, Projects & Corporate Partners\n\n` +
+    `👉 *Reply 1, 2, 3, 4, 5, or 6 to continue:*`;
+}
+
+export function getLearnMenuText() {
+  return `🧠 *CLARION LEARNING LAB & NYSC COMPASS*\n` +
+    `_Master your service year. Prepare for the global market._\n` +
+    `──────────────\n\n` +
+    `Everything you need to thrive before, during, and after NYSC:\n\n` +
+    `💻 *1. Featured Free Learning Asset:*\n` +
+    `• *The Odin Project* (https://www.theodinproject.com)\n` +
+    `  The gold standard in free, open-source Full-Stack Web Development curriculum (HTML, CSS, JavaScript, React & Node.js). Zero fluff, hands-on portfolio projects.\n\n` +
+    `🇳🇬 *2. The Complete NYSC Playbook:*\n` +
+    `• *Camp Survival:* Packing checklists, drills, allowances, and posting hacks.\n` +
+    `• *PPA Navigation:* Relocation criteria, accommodation rights, and monthly clearance.\n` +
+    `• *CDS Excellence:* Planning impactful community projects to qualify for State Honors.\n\n` +
+    `🤝 *Are you an Educator or Tutor?*\n` +
+    `If you have high-yield learning resources, course guides, or want to contribute educational assets to fellow corps members:\n` +
+    `👉 *Reply SUBMIT to send learning assets or links for review!*\n\n` +
+    `──────────────\n` +
+    `• Reply *0* to return to Main Menu\n` +
+    `• Reply *2* to explore *EARN* pathways`;
+}
+
+export function getEarnMenuText() {
+  return `💼 *CLARION EARNING HUB*\n` +
+    `_Multiple pathways to financial independence during and after your service year._\n` +
+    `──────────────\n\n` +
+    `Choose your preferred income stream:\n\n` +
+    `1️⃣ ⚡ *24/7 Automated Telecom Franchise*\n` +
+    `   Run a personal data, airtime, exam PINs (WAEC/NECO), electricity & cable TV bot on WhatsApp with ₦0 capital.\n\n` +
+    `2️⃣ 🛍️ *Compass™ Online Storefronts*\n` +
+    `   Sell your physical or digital products via WhatsApp & Web with automated bot checkout.\n\n` +
+    `3️⃣ 🤝 *Clarion Affiliate & Creator Partner Program*\n` +
+    `   Earn weekly cash bonuses recommending Clarion services, apparel & kits.\n\n` +
+    `4️⃣ 📋 *NYSC Job Board & Talent Placement*\n` +
+    `   Direct corporate match with top companies, remote micro-gigs & PPA placement.\n\n` +
+    `──────────────\n` +
+    `👉 *Reply 1, 2, 3, or 4 to proceed:*\n` +
+    `• Reply *0* to return to Main Menu`;
+}
+
+export function getBuildMenuText() {
+  return `🏗️ *STARTUP ACCELERATOR, PRODUCTION & DISTRIBUTION FOUNDRY*\n` +
+    `_We provide the physical space, the production line, and nationwide distribution._ 🌍🔨\n` +
+    `──────────────\n\n` +
+    `Clarion doesn't just offer advice. *We produce and distribute your creations:*\n\n` +
+    `🏭 *1. The Clarion Creative Hub & Space:*\n` +
+    `• A physical creative building with dedicated workstations, audio recording booths, and merchandise production lines.\n` +
+    `• In-house industrial screen-printing inks, embroidery machines, photobooths, label presses & packaging logistics.\n\n` +
+    `🎨 *2. Creative Production & Amplification:*\n` +
+    `• 🎤 *Recording Artists & Podcasters:* Curated official Clarion playlists on *Spotify, Apple Music, YouTube Music & Audiomack* to amplify your tracks and podcasts!\n` +
+    `• 🎬 *Filmmakers & Creators:* Official Clarion YouTube channel & studio showcase for corps filmmakers, vloggers & comedy creators.\n` +
+    `• 🧵 *Fashion Brands:* Fabric sourcing, bulk precision cutting, printing & distribution via Clarion storefronts.\n\n` +
+    `🚀 *3. Startup Accelerator & Grants:*\n` +
+    `• Seed micro-grants *(₦50k – ₦250k or more)* for working prototypes built during service.\n` +
+    `• Compass™ headless open-source e-commerce API access.\n\n` +
+    `──────────────\n` +
+    `👉 *Have a startup or creative venture?*\n` +
+    `• Reply *PITCH* to submit your Executive Summary (PDF or text) for review & grants!\n` +
+    `• Reply *0* to return to Main Menu`;
+}
+
+export function getMerchMenuText() {
+  return `🛍️ *CLARION SUPPLY CO. | OFFICIAL NYSC GEAR & JERSEYS*\n` +
+    `_Premium kit for corps life — 50% designed by corps members._ 🎒\n` +
+    `──────────────\n\n` +
+    `Standard camp kits wear out in weeks. Clarion Supply Co. engineers durable, weather-tested streetwear and tournament gear built for Nigerian conditions:\n\n` +
+    `🧵 *The 50% Creator Collaboration Pledge:*\n` +
+    `Up to *50% of all items* are designed in partnership with talented corps member designers, tailors, and visual artists. Every order directly funds a fellow corper!\n\n` +
+    `🎖️ *Honors Gifting & Drops:*\n` +
+    `Exceptional franchise vendors, CDS champions, and camp leaders will be gifted exclusive merch drops *100% free*! The rest of the community can access via limited online drops, camp pop-ups, and community raffles.\n\n` +
+    `📦 *The Drop Catalog (Concept Images Dropping Soon!):*\n` +
+    `⚽ *Tournament Sports Kits:* Breathable Football, Volleyball & Basketball Jerseys for *Team A & Team B*!\n` +
+    `🧥 *Tactical Bomber Jackets:* Heavy rain, morning dew & harmattan wind protection.\n` +
+    `👕 *Vintage Raglan & Ringer Tees:* Heavyweight cotton streetwear with subtle NYSC pride.\n` +
+    `🎒 *Bags & Totes:* Padded laptop tech backpacks & reinforced canvas tote bags.\n` +
+    `📓 *Writing Materials:* Debossed hardcover service journal & executive pen.\n` +
+    `🍶 *Insulated Water Bottles:* 24hr cold retention for hot parade afternoons.\n` +
+    `🧢 *Hats & Headwear:* Distressed dad caps & tactical bucket hats.\n` +
+    `...and many more to come! ✨\n\n` +
+    `──────────────\n` +
+    `📢 *SUBMISSIONS NOW OPEN FOR SEASON 1 (S1)!*\n` +
+    `👉 *Designers:* Reply *DESIGN* to review S1 production rules & submit sketches!\n` +
+    `👉 *Corps Members:* Reply *ALERT* to be the first to view concept images & pre-orders!\n` +
+    `• Reply *0* to return to Main Menu`;
+}
+
+export function getEventsMenuText() {
+  return `🎪 *CLARION EVENTS, DROPS & PROJECT UPDATES*\n` +
+    `_The heartbeat of the Clarion community across Nigeria._ 📅\n` +
+    `──────────────\n\n` +
+    `Stay plugged into what is happening across camps, states, and virtual stages:\n\n` +
+    `📢 *Active Project Dispatches:*\n` +
+    `Community development is already underway across multiple states — funding solar installations at corpers' lodges, upgrading rural school libraries, and supporting sanitation drives. Transparent metrics will be published live as each project wraps!\n\n` +
+    `🎟️ *Upcoming Drops & Activations:*\n` +
+    `• ⚽ *Jerseys & Bomber Jacket Concept Drop:* First look and pre-orders launching soon!\n` +
+    `• 🎪 *Camp Pop-Ups:* Free merchandise giveaways and raffle activations during orientation camp!\n` +
+    `• 🎙️ *Clarion Founders' AMA:* Live virtual audio space on Twitter/X with the Lead Architect (MGL).\n\n` +
+    `──────────────\n` +
+    `👉 *Reply ALERT to get calendar reminders before drops go live!*\n` +
+    `• Reply *0* to return to Main Menu\n` +
+    `• Reply *2* to start earning now`;
+}
+
+export function getImpactMenuText() {
+  return `💚 *THE CLARION COMMUNITY FUND & PARTNER NETWORK*\n` +
+    `_Radical transparency. Measurable grassroots empowerment._ 🇳🇬\n` +
+    `──────────────\n\n` +
+    `Every transaction on Clarion routes *20% to 80%* of vendor profits directly into community development.\n\n` +
+    `📊 *Impact Tracking & Transparency:*\n` +
+    `All project funding is tracked and audited publicly. Verified real-time stats (total funds raised, school classrooms touched, lodges powered by solar, and micro-grants disbursed) will be displayed on this dashboard as initial projects complete. We are starting immediately! 🚀\n\n` +
+    `🤝 *BECOME A CORPORATE OR ALUMNI PARTNER:*\n` +
+    `Are you a company, NGO, or proud NYSC alumnus looking to give back?\n` +
+    `• Sponsor an LGA community development project.\n` +
+    `• Sponsor official Clarion Merch gear giveaways for corps members.\n` +
+    `• Sponsor data or recharge card giveaways for camp orientation batches.\n` +
+    `• Sponsor youth tech hackathons and skills acquisition boot camps.\n\n` +
+    `👉 *Reply PARTNER to connect directly with our partnerships desk!*\n\n` +
+    `💚 *Direct Community Donation:*\n` +
+    `Transfer directly to the custody account:\n` +
+    `🏦 *Bank:* HabariPay (GTCO)\n` +
+    `🔢 *Account:* 5005005594\n` +
+    `👤 *Account Name:* CLARION DIGITAL HUB\n\n` +
+    `_Donors receive an official personalized "Clarion Community Champion" badge!_ 🎨\n\n` +
+    `──────────────\n` +
+    `• Reply *0* to return to Main Menu\n` +
+    `• Reply *2* to start your Franchise and auto-contribute!`;
+}
 
 // Central ClarionHub Virtual Account for public orders (Live GTCO collection account from Squad)
 export const CENTRAL_HUB_ACCOUNT = {
@@ -144,6 +329,7 @@ export const handleMotherMessage = async (sock, msg) => {
     }
     return;
   }
+  if (msg.key?.fromMe) return; // Ignore outgoing messages sent by the bot/admin
   if (from.endsWith('@g.us')) return; // Ignore group messages
 
   try {
@@ -173,16 +359,49 @@ export const handleMotherMessage = async (sock, msg) => {
 
     logger.info(`Mother Bot handling message from ${pushName} (${userData.state})`);
 
+    // ── Admin Chat Mode: bot goes silent so admin can chat manually ──
+    if (userData.adminMode === true) {
+      if (command.toLowerCase() === 'exit' || command.toLowerCase() === 'exitadmin') {
+        await saveUser({ ...userData, adminMode: false });
+        return sock.sendMessage(from, {
+          text: `🤖 *Clarion A.I. is back online!*\n\nReply *MENU* to access your portal, or send your *NYSC State Code* to get started.`
+        });
+      }
+      return; // Silent — admin is chatting manually
+    }
+
     // Simulate typing presence on WhatsApp before generating response
     await simulateTyping(sock, from, 1500);
 
-    if (userData.state === STATES.START) {
-      if (command.toLowerCase() === 'connect 000') {
-        await sock.sendMessage(from, {
-          text: `🎺 Welcome to Clarion A.I! 🚀 Let's set up your automated 24/7 Data Business and start earning extra income while helping NYSC community projects.\n\nTo begin, please reply with your *NYSC State Code* (e.g., NY/24A/1234):`
+    const isGlobalMenu = command.toLowerCase() === 'menu' || command.toLowerCase() === 'portal';
+    if (isGlobalMenu) {
+      // Trust partners who have fully onboarded (COMPLETED state) or confirmed via portal gate
+      const isVerified = userData.stateCodeConfirmed || userData.state === STATES.COMPLETED;
+      if (isVerified) {
+        userData.state = STATES.PORTAL_MENU;
+        await saveUser(userData);
+        return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
+      } else {
+        userData.state = STATES.AWAITING_PORTAL_STATE_CODE;
+        await saveUser(userData);
+        return sock.sendMessage(from, {
+          text: `📡 *CLARION A.I. | NYSC ENTERPRISE* 🇳🇬\n` +
+            `_Official Youth Operating System | SAED x CDDS_\n` +
+            `──────────────\n\n` +
+            `Welcome, Patriot! 🫡\n\n` +
+            `Clarion A.I. is an autonomous ecosystem engineered to help you maximize your service year and build wealth, skills, and community impact during and after service.\n\n` +
+            `To personalize your dashboard and unlock your portal access, please reply with your *NYSC State Code*:\n\n` +
+            `_(Example: KD/26A/1234 or LA/25B/5678)_`
         });
-        await saveUser({ ...userData, state: STATES.AWAITING_NYSC_CODE });
-        return;
+      }
+    }
+
+    if (userData.state === STATES.START) {
+      // Fast-path: already verified partner returning to portal
+      if (userData.stateCodeConfirmed || userData.verifiedName) {
+        userData.state = STATES.PORTAL_MENU;
+        await saveUser(userData);
+        return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
       }
 
       // Public Airtime (Card) check
@@ -312,8 +531,28 @@ export const handleMotherMessage = async (sock, msg) => {
         });
       }
 
-      // Quietly ignore any other non-trigger message for unregistered users
-      return;
+      // ── Screen 0: Welcome Gate ─────────────────────────────
+      // Only show to users who send an explicit greeting or trigger word.
+      // Silently ignore everything else (existing contacts' casual replies).
+      const greetingTrigger = /^(hi|hey|hello|salam|salaam|assalam|yo|sup|holla|howdy|start|connect\s*000|helo|hai|oya|good\s*(morning|afternoon|evening|day)|register|join|begin|enter|open|access|clarion|nysc|menu|portal|who are you|what is this|bot)$/i;
+
+      if (!greetingTrigger.test(command.trim())) {
+        // Not a known trigger — silently ignore. Don't spam existing contacts.
+        return;
+      }
+
+      const screen0Text = `📡 *CLARION A.I. | NYSC ENTERPRISE* 🇳🇬\n` +
+        `_Official Youth Operating System | SAED x CDDS_\n` +
+        `──────────────\n\n` +
+        `Welcome, Patriot! 🫡\n\n` +
+        `Clarion A.I. is an autonomous ecosystem engineered to help you maximize your service year and build wealth, skills, and community impact during and after service.\n\n` +
+        `To personalize your dashboard and unlock your portal access, reply with your *NYSC State Code*:\n\n` +
+        `_(Example: KD/26A/1234 or LA/25B/5678)_\n\n` +
+        `──────────────\n` +
+        `💬 *Need to speak to a human?* Reply *ADMIN*`;
+
+      await saveUser({ ...userData, state: STATES.AWAITING_PORTAL_STATE_CODE });
+      return sock.sendMessage(from, { text: screen0Text });
     }
     else if (userData.state === STATES.AWAITING_MB_CARD_AMOUNT) {
       const match = command.match(/^(?:card\s+|airtime\s+)?(\d+)(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i);
@@ -444,6 +683,398 @@ export const handleMotherMessage = async (sock, msg) => {
           `_Your application has been submitted to the Clarion CDS Allocation Board. You can type *CDS STATUS* anytime to check review status._`
       });
     }
+    else if (userData.state === STATES.AWAITING_PORTAL_STATE_CODE) {
+      // ADMIN keyword — hand off to manual chat
+      if (command.toLowerCase() === 'admin') {
+        await saveUser({ ...userData, adminMode: true, state: STATES.START });
+        return sock.sendMessage(from, {
+          text: `✅ *Connecting you to the Clarion team...*\n\nA team member will respond shortly on this line.\n\n_Reply *EXIT* at any time to return to the automated portal._`
+        });
+      }
+
+      const stateCodeRegex = /^[A-Z]{2}\/\d{2}[A-C]\/\d{4}$/i;
+      const cleanCode = command.toUpperCase().trim();
+      if (!stateCodeRegex.test(cleanCode)) {
+        return sock.sendMessage(from, {
+          text: `❌ *Invalid State Code format.*\n\nPlease use the official format: *KD/26A/1234* or *LA/25B/5678*:`
+        });
+      }
+
+      await saveUser({
+        ...userData,
+        pendingStateCode: cleanCode,
+        state: STATES.AWAITING_PORTAL_STATE_CODE_CONFIRM
+      });
+
+      return sock.sendMessage(from, {
+        text: `🔍 *STATE CODE VERIFICATION*\n` +
+          `──────────────\n\n` +
+          `Please confirm your service identity:\n\n` +
+          `👤 *State Code:* *${cleanCode}*\n` +
+          `🎖️ *Service Status:* Verified Patriot\n\n` +
+          `⚠️ *IMPORTANT NOTICE:*\n` +
+          `Do NOT use another corps member's State Code. Your State Code permanently binds to your payout bank and national identity. Using another person's code is a punishable violation and will lead to an immediate ban.\n\n` +
+          `Is this your correct State Code?\n` +
+          `• Reply *YES* to enter your portal\n` +
+          `• Reply *RETRY* to re-enter`
+      });
+    }
+    else if (userData.state === STATES.AWAITING_PORTAL_STATE_CODE_CONFIRM) {
+      const resp = command.toLowerCase().trim();
+      if (resp === 'yes' || resp === 'y' || resp === '1') {
+        const confirmedCode = userData.pendingStateCode || userData.stateCode;
+        await saveUser({
+          ...userData,
+          stateCode: confirmedCode,
+          stateCodeConfirmed: true,
+          pendingStateCode: null,
+          state: STATES.PORTAL_MENU
+        });
+
+        return sock.sendMessage(from, { text: getPortalMenuText(confirmedCode) });
+      } else if (resp === 'retry' || resp === 'no' || resp === 'n' || resp === '2') {
+        await saveUser({
+          ...userData,
+          state: STATES.AWAITING_PORTAL_STATE_CODE,
+          pendingStateCode: null
+        });
+
+        return sock.sendMessage(from, {
+          text: `Please reply with your correct *NYSC State Code*:\n_(Example: KD/26A/1234 or LA/25B/5678)_`
+        });
+      } else {
+        return sock.sendMessage(from, {
+          text: `Please reply *YES* to confirm your State Code (*${userData.pendingStateCode || userData.stateCode}*) or *RETRY* to re-enter.`
+        });
+      }
+    }
+    else if (userData.state === STATES.PORTAL_MENU) {
+      const lower = command.toLowerCase().trim();
+      if (lower === '1' || lower === 'learn') {
+        return sock.sendMessage(from, { text: getLearnMenuText() });
+      } else if (lower === '2' || lower === 'earn') {
+        await saveUser({ ...userData, state: STATES.AWAITING_EARN_CHOICE });
+        return sock.sendMessage(from, { text: getEarnMenuText() });
+      } else if (lower === '3' || lower === 'build') {
+        return sock.sendMessage(from, { text: getBuildMenuText() });
+      } else if (lower === '4' || lower === 'merch') {
+        return sock.sendMessage(from, { text: getMerchMenuText() });
+      } else if (lower === '5' || lower === 'events') {
+        return sock.sendMessage(from, { text: getEventsMenuText() });
+      } else if (lower === '6' || lower === 'impact') {
+        return sock.sendMessage(from, { text: getImpactMenuText() });
+      } else if (lower === '0' || lower === 'menu') {
+        return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
+      } else if (lower === 'pitch') {
+        await saveUser({ ...userData, state: STATES.AWAITING_PITCH_SUBMISSION });
+        return sock.sendMessage(from, {
+          text: `📄 *CLARION VENTURE & ACCELERATOR SUBMISSION*\n` +
+            `──────────────\n\n` +
+            `We review applications weekly for grant funding, studio time, and production sponsorship.\n\n` +
+            `Please send your pitch in one of two ways right now:\n` +
+            `1️⃣ *Send a PDF document* of your Executive Summary / Deck.\n` +
+            `2️⃣ *Or simply type out your summary here* (Problem, Solution, Team, What you need).\n\n` +
+            `──────────────\n` +
+            `• Reply *CANCEL* to exit back to the Build Hub`
+        });
+      } else if (lower === 'design') {
+        await saveUser({ ...userData, pendingDesigns: [], state: STATES.AWAITING_DESIGN_SUBMISSION });
+        return sock.sendMessage(from, {
+          text: `🎨 *SEASON 1 (S1) DESIGNER COLLABORATION RULES*\n` +
+            `──────────────\n\n` +
+            `Are you a corps member fashion designer, illustrator, or tailor? If your design is selected:\n` +
+            `✅ We manufacture it in our physical production space.\n` +
+            `✅ We handle national distribution and delivery.\n` +
+            `✅ You earn direct profit royalties on every single piece sold!\n\n` +
+            `📐 *S1 Submission Guidelines:*\n` +
+            `1. *Production Feasibility:* Must be easy to manufacture and source locally in Nigeria.\n` +
+            `2. *Color Palette:* Must utilize Clarion signature colors (Clarion Orange, Forest Green, Cream, or Clean White) alongside the Clarion logo.\n` +
+            `3. *Allowed Categories:* Bomber jackets, raglan/ringer tees, sports jerseys (Team A/B), tote bags, caps, or water bottle graphics.\n\n` +
+            `👉 *Upload your sketches, mockup images, or PDF documents now!*\n` +
+            `_(You can send multiple files. When you have sent all files, reply *DONE* to submit)._\n\n` +
+            `──────────────\n` +
+            `• Reply *CANCEL* to return to Merch Store`
+        });
+      } else if (lower === 'submit') {
+        await saveUser({ ...userData, state: STATES.AWAITING_CONTRIBUTOR_SUBMISSION });
+        return sock.sendMessage(from, {
+          text: `🤝 *EDUCATIONAL ASSET & GUIDE SUBMISSION*\n` +
+            `──────────────\n\n` +
+            `Are you an educator, tutor, or experienced corper?\n\n` +
+            `Please reply with your learning link, course outline, or curriculum summary for review:\n\n` +
+            `──────────────\n` +
+            `• Reply *CANCEL* to return to Main Menu`
+        });
+      } else if (lower === 'partner') {
+        return sock.sendMessage(from, {
+          text: `🤝 *CLARION PARTNERSHIPS DESK*\n` +
+            `──────────────\n\n` +
+            `Thank you for your interest in partnering with Clarion A.I. to empower Nigerian corps members!\n\n` +
+            `Our corporate and alumni partnerships team has been notified. A team lead will connect directly with you on this line (+${from.split('@')[0]}).\n\n` +
+            `You can also reach our partnership office at *partners@clarion.ng*.\n\n` +
+            `──────────────\n` +
+            `• Reply *MENU* to return to Main Portal`
+        });
+      } else if (lower.startsWith('alert')) {
+        return sock.sendMessage(from, {
+          text: `🔔 *NOTIFICATION PREFERENCES SAVED!*\n` +
+            `──────────────\n\n` +
+            `You will receive high-priority dispatches and drop alerts directly on this WhatsApp line.\n\n` +
+            `──────────────\n` +
+            `• Reply *MENU* to return to Main Portal`
+        });
+      } else {
+        return sock.sendMessage(from, {
+          text: `👉 Please reply with *1*, *2*, *3*, *4*, *5*, or *6* to select a department:\n\n• Reply *MENU* to view main options.`
+        });
+      }
+    }
+    else if (userData.state === STATES.AWAITING_EARN_CHOICE) {
+      const lower = command.toLowerCase().trim();
+      if (lower === '0' || lower === 'menu') {
+        await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+        return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
+      } else if (lower === '1') {
+        const batchInfo = parseNyscBatch(userData.stateCode);
+        if (batchInfo.isActiveCohort) {
+          await saveUser({ ...userData, state: STATES.AWAITING_TIER_SELECTION });
+          const tierPrompt = `⚡ *CLARION TELECOM FRANCHISE SETUP*\n` +
+            `_Turn your WhatsApp into an automated digital enterprise._\n` +
+            `──────────────\n\n` +
+            `Identity Verified: *${userData.stateCode}* (Active Cohort 🟢)\n\n` +
+            `Here is what Clarion sets up for your line:\n` +
+            `✅ Automated delivery of MTN, Airtel, Glo & 9mobile data & airtime.\n` +
+            `✅ Instant WAEC/NECO Exam PINs, Electricity Units & Cable TV subscriptions.\n` +
+            `✅ Dedicated bank virtual collection account in your brand name.\n` +
+            `✅ Daily automated profits sent to your payout bank.\n\n` +
+            `🎖️ *Step 1: Choose your Clarion Partnership Tier:*\n\n` +
+            `*1* - Clarion Member (Donate 20% to Community Fund) [Default]\n` +
+            `*2* - Clarion Master (Donate 50% to Community Fund)\n` +
+            `*3* - Clarion Lord (Donate 80% to Community Fund)\n` +
+            `*4* - Clarion Pioneer Class (Founding Batch: Donate 20% + Awarded Lord Rank & Privileges) 🚀\n\n` +
+            `👉 *Reply 1, 2, 3, or 4 to proceed:*\n` +
+            `• Reply *0* to return to EARN menu`;
+          return sock.sendMessage(from, { text: tierPrompt });
+        } else {
+          await saveUser({ ...userData, alumniTerminalQueue: true });
+          const alumniPrompt = `⚡ *CLARION TELECOM FRANCHISE QUEUE*\n` +
+            `_Active Batch Allocation Notice_\n` +
+            `──────────────\n\n` +
+            `Identity Verified: *${userData.stateCode || 'Patriot'}* (Senior Patriot / Alum 🎖️)\n\n` +
+            `Due to exceptional network server demand, instant WhatsApp automated vending terminal licenses are currently reserved for actively serving corps members *(Batch 26+)*.\n\n` +
+            `*Good News:* We have placed your profile on our *VIP Priority Terminal Queue*! You will receive first notification when the next terminal server allocation opens for alumni.\n\n` +
+            `Meanwhile, your full portal access is active! Explore Compass™ storefronts, the Creator Foundry, and community projects.\n\n` +
+            `──────────────\n` +
+            `• Reply *0* to return to Earning Hub\n` +
+            `• Reply *MENU* to return to Main Portal`;
+          return sock.sendMessage(from, { text: alumniPrompt });
+        }
+      } else if (lower === '2') {
+        const compassText = `🛍️ *COMPASS™ SOCIAL COMMERCE STOREFRONTS*\n` +
+          `_Sell anything on WhatsApp, Instagram & TikTok with automated bot fulfillment._\n` +
+          `──────────────\n\n` +
+          `Built on the open-source **Compass™ e-commerce engine (Est. 2025)**:\n` +
+          `• Turn your personal side-hustle (thrift, fashion, baked goods, gadgets, digital art) into a real web storefront.\n` +
+          `• Orders come in from the web or social media; your Clarion bot collects payment, tracks stock, and dispatches automatically.\n` +
+          `• Zero platform fee for verified corps members.\n\n` +
+          `Status: *Private cohort testing. Public rollout opening soon!* 🚀\n\n` +
+          `──────────────\n` +
+          `👉 *Reply ALERT to join the VIP early-access queue and get notified first!*\n` +
+          `• Reply *0* to return to Earning Hub`;
+        return sock.sendMessage(from, { text: compassText });
+      } else if (lower === '3') {
+        const affiliateText = `🤝 *CLARION AFFILIATE & CREATOR NETWORK*\n` +
+          `_Monetize your network across your platoon, CDS, and camp batch._\n` +
+          `──────────────\n\n` +
+          `How it works:\n` +
+          `• Get a personalized affiliate code and referral storefront link.\n` +
+          `• Earn cash bonuses when fellow corpers activate their digital storefronts.\n` +
+          `• Earn direct profit percentages when anyone orders Clarion Merch Drops through your link.\n` +
+          `• Instant weekly payouts straight to your locked bank account.\n\n` +
+          `Status: *Opening alongside Merch Concept Drop 01!* 🎟️\n\n` +
+          `──────────────\n` +
+          `👉 *Reply ALERT to get your custom referral link reserved!*\n` +
+          `• Reply *0* to return to Earning Hub`;
+        return sock.sendMessage(from, { text: affiliateText });
+      } else if (lower === '4') {
+        const jobText = `📋 *CLARION JOB BOARD & TALENT NETWORK*\n` +
+          `_Connecting exceptional corps members with top Nigerian companies._\n` +
+          `──────────────\n\n` +
+          `Finding high-paying post-NYSC roles or remote gigs shouldn't be stressful:\n` +
+          `• *Direct Corporate Match:* Fast-track pipelines to verified hiring partners in FinTech, Logistics, EdTech & FMCG.\n` +
+          `• *Remote Micro-Gigs:* Paid freelance projects curated specifically for serving corps members.\n` +
+          `• *Lord & Master Tier Priority:* Clarion vendors in higher tiers get automatic priority CV forwarding to corporate HR desks.\n\n` +
+          `Status: *Vetting employer partners. Launching soon!* 🏢\n\n` +
+          `──────────────\n` +
+          `Want early access to openings?\n` +
+          `• Reply *ALERT 1* — Notify me for Remote Micro-Gigs\n` +
+          `• Reply *ALERT 2* — Notify me for Corporate Full-Time Jobs\n` +
+          `• Reply *ALERT ALL* — Notify me for all openings\n` +
+          `• Reply *0* to return to Earning Hub`;
+        return sock.sendMessage(from, { text: jobText });
+      } else if (lower.startsWith('alert')) {
+        return sock.sendMessage(from, {
+          text: `🔔 *NOTIFICATION PREFERENCES SAVED!*\n──────────────\nYou will receive high-priority dispatches and drop alerts directly on this WhatsApp line.\n──────────────\n• Reply *0* to return to Earning Hub\n• Reply *MENU* to view Main Portal`
+        });
+      } else {
+        return sock.sendMessage(from, {
+          text: `❌ Invalid selection.\n\nPlease reply *1*, *2*, *3*, or *4* to choose an income stream, or *0* to return to the Main Portal.`
+        });
+      }
+    }
+    else if (userData.state === STATES.AWAITING_PITCH_SUBMISSION) {
+      if (command.toLowerCase() === 'cancel') {
+        await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+        return sock.sendMessage(from, { text: getBuildMenuText() });
+      }
+
+      let fileSavedPath = null;
+      const isDoc = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage || msg.message?.imageMessage);
+      if (isDoc) {
+        try {
+          const buffer = await downloadMediaMessage(msg, 'buffer', {});
+          const fileName = `${from.replace(/[^0-9]/g, '')}_${Date.now()}.pdf`;
+          const fullPath = path.join(PITCHES_DIR, fileName);
+          fs.writeFileSync(fullPath, buffer);
+          fileSavedPath = fullPath;
+        } catch (e) {
+          logger.warn(`Could not save pitch media file: ${e.message}`);
+        }
+      }
+
+      const pitchId = `CLARION-PITCH-${Math.floor(1000 + Math.random() * 9000)}`;
+      const pitchEntry = {
+        id: pitchId,
+        pitchId,
+        userId: from,
+        stateCode: userData.stateCode || 'NYSC',
+        verifiedName: userData.verifiedName || userData.name || 'Corps Member',
+        summary: command || (isDoc ? 'Document attached' : 'Pitch Submission'),
+        filePath: fileSavedPath,
+        status: 'PENDING',
+        submittedAt: new Date().toISOString()
+      };
+
+      if (db.pitches) {
+        await db.pitches.doc(pitchId).set(pitchEntry).catch(err => logger.warn(`Firestore pitch save failed: ${err.message}`));
+      }
+      mockPitches.set(pitchId, pitchEntry);
+
+      await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+
+      return sock.sendMessage(from, {
+        text: `✅ *PITCH RECEIVED & LOGGED!*\n` +
+          `──────────────\n\n` +
+          `Reference ID: *${pitchId}*\n` +
+          `Your executive summary has been logged into the Clarion Ventures Dashboard for review.\n\n` +
+          `We will notify you right here on WhatsApp once reviewed!\n\n` +
+          `──────────────\n` +
+          `• Reply *0* to explore other departments\n` +
+          `• Reply *MENU* to view Main Portal`
+      });
+    }
+    else if (userData.state === STATES.AWAITING_DESIGN_SUBMISSION) {
+      if (command.toLowerCase() === 'cancel') {
+        await saveUser({ ...userData, pendingDesigns: [], state: STATES.PORTAL_MENU });
+        return sock.sendMessage(from, { text: getMerchMenuText() });
+      }
+
+      if (command.toLowerCase() === 'done') {
+        const files = userData.pendingDesigns || [];
+        if (files.length === 0 && command.length < 5) {
+          return sock.sendMessage(from, {
+            text: `❌ No design files received yet. Please send an image sketch or mockup first, or reply *CANCEL*:`
+          });
+        }
+
+        const designId = `CLARION-DESIGN-${Math.floor(1000 + Math.random() * 9000)}`;
+        const designEntry = {
+          id: designId,
+          designId,
+          userId: from,
+          stateCode: userData.stateCode || 'NYSC',
+          verifiedName: userData.verifiedName || userData.name || 'Corps Member',
+          files,
+          submittedAt: new Date().toISOString(),
+          status: 'PENDING'
+        };
+
+        if (db.merchDesigns) {
+          await db.merchDesigns.doc(designId).set(designEntry).catch(err => logger.warn(`Firestore merch design save failed: ${err.message}`));
+        }
+        mockDesigns.set(designId, designEntry);
+
+        await saveUser({ ...userData, pendingDesigns: [], state: STATES.PORTAL_MENU });
+
+        return sock.sendMessage(from, {
+          text: `✅ *SEASON 1 DESIGN SUBMISSION LOGGED!*\n` +
+            `──────────────\n\n` +
+            `Reference ID: *${designId}*\n` +
+            `Attached Files: ${files.length} design asset(s) stored.\n\n` +
+            `Your submission has been cataloged in the Clarion Creative Foundry production queue.\n\n` +
+            `📸 *Tip:* Screenshot this confirmation card to share on your Status or portfolio!\n\n` +
+            `If selected for Season 1 sampling, our team will message you right here to onboard you for manufacturing and royalty payouts.\n\n` +
+            `──────────────\n` +
+            `• Reply *0* to return to Merch Store\n` +
+            `• Reply *MENU* to view Main Portal`
+        });
+      }
+
+      const isMedia = !!(msg.message?.imageMessage || msg.message?.documentMessage || msg.message?.documentWithCaptionMessage);
+      if (isMedia) {
+        try {
+          const buffer = await downloadMediaMessage(msg, 'buffer', {});
+          const ext = msg.message?.imageMessage ? 'jpg' : 'pdf';
+          const fileName = `${from.replace(/[^0-9]/g, '')}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
+          const fullPath = path.join(DESIGNS_DIR, fileName);
+          fs.writeFileSync(fullPath, buffer);
+
+          const curDesigns = userData.pendingDesigns || [];
+          curDesigns.push(fullPath);
+          await saveUser({ ...userData, pendingDesigns: curDesigns });
+
+          return sock.sendMessage(from, {
+            text: `📥 *Asset Received (${curDesigns.length} attached)*\nSend another file, or reply *DONE* when finished to finalize your submission!`
+          });
+        } catch (e) {
+          logger.warn(`Could not save merch design asset: ${e.message}`);
+          return sock.sendMessage(from, { text: `❌ Could not download asset: ${e.message}. Please try resending.` });
+        }
+      } else {
+        return sock.sendMessage(from, {
+          text: `👉 Please upload an image sketch, mockup, or PDF document.\nWhen you have finished sending all files, reply *DONE* to complete your submission, or *CANCEL* to exit.`
+        });
+      }
+    }
+    else if (userData.state === STATES.AWAITING_CONTRIBUTOR_SUBMISSION) {
+      if (command.toLowerCase() === 'cancel') {
+        await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+        return sock.sendMessage(from, { text: getLearnMenuText() });
+      }
+
+      const contribId = `CONTRIB-${Math.floor(1000 + Math.random() * 9000)}`;
+      const contribEntry = {
+        id: contribId,
+        contribId,
+        userId: from,
+        stateCode: userData.stateCode || 'NYSC',
+        verifiedName: userData.verifiedName || userData.name || 'Educator',
+        content: command,
+        submittedAt: new Date().toISOString()
+      };
+
+      mockContributors.set(contribId, contribEntry);
+      await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+
+      return sock.sendMessage(from, {
+        text: `✅ *LEARNING ASSET SUBMITTED!*\n` +
+          `──────────────\n\n` +
+          `Reference ID: *${contribId}*\n` +
+          `Thank you for contributing to the Clarion corps member knowledge base! Our editorial team will review your asset and index it in the next directory update.\n\n` +
+          `──────────────\n` +
+          `• Reply *0* to return to Main Menu`
+      });
+    }
     else if (userData.state === STATES.AWAITING_NYSC_CODE) {
       const stateCodeRegex = /^[A-Z]{2}\/\d{2}[A-C]\/\d{4}$/i;
       if (!stateCodeRegex.test(command)) {
@@ -457,10 +1088,10 @@ export const handleMotherMessage = async (sock, msg) => {
       });
 
       const tierPrompt = `🎖️ *Choose your Clarion Partnership Tier:*\n\n` +
-        `*1* - Clarion Member (Donate 16% to CDS) [Default]\n` +
-        `*2* - Clarion Master (Donate 40% to CDS)\n` +
-        `*3* - Clarion Lord (Donate 64% to CDS)\n` +
-        `*4* - Clarion Pioneer Class (Founding Batch: Donate 16% to CDS + Awarded Clarion Lord Rank & All Privileges) 🚀\n\n` +
+        `*1* - Clarion Member (Donate 20% to CDS) [Default]\n` +
+        `*2* - Clarion Master (Donate 50% to CDS)\n` +
+        `*3* - Clarion Lord (Donate 80% to CDS)\n` +
+        `*4* - Clarion Pioneer Class (Founding Batch: Donate 20% to CDS + Awarded Clarion Lord Rank & All Privileges) 🚀\n\n` +
         `Reply *1*, *2*, *3*, or *4* to proceed:`;
 
       return sock.sendMessage(from, { text: tierPrompt });
@@ -545,43 +1176,125 @@ export const handleMotherMessage = async (sock, msg) => {
         const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
         const verifiedName = accountInfo.accountName;
 
-        await sock.sendMessage(from, { text: `✅ *Account Verified:* ${verifiedName}!\n\nCreating your dedicated virtual collection account...` });
-
-        // Create Squad Virtual Account in the verified name
-        const account = await squad.createVirtualAccount(
-          verifiedName,
-          `${from.split('@')[0]}@nyscbot.com`,
-          from.split('@')[0]
-        );
-
-        const updatedUser = {
+        // Store pending (uncommitted) bank details for confirmation
+        await saveUser({
           ...userData,
-          name: verifiedName,
-          verifiedName: verifiedName,
-          bankDetails: {
+          pendingBank: {
             bankName: matchedBank.name,
             bankCode: matchedBank.code,
             accountNumber,
             accountName: verifiedName
           },
-          virtualAccount: account,
-          state: STATES.AWAITING_PROXY_NUMBER
-        };
-
-        await saveUser(updatedUser);
+          state: STATES.AWAITING_INITIAL_BANK_CONFIRM
+        });
 
         return sock.sendMessage(from, {
-          text: `🎊 *Enterprise Identity Setup Complete!*\n\n` +
-            `👤 *Verified Name:* ${verifiedName} (Permanently Locked)\n` +
-            `🏦 *Payout Bank:* ${matchedBank.name} (${accountNumber})\n` +
-            `💳 *Clarion Collection Acct:* ${account.bankName} - ${account.accountNumber}\n` +
-            `🎖️ *Tier:* ${PARTNERSHIP_TIERS[userData.donationTier || 'MEMBER'].name}\n\n` +
-            `*Final Step:* To activate your Digital Storefront, please reply with the WhatsApp number you want your Bot to run on (e.g. 08012345678):`
+          text: `🔍 *Account Verified with Bank Servers:*\n\n` +
+            `👤 *Account Name:* ${verifiedName}\n` +
+            `🏦 *Bank:* ${matchedBank.name}\n` +
+            `🔢 *Account Number:* ${accountNumber}\n\n` +
+            `Is this your correct bank account?\n` +
+            `• Reply *YES* to confirm\n` +
+            `• Reply *RETRY* to enter a different account`
         });
       } catch (err) {
         logger.error('Initial bank validation failed:', err.message);
         return sock.sendMessage(from, {
           text: '❌ Could not verify bank account. Please check your bank name and account number, then try again:'
+        });
+      }
+    }
+    // ── AWAITING_INITIAL_BANK_CONFIRM ──
+    else if (userData.state === STATES.AWAITING_INITIAL_BANK_CONFIRM) {
+      if (command === 'retry' || command === 'no' || command === '2') {
+        await saveUser({ ...userData, state: STATES.AWAITING_INITIAL_BANK, pendingBank: null });
+        return sock.sendMessage(from, {
+          text: '🔄 No problem! Please re-enter your *Bank Name* and *10-digit Account Number*:\n\nExample: *GTBank 0123456789*'
+        });
+      }
+
+      if (command !== 'yes' && command !== '1') {
+        return sock.sendMessage(from, {
+          text: 'Reply *YES* to confirm this account, or *RETRY* to enter different details.'
+        });
+      }
+
+      // Lock the verified name and bank details
+      const { bankName: pBankName, bankCode: pBankCode, accountNumber: pAccountNumber, accountName: pAccountName } = userData.pendingBank;
+
+      await saveUser({
+        ...userData,
+        verifiedName: pAccountName,
+        bankDetails: { bankName: pBankName, bankCode: pBankCode, accountNumber: pAccountNumber, accountName: pAccountName },
+        pendingBank: null,
+        state: STATES.AWAITING_FRANCHISE_NAME
+      });
+
+      return sock.sendMessage(from, {
+        text: `✅ *Bank Account Locked!*\n\n` +
+          `🏢 *Name Your Digital Franchise Storefront (Optional)*\n\n` +
+          `Every Clarion partner operates their own digital telecom enterprise. ` +
+          `What would you like your storefront to be called?\n\n` +
+          `Examples: _Apex Telecom_, _Khadija Subz_, _Bello Data Hub_\n\n` +
+          `• Reply with your *Franchise Name* (Max 20 characters)\n` +
+          `• Or reply *SKIP* to use your personal name\n` +
+          `  _(Clarion AI - ${pAccountName})_`
+      });
+    }
+    // ── AWAITING_FRANCHISE_NAME ──
+    else if (userData.state === STATES.AWAITING_FRANCHISE_NAME) {
+      let franchiseName = null;
+      let brandName = '';
+
+      if (command === 'skip' || command === '0') {
+        // Use verified name, truncated smartly for banking systems
+        brandName = 'Clarion AI - ' + truncateForNIBSS(userData.verifiedName);
+      } else {
+        // Sanitize: strip emojis/special chars, max 20 chars
+        let cleanName = text.trim().replace(/[^a-zA-Z0-9\s\-]/g, '').substring(0, 20).trim();
+        if (cleanName.length < 2) {
+          return sock.sendMessage(from, {
+            text: '❌ Name too short. Please enter at least 2 characters, or reply *SKIP*:'
+          });
+        }
+        franchiseName = cleanName;
+        brandName = 'Clarion AI - ' + cleanName;
+      }
+
+      await sock.sendMessage(from, {
+        text: `⏳ Creating your dedicated collection account for *${brandName}*...`
+      });
+
+      try {
+        // Create Squad Virtual Account with brand name
+        const account = await squad.createVirtualAccount(
+          brandName,
+          `${from.split('@')[0]}@nyscbot.com`,
+          from.split('@')[0]
+        );
+
+        await saveUser({
+          ...userData,
+          name: userData.verifiedName,
+          franchiseName,
+          brandName,
+          virtualAccount: account,
+          state: STATES.AWAITING_PROXY_NUMBER
+        });
+
+        return sock.sendMessage(from, {
+          text: `🎊 *Enterprise Identity Setup Complete!*\n\n` +
+            `🏢 *Franchise:* ${brandName}\n` +
+            `👤 *Verified Operator:* ${userData.verifiedName} (Permanently Locked)\n` +
+            `🏦 *Payout Bank:* ${userData.bankDetails.bankName} (${userData.bankDetails.accountNumber})\n` +
+            `💳 *Clarion Collection Acct:* ${account.bankName} - ${account.accountNumber}\n` +
+            `🎖️ *Tier:* ${PARTNERSHIP_TIERS[userData.donationTier || 'MEMBER'].name}\n\n` +
+            `*Final Step:* To activate your Digital Storefront, please reply with the WhatsApp number you want your Bot to run on (e.g. 08012345678):`
+        });
+      } catch (err) {
+        logger.error('Virtual account creation failed during franchise setup:', err.message);
+        return sock.sendMessage(from, {
+          text: '❌ Could not create your collection account. Please try again by replying with your franchise name, or reply *SKIP*:'
         });
       }
     }
@@ -653,38 +1366,58 @@ export const handleMotherMessage = async (sock, msg) => {
       }
     }
 
-    if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
-
-      // --- Helper for contact extraction ---
-      const extractContacts = () => {
-        let extractedNumbers = [];
-        const contactMsg = msg.message?.contactMessage;
-        const contactsArray = msg.message?.contactsArrayMessage?.contacts;
-        if (contactMsg) {
-          const vcard = contactMsg.vcard;
+    // ── Shared contact extraction helper (accessible from all states) ──
+    const extractContacts = () => {
+      let extractedNumbers = [];
+      const contactMsg = msg.message?.contactMessage;
+      const contactsArray = msg.message?.contactsArrayMessage?.contacts;
+      if (contactMsg) {
+        const vcard = contactMsg.vcard;
+        const jidMatch = vcard?.match(/waid=(\d+)/i);
+        const numMatch = vcard?.match(/TEL.*?:(.*)/i);
+        if (jidMatch) extractedNumbers.push(jidMatch[1]);
+        else if (numMatch) extractedNumbers.push(numMatch[1]);
+      } else if (contactsArray) {
+        contactsArray.forEach(c => {
+          const vcard = c.vcard;
           const jidMatch = vcard?.match(/waid=(\d+)/i);
           const numMatch = vcard?.match(/TEL.*?:(.*)/i);
           if (jidMatch) extractedNumbers.push(jidMatch[1]);
           else if (numMatch) extractedNumbers.push(numMatch[1]);
-        } else if (contactsArray) {
-          contactsArray.forEach(c => {
-            const vcard = c.vcard;
-            const jidMatch = vcard?.match(/waid=(\d+)/i);
-            const numMatch = vcard?.match(/TEL.*?:(.*)/i);
-            if (jidMatch) extractedNumbers.push(jidMatch[1]);
-            else if (numMatch) extractedNumbers.push(numMatch[1]);
-          });
-        }
-        if (command && extractedNumbers.length === 0) {
-          const digitSequences = command.match(/(?:\+?\d[\d\-\s]{7,}\d)/g);
-          if (digitSequences) extractedNumbers.push(...digitSequences);
-        }
-        return extractedNumbers.map(rawNum => {
-          let clean = rawNum.replace(/\D/g, '');
-          if (clean.length === 11 && clean.startsWith('0')) clean = '234' + clean.substring(1);
-          return clean ? clean + '@s.whatsapp.net' : null;
-        }).filter(Boolean);
-      };
+        });
+      }
+      if (command && extractedNumbers.length === 0) {
+        const digitSequences = command.match(/(?:\+?\d[\d\-\s]{7,}\d)/g);
+        if (digitSequences) extractedNumbers.push(...digitSequences);
+      }
+      return extractedNumbers.map(rawNum => {
+        let clean = rawNum.replace(/\D/g, '');
+        if (clean.length === 11 && clean.startsWith('0')) clean = '234' + clean.substring(1);
+        return clean ? clean + '@s.whatsapp.net' : null;
+      }).filter(Boolean);
+    };
+
+    // If user is in any state and drops a contact, intercept for vend checkout
+    const isPortalBrowsingState = [
+      STATES.PORTAL_MENU, STATES.AWAITING_EARN_CHOICE
+    ].includes(userData.state);
+    const sharedContactsEarly = extractContacts();
+    if (isPortalBrowsingState && sharedContactsEarly.length > 0 && userData.verifiedName) {
+      const activeContact = sharedContactsEarly[0];
+      const hasBroadcasted = (userData.broadcastHistory || []).includes(activeContact);
+      await saveUser({ ...userData, state: STATES.AWAITING_CONTACT_ACTION, activeContact, previousPortalState: userData.state });
+      if (hasBroadcasted) {
+        return sock.sendMessage(from, {
+          text: `📲 *Contact received: +${activeContact.split('@')[0]}*\n\nWhat would you like to do?\n*1* — Purchase data for this number\n*2* — Buy recharge card / airtime\n\nReply *CANCEL* to abort.`
+        });
+      } else {
+        return sock.sendMessage(from, {
+          text: `📲 *Contact received: +${activeContact.split('@')[0]}*\n\nWhat would you like to do?\n*1* — Send Broadcast message\n*2* — Purchase data for this number\n*3* — Buy recharge card / airtime\n\nReply *CANCEL* to abort.`
+        });
+      }
+    }
+
+    if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 
       if (userData.state === STATES.AWAITING_BROADCAST_CONTACTS) {
         const template = `Big news! 🚀 I just launched my automated 24/7 Data Bot powered by Clarion A.I (NYSC SAED Project). Get your MTN, Airtel, and Glo data instantly, at either official rates or cheaper! 🔥\n\nThe bot runs on this my number, but it ignores normal chat. To talk to the bot, you MUST trigger it!\n\nJust reply to me with:\n*Data 500* - To see deals around ₦500\n*Data 1000* - To see deals around ₦1000\n\nThe best part? Every time you buy, you're helping fund NYSC community projects! 🇳🇬 Try it right now!`;
@@ -775,9 +1508,13 @@ export const handleMotherMessage = async (sock, msg) => {
         await saveUser({ ...userData, state: STATES.AWAITING_CONTACT_ACTION, activeContact });
 
         if (hasBroadcasted) {
-          return sock.sendMessage(from, { text: `📱 Contact received: +${activeContact.split('@')[0]}\n\nReply *1* to purchase data for this number.\nReply *CANCEL* to abort.` });
+          return sock.sendMessage(from, {
+            text: `📲 *Contact received: +${activeContact.split('@')[0]}*\n\nWhat would you like to do?\n*1* — Purchase data for this number\n*2* — Buy recharge card / airtime\n\nReply *CANCEL* to abort.`
+          });
         } else {
-          return sock.sendMessage(from, { text: `📱 Contact received: +${activeContact.split('@')[0]}\n\nWhat would you like to do?\n*1* - Send Broadcast message\n*2* - Purchase data for this number\n\nReply *CANCEL* to abort.` });
+          return sock.sendMessage(from, {
+            text: `📲 *Contact received: +${activeContact.split('@')[0]}*\n\nWhat would you like to do?\n*1* — Send Broadcast message\n*2* — Purchase data for this number\n*3* — Buy recharge card / airtime\n\nReply *CANCEL* to abort.`
+          });
         }
       }
       else if (userData.state === STATES.AWAITING_CONTACT_ACTION) {
@@ -822,8 +1559,24 @@ export const handleMotherMessage = async (sock, msg) => {
           await saveUser({ ...userData, state: STATES.AWAITING_DATA_PLAN_SELECT, activeContactNetwork: network });
           return sock.sendMessage(from, { text: menuText });
         }
+        else if (command === '3' || (command === '2' && hasBroadcasted)) {
+          // Recharge / Airtime flow
+          const targetPhone = userData.activeContact.split('@')[0];
+          const network = detectNetwork(targetPhone) || 'mtn';
+          const restoreState = userData.previousPortalState || STATES.COMPLETED;
+          await saveUser({ ...userData, state: restoreState, activeContact: null, previousPortalState: null });
+          return sock.sendMessage(from, {
+            text: `📲 *Clarion Airtime Top-up*\n\n` +
+              `📱 *Recipient:* 0${targetPhone.slice(-10)}\n` +
+              `🌐 *Network:* ${network.toUpperCase()} (auto-detected)\n\n` +
+              `How much airtime would you like to send?\n` +
+              `👉 *Reply CARD [amount]* to confirm\n` +
+              `_(e.g. CARD 500 to top up ₦500)_\n\n` +
+              `Or reply *CARD [amount] [phone]* to send to a different number.`
+          });
+        }
 
-        return sock.sendMessage(from, { text: '❌ Invalid option.' });
+        return sock.sendMessage(from, { text: '❌ Invalid option. Reply *1*, *2*, or *3* — or *CANCEL* to abort.' });
       }
       else if (userData.state === STATES.AWAITING_DATA_PLAN_SELECT) {
         if (command === 'cancel') {
@@ -2042,13 +2795,10 @@ export const handleMotherMessage = async (sock, msg) => {
       }
 
       // ── Existing COMPLETED state commands ──────────────────
-      else if (command.toLowerCase() === 'menu' || command.toLowerCase() === '.data') {
-        const plans = await payflex.getAvailablePlans();
-        let menuText = `🛍️ *Clarion A.I. Digital Storefront*\n\nAvailable Enterprise Plans:\n`;
-        plans.forEach(plan => {
-          menuText += `\n🔹 *${plan.name}* - ₦${plan.sellPrice}\n   Reply *SUB ${plan.serial}* to test your store.`;
-        });
-        await sock.sendMessage(from, { text: menuText });
+      // ── MENU / PORTAL command → Clarion Master Portal (Screen 1) ───
+      else if (command.toLowerCase() === 'menu' || command.toLowerCase() === 'portal' || command.toLowerCase() === '.data') {
+        await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+        return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
       }
       else if (command.toLowerCase().startsWith('sub ')) {
         const serialId = command.split(' ')[1];

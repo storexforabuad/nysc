@@ -16,7 +16,7 @@ export const maskPhoneNumber = (phone) => {
 };
 
 export class ReceiptGenerator {
-    static async generate(orderData, storeName = 'Clarion Digital Store') {
+    static async generate(orderData, storeName = 'Clarion AI Store') {
         try {
             const width = 1080;
             const height = 1440;

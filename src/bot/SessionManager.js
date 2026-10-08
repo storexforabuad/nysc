@@ -194,7 +194,7 @@ class SessionManager {
     });
 
     worker.on('error', (err) => {
-      logger.error(`[WORKER ERROR] ${user.uid}:`, err);
+      logger.error(err, `[WORKER ERROR] ${user.uid}`);
     });
 
     worker.on('exit', (code) => {
@@ -329,7 +329,24 @@ class SessionManager {
       } catch (e) { }
     }
 
-    // 1. Dispatch Clarion Franchise ID Card
+    // 1. Dispatch Clarion Franchise ID Card (if approved by admin)
+    if (!fullUser.terminalApproved) {
+      const pendingNotice = `⏳ *TERMINAL APPLICATION UNDER REVIEW*\n\n` +
+        `🏢 *Franchise Brand:* ${fullUser.brandName || fullUser.franchiseName || 'Clarion AI Store'}\n` +
+        `👤 *Operator:* ${partnerName} (\`${fullUser.stateCode || 'NYSC'}\`)\n` +
+        `🔖 *Terminal Status:* PENDING ADMINISTRATIVE APPROVAL\n\n` +
+        `*What happens next?*\n` +
+        `To ensure telecom reliability and security, our administrative board reviews and approves terminal licenses within 24 hours.\n\n` +
+        `Once approved by admin:\n` +
+        `1. You will receive an official notification right here on WhatsApp.\n` +
+        `2. Your official Clarion Franchise License Card will be dispatched.\n` +
+        `3. Your proxy bot will activate automated vending!\n\n` +
+        `💡 _Note: While awaiting approval, any manual data purchases on MotherBot route through the Clarion Central Hub Account._`;
+
+      await this.motherSock.sendMessage(phoneJid, { text: pendingNotice });
+      return; // Do NOT send post-onboarding storefront operational messages until approved!
+    }
+
     try {
       const cardBuffer = await mediaGen.generateProfileCard(fullUser);
       await this.motherSock.sendMessage(phoneJid, {
@@ -363,26 +380,28 @@ class SessionManager {
       `💡 *Want 24/7 full automation?*\n` +
       `Text *UPGRADE* to see subscription plans (from ₦500/week)!`;
 
+    const storeName = fullUser.brandName || ('Clarion AI - ' + partnerName);
+
     // 3. Safe Launch Copy-Paste Forwarding Kit (Context-Aware)
     const safeLaunchMsg = isSameNumber
       ? `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
         `*Copy and post the text below to your WhatsApp Status:*\n\n` +
-        `────────────────────────\n` +
-        `Big news! 🚀 I now sell MTN, Airtel, Glo & 9mobile data directly!\n\n` +
-        `Get cheap & fast data delivered instantly in under 20 seconds! ⚡\n\n` +
-        `👉 *To order right now, message me right here with your network & budget!*\n\n` +
-        `_Every purchase helps fund NYSC community development projects._ 🇳🇬\n` +
-        `────────────────────────`
+        `───────\n` +
+        `Big news! 🚀 My line is now powered by *${storeName}*!\n\n` +
+        `Get instant, subsidized MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+        `👉 Just reply *DATA* or *DATA 500* to this chat to see the best plans for your budget!\n\n` +
+        `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬\n` +
+        `───────`
       : `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
         `*Copy and forward the text below to your WhatsApp Status & contacts:*\n\n` +
-        `────────────────────────\n` +
-        `Big news! 🚀 I just launched my Clarion Digital Store!\n\n` +
-        `Get MTN, Airtel, Glo & 9mobile data delivered in 20 seconds! ⚡\n\n` +
-        `👉 *Message my store line to order:* \n` +
+        `───────\n` +
+        `Big news! 🚀 I just launched *${storeName}*!\n\n` +
+        `Get instant, subsidized MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+        `👉 *Message my store line to order:*\n` +
         `https://wa.me/234${botDigits.slice(-10)}\n\n` +
         `Or text 0${botDigits.slice(-10)}!\n\n` +
-        `_Every purchase helps fund NYSC community development projects._ 🇳🇬\n` +
-        `────────────────────────`;
+        `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬\n` +
+        `───────`;
 
     // 4. Optional Promo Fuel Invitation
     const promoFuelPitch = `⛽ *OPTIONAL: KICKSTART ENGAGEMENT WITH PROMO FUEL*\n\n` +

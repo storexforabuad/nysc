@@ -63,6 +63,35 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
     }
 
+    // Handle universal CANCEL
+    if (command === 'cancel' || command === 'exit') {
+      if (db.ledger && actionableJid) {
+        try {
+          const pendingOrders = await db.ledger
+            .where('buyerPhone', '==', actionableJid)
+            .where('userId', '==', user.uid)
+            .where('status', '==', 'AWAITING_PAYMENT')
+            .limit(5)
+            .get();
+          const batch = db.ledger.firestore.batch();
+          pendingOrders.forEach(doc => batch.update(doc.ref, { status: 'CANCELLED' }));
+          if (!pendingOrders.empty) await batch.commit();
+        } catch (e) {
+          logger.warn(`Failed to cancel pending orders for ${actionableJid}: ${e.message}`);
+        }
+      }
+
+      return sock.sendMessage(from, {
+        text: '❌ Order cancelled. No charge made.\n\nType *DATA* anytime you need data! 📶'
+      });
+    }
+
+    // Command regexes (used by first-touch gate and command routers)
+    const dataCommandRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
+    const isDataMatch = dataCommandRegex.test(command);
+    const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
+    const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
+
     // -- Capture/Update Customer Profile --
     if (db.users && actionableJid) {
       try {
@@ -74,6 +103,65 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }, { merge: true });
       } catch (e) {
         logger.warn(`Failed to update customer contacts profile for ${actionableJid}`);
+      }
+    }
+
+    // ── First-Touch Introduction (once per contact in Autonomous mode) ──
+    if (!from.endsWith('@g.us') && user.botMode === BOT_MODES.AUTONOMOUS) {
+      let isIntroduced = false;
+      if (db.users && actionableJid) {
+        try {
+          const contactDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
+          isIntroduced = contactDoc.exists && contactDoc.data().introduced === true;
+        } catch (e) {}
+      }
+
+      if (!isIntroduced) {
+        // Mark as introduced (idempotent, runs once per contact)
+        if (db.users && actionableJid) {
+          await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
+            introduced: true,
+            introducedAt: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
+        }
+
+        // Detect their network from their phone number
+        const detectedNet = detectNetwork(actionableJid);
+        const networkLabel = detectedNet
+          ? detectedNet.toUpperCase()  // "MTN", "AIRTEL", "GLO", "9MOBILE"
+          : 'your network';
+
+        const storeName = user.brandName || user.franchiseName
+          || ('Clarion AI - ' + (user.verifiedName || user.name || 'Telecom'));
+
+        // Natural typing delay (1.5–2.5s)
+        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+
+        await sock.sendMessage(from, {
+          text: `👋 Welcome to *${storeName}*!\n` +
+            `Your 24/7 automated high-speed data portal. ⚡\n\n` +
+            `Looking for cheap & instant data? Clarion AI automatically finds the best subsidized ` +
+            `${networkLabel} data plans matching your budget:\n\n` +
+            `👉 Reply *DATA* — View all ${networkLabel} plans and their current prices\n` +
+            `👉 Reply *DATA 500* (or any amount) — Let Clarion AI find the best plan for your ₦500 budget!\n\n` +
+            `💚 *Community Impact:* A percentage of every purchase goes directly towards supporting ` +
+            `NYSC Community Development Service (CDS) projects! 🇳🇬\n` +
+            `👉 Reply *CDS* to learn more about our community mission & how to contribute.\n\n` +
+            `────────────────────────\n` +
+            `_💡 Feel free to ignore this message if you don't need data right now — ` +
+            `Clarion AI only activates when you send a keyword!_`
+        });
+
+        await sock.sendPresenceUpdate('paused', from).catch(() => {});
+
+        // If the original message was not a recognized command, return here so we don't double-reply
+        if (!isDataMatch && !command.startsWith('buy ') && command !== 'menu'
+            && command !== 'start' && command !== 'balance'
+            && !cardCommandRegex.test(command) && !pinCommandRegex.test(command)
+            && command !== 'cds' && command !== 'community' && command !== 'info' && command !== 'donate') {
+          return;
+        }
       }
     }
 
@@ -138,9 +226,54 @@ export const handleProxyMessage = async (sock, msg, user) => {
       return;
     }
 
+    // ── Approval Gate: Unapproved terminals remain silent until administrative activation ──
+    if (user.terminalApproved !== true) {
+      return;
+    }
+
+    // ── CDS / COMMUNITY INFO keyword ──
+    if (command === 'cds' || command === 'community' || command === 'info') {
+      const storeName = user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+
+      return sock.sendMessage(from, {
+        text: `🇳🇬 *Clarion AI Community Development Initiative*\n\n` +
+          `Every time you buy data from *${storeName}*, a percentage of the profit is ` +
+          `automatically allocated to NYSC Community Development Service (CDS) projects.\n\n` +
+          `*What Clarion CDS Funds Support:*\n` +
+          `🏫 School renovation & educational supplies\n` +
+          `🏥 Community health outreach programs\n` +
+          `🌳 Environmental sustainability projects\n` +
+          `💻 Digital literacy & youth empowerment\n` +
+          `🤝 Skills acquisition workshops\n\n` +
+          `*How It Works:*\n` +
+          `20% to 80% of vendor profits flow directly into CDS projects ` +
+          `(depending on your vendor's chosen tier).\n\n` +
+          `────────────────────────\n` +
+          `Want to make an even bigger impact? You can donate directly:\n\n` +
+          `👉 Reply *DONATE* to contribute to the Clarion CDS Fund\n` +
+          `👉 Reply *DATA* to buy subsidized data (automatic CDS contribution included)\n\n` +
+          `_Every naira counts. Thank you for building Nigeria! 🇳🇬_`
+      });
+    }
+
+    // ── DONATE keyword (Clarion CDS Fund Donation) ──
+    if (command === 'donate') {
+      return sock.sendMessage(from, {
+        text: `💚 *Donate to the Clarion CDS Fund*\n\n` +
+          `Thank you for your generosity! 🇳🇬\n\n` +
+          `Transfer any amount to the Clarion Community Fund account below:\n\n` +
+          `🏦 *Bank:* ${CENTRAL_HUB_ACCOUNT.bankName}\n` +
+          `🔢 *Account:* ${CENTRAL_HUB_ACCOUNT.accountNumber}\n` +
+          `👤 *Name:* ${CENTRAL_HUB_ACCOUNT.accountName}\n\n` +
+          `Once your transfer is detected, we'll send you a personalised *Clarion Community Champion* ` +
+          `receipt you can proudly share on social media! 🎨\n\n` +
+          `👉 Reply *DATA* to buy data instead\n` +
+          `👉 Reply *CANCEL* to go back\n\n` +
+          `_Every contribution, no matter how small, helps fund real NYSC CDS projects across Nigeria._`
+      });
+    }
+
     // Handle Data/Menu request
-    const dataCommandRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
-    const isDataMatch = dataCommandRegex.test(command);
 
     if (command === 'balance') {
       let balance = 0;
@@ -156,7 +289,6 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     // ── Handle Airtime (CARD) request ──
-    const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     if (cardCommandRegex.test(command)) {
       const match = command.match(cardCommandRegex);
       const amount = match && match[1] ? parseInt(match[1]) : null;
@@ -252,6 +384,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
+      const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
       return sock.sendMessage(from, {
         text: `💳 *Airtime Order: ₦${amount.toLocaleString()}*\n\n` +
           `📱 *Recipient:* ${targetPhone} (${network.toUpperCase()})\n` +
@@ -259,13 +392,12 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `To complete your purchase, please transfer *₦${amount.toLocaleString()}* to:\n\n` +
           `🏦 *Bank:* ${bankInfo.bankName}\n` +
           `🔢 *Account:* ${bankInfo.accountNumber}\n` +
-          `👤 *Name:* ${bankInfo.accountName || ('Clarion - ' + (user.name || 'Store'))}\n\n` +
-          `✅ Your airtime will be dispensed automatically upon payment detection.`
+          `👤 *Name:* ${accountName}\n\n` +
+          `✅ Your airtime will be dispensed automatically upon payment detection.\n\nReply *CANCEL* to abort this order.`
       });
     }
 
     // ── Handle Exam PINs (PIN) request ──
-    const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
     if (pinCommandRegex.test(command)) {
       const match = command.match(pinCommandRegex);
       const exam = match && match[1] ? match[1].toUpperCase() : null;
@@ -345,14 +477,15 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
+      const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
       return sock.sendMessage(from, {
         text: `🎓 *Order Confirmation: ${product.name}*\n\n` +
           `💰 *Price:* ₦${product.sellPrice.toLocaleString()}\n\n` +
           `To complete your purchase, please transfer *₦${product.sellPrice.toLocaleString()}* to:\n\n` +
           `🏦 *Bank:* ${bankInfo.bankName}\n` +
           `🔢 *Account:* ${bankInfo.accountNumber}\n` +
-          `👤 *Name:* ${bankInfo.accountName || ('Clarion - ' + (user.name || 'Store'))}\n\n` +
-          `✅ Your PIN and Serial Number will be sent automatically upon payment detection.`
+          `👤 *Name:* ${accountName}\n\n` +
+          `✅ Your PIN and Serial Number will be sent automatically upon payment detection.\n\nReply *CANCEL* to abort this order.`
       });
     }
 
@@ -378,19 +511,20 @@ export const handleProxyMessage = async (sock, msg, user) => {
         filteredPlans.sort((a, b) => a.sellPrice - b.sellPrice);
       }
 
-      let menuText = `👋 Welcome to *${user.name || 'our'}* Digital Hub!\nPowered by *Clarion A.I.*\n\n`;
+      const storeName = user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Telecom'));
+      let menuText = `👋 Welcome to *${storeName}*!\n\n`;
 
-      let networkStr = detectedNet ? detectedNet.toUpperCase() : 'Digital';
+      let networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
       if (detectedNet && targetPhone) {
-        menuText += `🔎 Network Detected: *${networkStr}* for ${targetPhone}\n\n`;
+        menuText += `📶 *${networkStr}* network detected for ${targetPhone}\n\n`;
       } else if (detectedNet) {
-        menuText += `🔎 Network Detected: *${networkStr}*\n\n`;
+        menuText += `📶 *${networkStr}* network detected\n\n`;
       }
 
       if (targetPrice) {
-        menuText += `*Clarion Instant, Affordable & Reliable ${networkStr} data list (Around ₦${targetPrice}):*\n`;
+        menuText += `*Best subsidized ${networkStr} data plans for your ₦${targetPrice} budget:*\n`;
       } else {
-        menuText += `*Clarion Instant, Affordable & Reliable ${networkStr} data list:*\n`;
+        menuText += `*All ${networkStr} data plans and current prices:*\n`;
       }
 
       if (filteredPlans.length === 0) {
@@ -415,7 +549,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
       }
 
-      menuText += '\n\n_Transfer exact amount and data will be vended instantly._';
+      menuText += '\n\n_Transfer exact amount and data will be vended instantly._\n_Reply *CANCEL* to exit anytime._';
       return sock.sendMessage(from, { text: menuText });
     }
 
@@ -530,7 +664,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }).catch(e => logger.warn('Ledger write failed, order processed in memory.'));
       }
 
-      const paymentInstruction = `💳 *Order Confirmation: ${plan.name}*\n\nTo complete your purchase, please transfer *₦${plan.sellPrice}* to the secure Clarion collection account below:\n\nBank: ${user.virtualAccount.bankName}\nAccount: ${user.virtualAccount.accountNumber}\nName: Clarion - ${user.name}\n\n✅ Your data will be dispensed automatically upon payment detection.`;
+      const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
+      const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+      const paymentInstruction = `💳 *Order Confirmation: ${plan.name}*\n\nTo complete your purchase, please transfer *₦${plan.sellPrice}* to the secure Clarion collection account below:\n\nBank: ${bankInfo.bankName}\nAccount: ${bankInfo.accountNumber}\nName: ${accountName}\n\n✅ Your data will be dispensed automatically upon payment detection.\n\nReply *CANCEL* to abort this order.`;
       return sock.sendMessage(from, { text: paymentInstruction });
     }
 

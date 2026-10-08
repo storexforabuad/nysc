@@ -3,9 +3,12 @@ import { db } from './firebase.js';
 import { logger } from '../config/env.js';
 import wallet from './WalletService.js';
 import sessionManager from '../bot/SessionManager.js';
+import mediaGen from './mediaGen.js';
 
-// In-memory store fallback for proposals if Firestore is offline
+// In-memory store fallback for proposals, pitches, designs if Firestore is offline
 export const mockCdsProposals = new Map();
+export const mockPitches = new Map();
+export const mockDesigns = new Map();
 
 class AdminService {
     /**
@@ -284,7 +287,10 @@ class AdminService {
                 const balance = await wallet.getBalance(doc.id);
                 partners.push({
                     id: doc.id,
-                    name: data.name || 'Unknown Partner',
+                    name: data.verifiedName || data.name || 'Unknown Partner',
+                    stateCode: data.stateCode || '',
+                    franchiseName: data.brandName || data.franchiseName || '',
+                    terminalApproved: data.terminalApproved === true,
                     virtualAccount: data.virtualAccount || null,
                     balance
                 });
@@ -367,6 +373,96 @@ class AdminService {
             logger.error('Error fetching broadcast history:', error.message);
             return [];
         }
+    }
+
+    /**
+     * Lists vendors awaiting terminal approval
+     */
+    async listPendingVendors() {
+        if (!db.users) return [];
+        try {
+            const snap = await db.users.get();
+            const pending = [];
+            for (const doc of snap.docs) {
+                const data = doc.data();
+                if (data.virtualAccount && data.terminalApproved !== true) {
+                    pending.push({
+                        id: doc.id,
+                        userId: doc.id,
+                        name: data.verifiedName || data.name || 'Partner',
+                        stateCode: data.stateCode,
+                        franchiseName: data.brandName || data.franchiseName,
+                        bankDetails: data.bankDetails,
+                        createdAt: data.createdAt || data.updatedAt
+                    });
+                }
+            }
+            return pending;
+        } catch (error) {
+            logger.error('Error listing pending vendors:', error.message);
+            return [];
+        }
+    }
+
+    /**
+     * Approves a vendor's terminal license, dispatches their Franchise Card, and activates autonomous bot
+     */
+    async approveVendor(userId) {
+        if (!db.users) return { success: false, message: 'Database offline' };
+        try {
+            const userRef = db.users.doc(userId);
+            const userDoc = await userRef.get();
+            if (!userDoc.exists) return { success: false, message: 'Vendor not found' };
+
+            const userData = userDoc.data();
+            await userRef.set({
+                terminalApproved: true,
+                approvalStatus: 'APPROVED',
+                approvedAt: new Date().toISOString()
+            }, { merge: true });
+
+            userData.terminalApproved = true;
+
+            // Trigger official Franchise License Card and post-onboarding activation kit
+            try {
+                if (sessionManager._sendActivationSuccessMessages) {
+                    await sessionManager._sendActivationSuccessMessages(userId, userData);
+                }
+            } catch (cardErr) {
+                logger.error('Failed to dispatch approved card:', cardErr.message);
+            }
+
+            return { success: true, message: `Vendor ${userId} approved successfully` };
+        } catch (error) {
+            logger.error('Error approving vendor:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Lists submitted startup & venture pitches
+     */
+    async listPitches() {
+        if (db.pitches) {
+            try {
+                const snap = await db.pitches.get();
+                return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (e) {}
+        }
+        return Array.from(mockPitches.values());
+    }
+
+    /**
+     * Lists submitted S1 Merch collaboration designs
+     */
+    async listMerchDesigns() {
+        if (db.merchDesigns) {
+            try {
+                const snap = await db.merchDesigns.get();
+                return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (e) {}
+        }
+        return Array.from(mockDesigns.values());
     }
 }
 

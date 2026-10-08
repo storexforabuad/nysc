@@ -29,7 +29,7 @@ export const PARTNERSHIP_TIERS = {
         cdsRate: 0.16,
         platformRate: 0.20,
         badge: 'LORD',
-        displayDonate: '16%'
+        displayDonate: '20%'
     },
     MEMBER: {
         name: 'Clarion Member',
@@ -37,7 +37,7 @@ export const PARTNERSHIP_TIERS = {
         cdsRate: 0.16,
         platformRate: 0.20,
         badge: 'MEMBER',
-        displayDonate: '16%'
+        displayDonate: '20%'
     },
     MASTER: {
         name: 'Clarion Master',
@@ -45,7 +45,7 @@ export const PARTNERSHIP_TIERS = {
         cdsRate: 0.40,
         platformRate: 0.20,
         badge: 'MASTER',
-        displayDonate: '40%'
+        displayDonate: '50%'
     },
     LORD: {
         name: 'Clarion Lord',
@@ -53,7 +53,7 @@ export const PARTNERSHIP_TIERS = {
         cdsRate: 0.64,
         platformRate: 0.20,
         badge: 'LORD',
-        displayDonate: '64%'
+        displayDonate: '80%'
     },
     HUB: {
         name: 'ClarionHub Central',

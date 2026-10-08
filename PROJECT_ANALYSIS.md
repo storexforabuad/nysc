@@ -389,3 +389,47 @@ Beyond individual income generation, Clarion A.I. is built to give back. A custo
  * Welfare: Providing supplementary kits and gear (jackets, bags, notebooks) during and after orientation camp.
  * Development: Funding Local Government Secretariat CDS projects and offering direct micro-grants for personal CDS initiatives.
 This is more than a tech platform; it is a blueprint for sustainable youth growth and community upliftment.
+two entities. one vision. ⌛
+
+🧭 Compass™ (Est. 2025) — an e-commerce
+engine built for african businesses.
+social-first (WhatsApp, Instagram, TikTok, 
+Facebook — wherever your customers are).
+wholesale B2B. fashion. beauty. food. automobiles. and we're still building product categories. 🏗️
+
+📡 Clarion A.I. (Est. 2026) — an autonomous
+community-driven development services (CDDS) platform for NYSC corps members to learn, earn, build and give back. 🇳🇬
+
+right now they're separate. and honestly? this was never the plan.
+
+the original vision for Compass™ was simple — build a robust, African-focused 
+e-commerce engine. open source it. offer simplified access for the less technical for a small fee. done.
+
+then Clarion A.I happened.
+
+and it turns out Clarion A.I will be the very first user of the Compass™ engine.
+
+because Compass™ is exactly what
+Clarion’s marketplace needs — powerful under the hood. dead simple on the surface.
+
+so corps members will have real storefronts
+connected to their A.I. proxybots. order comes in from the site. bot handles the rest. automatically. 🤖
+
+and when that integration ships?
+
+we open source the entire Compass™ 
+e-commerce engine. free. for everyone. no strings.
+
+clone it. fork it. improve it. sell with it. build your empire with it.
+
+we will still offer a simplified access though.
+
+no shade but Africa doesn't need to keep waiting for the west to build tools for us.
+
+we're building them ourselves.
+by accident. on purpose. 🌍🔨
+
+MGL
+Lead Architect, Founder
+Clarion A.I x Compass™
+JG/26A/2535

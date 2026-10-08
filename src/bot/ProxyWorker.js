@@ -174,7 +174,15 @@ async function startWorker(isInitialBoot = true) {
     });
 }
 
+process.on('uncaughtException', (err) => {
+    logger.error(err, '[WORKER UNCAUGHT EXCEPTION]');
+});
+
+process.on('unhandledRejection', (reason) => {
+    logger.error(reason, '[WORKER UNHANDLED REJECTION]');
+});
+
 startWorker().catch(e => {
-    logger.error('[WORKER] Failed to start:', e.message);
+    logger.error(e, '[WORKER] Failed to start');
     process.exit(1);
 });

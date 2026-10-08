@@ -122,6 +122,25 @@ export default function ManagementViews() {
         }
     };
 
+    const [approvingVendorId, setApprovingVendorId] = useState<string | null>(null);
+
+    const handleApproveVendor = async (id: string) => {
+        setApprovingVendorId(id);
+        const token = localStorage.getItem('clarion_admin_token');
+        try {
+            const res = await fetch(`/api/admin/vendors/${encodeURIComponent(id)}/approve`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error('Failed to approve vendor');
+            fetchData();
+        } catch (e: any) {
+            alert(e.message || "Failed to approve partner terminal");
+        } finally {
+            setApprovingVendorId(null);
+        }
+    };
+
     return (
         <div className="w-full space-y-12">
 
@@ -143,14 +162,40 @@ export default function ManagementViews() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {partners.map(p => (
-                        <div key={p.id} className="bg-zinc-900 border border-zinc-800 p-4 flex flex-col justify-between">
+                        <div key={p.id} className="bg-zinc-900 border border-zinc-800 p-4 flex flex-col justify-between rounded-lg">
                             <div>
-                                <p className="font-mono text-xs uppercase font-bold text-zinc-300 truncate">{p.name}</p>
-                                <p className="text-[10px] font-mono text-zinc-600 truncate">{p.id}</p>
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                    <div>
+                                        <p className="font-mono text-xs uppercase font-bold text-zinc-300 truncate">{p.name}</p>
+                                        <p className="text-[10px] font-mono text-zinc-500 truncate">{p.id.split('@')[0]} {p.stateCode ? `• ${p.stateCode}` : ''}</p>
+                                    </div>
+                                    {p.terminalApproved ? (
+                                        <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">ACTIVE</span>
+                                    ) : (
+                                        <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">PENDING APPROVAL</span>
+                                    )}
+                                </div>
+                                {p.franchiseName && (
+                                    <p className="text-[11px] font-mono text-zinc-400 italic mb-2">🏢 {p.franchiseName}</p>
+                                )}
                             </div>
-                            <div className="pt-4 mt-4 border-t border-zinc-800 flex justify-between items-end">
-                                <span className="text-[10px] font-mono text-zinc-500 uppercase">Wallet</span>
-                                <span className="text-accent font-display font-bold text-lg">₦{p.balance.toLocaleString()}</span>
+
+                            <div>
+                                <div className="pt-3 mt-3 border-t border-zinc-800 flex justify-between items-end">
+                                    <span className="text-[10px] font-mono text-zinc-500 uppercase">Wallet</span>
+                                    <span className="text-accent font-display font-bold text-lg">₦{(p.balance || 0).toLocaleString()}</span>
+                                </div>
+
+                                {!p.terminalApproved && (
+                                    <button
+                                        onClick={() => handleApproveVendor(p.id)}
+                                        disabled={approvingVendorId === p.id}
+                                        className="w-full mt-3 py-2 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-black font-mono font-bold text-xs rounded transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50"
+                                    >
+                                        <CheckCircle2 size={13} />
+                                        {approvingVendorId === p.id ? 'ACTIVATING BOT...' : 'APPROVE & ACTIVATE BOT'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     ))}

@@ -264,18 +264,23 @@ class MediaGenerator {
       ctx.fillStyle = '#7A7A7A';
       ctx.font = 'bold 18px Arial';
       ctx.textAlign = 'left';
-      ctx.fillText('VERIFIED FRANCHISE OPERATOR', 110, 305);
+      ctx.fillText('FRANCHISE BRAND', 110, 305);
 
       ctx.fillStyle = '#1E5622';
-      ctx.font = 'bold 42px Arial';
-      ctx.fillText(name.length > 25 ? name.substring(0, 25) + '...' : name, 110, 360);
+      ctx.font = 'bold 38px Arial';
+      const displayBrand = (userData.brandName || userData.franchiseName || name).substring(0, 28);
+      ctx.fillText(displayBrand, 110, 350);
+
+      ctx.fillStyle = '#666666';
+      ctx.font = 'bold 18px Arial';
+      ctx.fillText(`Operator: ${name.length > 28 ? name.substring(0, 28) + '...' : name}`, 110, 385);
 
       ctx.fillStyle = '#555555';
       ctx.font = 'bold 20px Arial';
-      ctx.fillText('STATE CODE:', 110, 420);
+      ctx.fillText('STATE CODE:', 110, 430);
       ctx.fillStyle = '#1E5622';
       ctx.font = 'bold 30px Arial';
-      ctx.fillText(stateCode, 260, 422);
+      ctx.fillText(stateCode, 260, 432);
 
       ctx.fillStyle = '#555555';
       ctx.font = 'bold 20px Arial';
@@ -383,7 +388,7 @@ class MediaGenerator {
 
       ctx.fillStyle = '#777777';
       ctx.font = 'italic 16px Arial';
-      const donateRate = tier === 'LORD' ? '64%' : tier === 'MASTER' ? '40%' : '16%';
+      const donateRate = tier === 'LORD' ? '80%' : tier === 'MASTER' ? '50%' : '20%';
       ctx.fillText(`• ${donateRate} of your vendor profits automatically pool into the NYSC community development project.`, 110, 1085);
 
       // Security Footer Banner

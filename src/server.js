@@ -240,6 +240,44 @@ async function startServer() {
     }
   });
 
+  // --- VENDOR TERMINAL & CREATOR ADMIN ROUTES ---
+  app.get('/api/admin/vendors/pending', verifyAdminToken, async (req, res) => {
+    try {
+      const pending = await adminService.listPendingVendors();
+      res.json({ success: true, vendors: pending });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/vendors/:id/approve', verifyAdminToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await adminService.approveVendor(id);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/pitches', verifyAdminToken, async (req, res) => {
+    try {
+      const pitches = await adminService.listPitches();
+      res.json({ success: true, pitches });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/merch-designs', verifyAdminToken, async (req, res) => {
+    try {
+      const designs = await adminService.listMerchDesigns();
+      res.json({ success: true, designs });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // --- BROADCAST ADMIN ROUTES ---
   app.get('/api/admin/broadcasts/partners', verifyAdminToken, async (req, res) => {
     try {
@@ -651,7 +689,8 @@ async function startServer() {
 
             // Attempt to generate and send a receipt image to the buyer
             try {
-              const receiptPath = await ReceiptGenerator.generate(order);
+              const storeName = userData?.brandName || (userData?.verifiedName ? `Clarion AI - ${userData.verifiedName}` : undefined);
+              const receiptPath = await ReceiptGenerator.generate(order, storeName);
               if (receiptPath && sessionManager.motherSock) {
                 await sessionManager.motherSock.sendMessage(destinationJid, {
                   image: fs.readFileSync(receiptPath),

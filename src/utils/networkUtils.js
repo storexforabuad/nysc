@@ -23,3 +23,18 @@ export const detectNetwork = (from) => {
     }
     return null;
 };
+
+export const parseNyscBatch = (stateCode) => {
+    if (!stateCode) return { valid: false };
+    const clean = stateCode.trim().toUpperCase();
+    const match = clean.match(/^[A-Z]{2}\/(\d{2})[A-C]\/\d{4}$/);
+    if (!match) return { valid: false };
+
+    const year = parseInt(match[1], 10);
+    return {
+        valid: true,
+        stateCode: clean,
+        year,
+        isActiveCohort: year >= 26 // 2026+ is active serving corps members
+    };
+};
