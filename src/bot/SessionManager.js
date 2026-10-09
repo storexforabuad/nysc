@@ -315,11 +315,23 @@ class SessionManager {
       } catch (e) { }
     }
 
-    const botNumber = (fullUser.phoneNumber || phoneJid.split('@')[0]);
+    let rawPhone = fullUser.phoneNumber || fullUser.phone || user?.phoneNumber || user?.phone || '';
+    if (!rawPhone || rawPhone.includes('lid')) {
+      if (user?.uid && !user.uid.includes('lid')) rawPhone = user.uid.split('@')[0];
+      else if (phoneJid && !phoneJid.includes('lid')) rawPhone = phoneJid.split('@')[0];
+    }
+    let cleanPhoneDigits = String(rawPhone).replace(/[^0-9]/g, '');
+    if (cleanPhoneDigits.startsWith('234') && cleanPhoneDigits.length === 13) {
+      cleanPhoneDigits = '0' + cleanPhoneDigits.slice(3);
+    } else if (cleanPhoneDigits.length === 10) {
+      cleanPhoneDigits = '0' + cleanPhoneDigits;
+    }
+    const formattedStoreNumber = cleanPhoneDigits ? (cleanPhoneDigits.startsWith('0') ? cleanPhoneDigits : `+${cleanPhoneDigits}`) : (fullUser.stateCode || 'Your Store Line');
+    const botTenDigits = cleanPhoneDigits.length >= 10 ? cleanPhoneDigits.slice(-10) : '';
+
     const partnerName = fullUser.verifiedName || fullUser.name || 'Partner';
-    const botDigits = String(fullUser.phoneNumber || '').replace(/[^0-9]/g, '');
     const partnerDigits = String(phoneJid).replace(/[^0-9]/g, '');
-    const isSameNumber = botDigits.length >= 10 && partnerDigits.length >= 10 && botDigits.slice(-10) === partnerDigits.slice(-10);
+    const isSameNumber = botTenDigits.length >= 10 && partnerDigits.length >= 10 && botTenDigits === partnerDigits.slice(-10);
     const virtualAcct = fullUser.virtualAccount || CENTRAL_HUB_ACCOUNT;
 
     // Ensure botMode is set to manual on activation
@@ -359,7 +371,7 @@ class SessionManager {
 
     // 2. Operational Control Deck (Manual Storefront Quick Start)
     const controlDeckMsg = `🎉 *STOREFRONT FULLY OPERATIONAL!*\n\n` +
-      `Your Clarion Digital Store is live on *+${botNumber}* (Manual Mode).\n\n` +
+      `Your Clarion Digital Store is live on *${formattedStoreNumber}* (Manual Mode).\n\n` +
       `📋 *Quick Start — How to Process Your First Sale:*\n\n` +
       `1️⃣ Customer asks for data? Text me:\n` +
       `   👉 *CHECK 0801 1GB*\n` +
@@ -382,26 +394,22 @@ class SessionManager {
 
     const storeName = fullUser.brandName || ('Clarion AI - ' + partnerName);
 
-    // 3. Safe Launch Copy-Paste Forwarding Kit (Context-Aware)
-    const safeLaunchMsg = isSameNumber
-      ? `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
-        `*Copy and post the text below to your WhatsApp Status:*\n\n` +
-        `───────\n` +
-        `Big news! 🚀 My line is now powered by *${storeName}*!\n\n` +
-        `Get instant, subsidized MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+    // 3A. Status Kit Instruction Header
+    const statusKitHeader = `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
+      `Tap & hold the *next message* below to copy and post it directly to your WhatsApp Status without any editing! 👇`;
+
+    // 3B. Clean Standalone Copy-Paste Status Text
+    const statusKitCopy = isSameNumber
+      ? `Big news! 🚀 My line is now powered by *${storeName}*!\n\n` +
+        `Get instant, subsidised MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
         `👉 Just reply *DATA* or *DATA 500* to this chat to see the best plans for your budget!\n\n` +
-        `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬\n` +
-        `───────`
-      : `🚀 *SAFE LAUNCH STATUS KIT*\n\n` +
-        `*Copy and forward the text below to your WhatsApp Status & contacts:*\n\n` +
-        `───────\n` +
-        `Big news! 🚀 I just launched *${storeName}*!\n\n` +
-        `Get instant, subsidized MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
-        `👉 *Message my store line to order:*\n` +
-        `https://wa.me/234${botDigits.slice(-10)}\n\n` +
-        `Or text 0${botDigits.slice(-10)}!\n\n` +
-        `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬\n` +
-        `───────`;
+        `💚 A percentage of every purchase supports NYSC Community Development projects. 🇳🇬`
+      : `Big news! 🚀 I just launched *${storeName}*!\n\n` +
+        `Get instant, subsidised MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+        `👉 Message my store line to order:\n` +
+        `https://wa.me/234${botTenDigits}\n\n` +
+        `Or text ${formattedStoreNumber}!\n\n` +
+        `💚 A percentage of every purchase supports NYSC Community Development projects. 🇳🇬`;
 
     // 4. Optional Promo Fuel Invitation
     const promoFuelPitch = `⛽ *OPTIONAL: KICKSTART ENGAGEMENT WITH PROMO FUEL*\n\n` +
@@ -416,7 +424,9 @@ class SessionManager {
       await new Promise(r => setTimeout(r, 1200));
       await this.motherSock.sendMessage(phoneJid, { text: controlDeckMsg });
       await new Promise(r => setTimeout(r, 1500));
-      await this.motherSock.sendMessage(phoneJid, { text: safeLaunchMsg });
+      await this.motherSock.sendMessage(phoneJid, { text: statusKitHeader });
+      await new Promise(r => setTimeout(r, 1000));
+      await this.motherSock.sendMessage(phoneJid, { text: statusKitCopy });
       await new Promise(r => setTimeout(r, 1500));
       await this.motherSock.sendMessage(phoneJid, { text: promoFuelPitch });
     } catch (err) { }
