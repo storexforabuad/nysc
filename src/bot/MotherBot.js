@@ -2,7 +2,7 @@ import { config, logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
 import squad from '../services/SquadService.js';
 import payflex from '../services/payflex.js';
-import sessionManager from './SessionManager.js';
+import sessionManager, { handleOnboardingWizardInput } from './SessionManager.js';
 import wallet, { WITHDRAWAL_FEES, PARTNERSHIP_TIERS, BOT_MODES, SUBSCRIPTION_PLANS } from '../services/WalletService.js';
 import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
@@ -83,17 +83,23 @@ function truncateForNIBSS(fullName) {
 }
 
 export function getPortalMenuText(stateCode) {
-  return `📡 *CLARION A.I | NYSC HUB* 🇳🇬\n` +
-    `*Dashboard:* \`${stateCode || 'Active'}\` _(Verified)_\n` +
+  return `📡 *CLARION A.I* · NYSC Hub 🇳🇬\n` +
+    `\`${stateCode || 'Active'}\` · _Verified Operator_\n` +
     `──────────────\n\n` +
-    `Select a department to explore:\n\n` +
-    `1️⃣ 🧠 *LEARN* — Camp Survival, PPA Guides & High-Income Skills\n` +
-    `2️⃣ 💼 *EARN* — 24/7 Telecom Franchise, Storefronts & Jobs\n` +
-    `3️⃣ 🏗️ *BUILD* — Startup Accelerator, Production & Distribution Foundry\n` +
-    `4️⃣ 🛍️ *MERCH* — Clarion Supply Co. (Corps Member Co-Designed Apparel & Kits)\n` +
-    `5️⃣ 🎪 *EVENTS* — Online Drops, Camp Pop-Ups, Raffles & Sponsored Meetups\n` +
-    `6️⃣ 💚 *IMPACT* — Live Community Fund, Projects & Corporate Partners\n\n` +
-    `👉 *Reply 1, 2, 3, 4, 5, or 6 to continue:*`;
+    `1 · 🧠 *LEARN*\n` +
+    `Camp survival, PPA guides & high-income skills\n\n` +
+    `2 · 💼 *EARN*\n` +
+    `24/7 digital telecom franchise & automated retail\n\n` +
+    `3 · 🏗️ *BUILD*\n` +
+    `Venture foundry, production & startup grants\n\n` +
+    `4 · 🛍️ *MERCH*\n` +
+    `Clarion Supply Co. · Corps member apparel & kits\n\n` +
+    `5 · 🎪 *EVENTS*\n` +
+    `Camp pop-ups, exclusive drops & community meetups\n\n` +
+    `6 · 💚 *IMPACT*\n` +
+    `Community development fund & corporate partners\n\n` +
+    `──────────────\n` +
+    `_Reply 1–6 to enter any department._`;
 }
 
 export function getLearnMenuText() {
@@ -385,13 +391,15 @@ export const handleMotherMessage = async (sock, msg) => {
         userData.state = STATES.AWAITING_PORTAL_STATE_CODE;
         await saveUser(userData);
         return sock.sendMessage(from, {
-          text: `📡 *CLARION A.I. | NYSC ENTERPRISE* 🇳🇬\n` +
-            `_Official Youth Operating System | SAED x CDDS_\n` +
+          text: `📡 *CLARION A.I* · NYSC Enterprise 🇳🇬\n` +
+            `_Official Operating System · SAED × CDS_\n` +
             `──────────────\n\n` +
-            `Welcome, Patriot! 🫡\n\n` +
-            `Clarion A.I. is an autonomous ecosystem engineered to help you maximize your service year and build wealth, skills, and community impact during and after service.\n\n` +
-            `To personalize your dashboard and unlock your portal access, please reply with your *NYSC State Code*:\n\n` +
-            `_(Example: KD/26A/1234 or LA/25B/5678)_`
+            `Welcome, Patriot. 🫡\n\n` +
+            `Clarion is engineered to turn your service year into wealth, high-income skills, and community impact.\n\n` +
+            `To activate your private portal, reply with your *NYSC State Code*:\n\n` +
+            `_(e.g. \`KD/26A/1234\` or \`LA/25B/5678\`)_\n\n` +
+            `──────────────\n` +
+            `💬 _Need support? Reply *ADMIN* to speak with a human._`
         });
       }
     }
@@ -541,15 +549,15 @@ export const handleMotherMessage = async (sock, msg) => {
         return;
       }
 
-      const screen0Text = `📡 *CLARION A.I. | NYSC ENTERPRISE* 🇳🇬\n` +
-        `_Official Youth Operating System | SAED x CDDS_\n` +
+      const screen0Text = `📡 *CLARION A.I* · NYSC Enterprise 🇳🇬\n` +
+        `_Official Operating System · SAED × CDS_\n` +
         `──────────────\n\n` +
-        `Welcome, Patriot! 🫡\n\n` +
-        `Clarion A.I. is an autonomous ecosystem engineered to help you maximize your service year and build wealth, skills, and community impact during and after service.\n\n` +
-        `To personalize your dashboard and unlock your portal access, reply with your *NYSC State Code*:\n\n` +
-        `_(Example: KD/26A/1234 or LA/25B/5678)_\n\n` +
+        `Welcome, Patriot. 🫡\n\n` +
+        `Clarion is engineered to turn your service year into wealth, high-income skills, and community impact.\n\n` +
+        `To activate your private portal, reply with your *NYSC State Code*:\n\n` +
+        `_(e.g. \`KD/26A/1234\` or \`LA/25B/5678\`)_\n\n` +
         `──────────────\n` +
-        `💬 *Need to speak to a human?* Reply *ADMIN*`;
+        `💬 _Need support? Reply *ADMIN* to speak with a human._`;
 
       await saveUser({ ...userData, state: STATES.AWAITING_PORTAL_STATE_CODE });
       return sock.sendMessage(from, { text: screen0Text });
@@ -707,16 +715,18 @@ export const handleMotherMessage = async (sock, msg) => {
       });
 
       return sock.sendMessage(from, {
-        text: `🔍 *STATE CODE VERIFICATION*\n` +
+        text: `🔒 *IDENTITY VERIFICATION*\n` +
           `──────────────\n\n` +
-          `Please confirm your service identity:\n\n` +
-          `👤 *State Code:* *${cleanCode}*\n` +
-          `🎖️ *Service Status:* Verified Patriot\n\n` +
-          `⚠️ *IMPORTANT NOTICE:*\n` +
-          `Do NOT use another corps member's State Code. Your State Code permanently binds to your payout bank and national identity. Using another person's code is a punishable violation and will lead to an immediate ban.\n\n` +
-          `Is this your correct State Code?\n` +
-          `• Reply *YES* to enter your portal\n` +
-          `• Reply *RETRY* to re-enter`
+          `Please confirm your service details:\n\n` +
+          `👤 *State Code:* \`${cleanCode}\`\n` +
+          `🎖️ *Status:* Active Corps Member\n\n` +
+          `──────────────\n` +
+          `🛡️ *Security Notice:*\n` +
+          `Your State Code binds permanently to your verified BVN, payout bank, and franchise license. Using another corps member's code results in immediate permanent revocation.\n\n` +
+          `──────────────\n` +
+          `Is this your correct State Code?\n\n` +
+          `👉 Reply *YES* to activate your portal\n` +
+          `👉 Reply *RETRY* to change code`
       });
     }
     else if (userData.state === STATES.AWAITING_PORTAL_STATE_CODE_CONFIRM) {
@@ -1419,6 +1429,12 @@ export const handleMotherMessage = async (sock, msg) => {
 
     if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 
+      // ── Onboarding Wizard Interceptor (if partner is completing setup) ──
+      if (userData.onboardingStep !== null && userData.onboardingStep !== undefined) {
+        const handled = await handleOnboardingWizardInput(sock, from, userData, command);
+        if (handled) return;
+      }
+
       if (userData.state === STATES.AWAITING_BROADCAST_CONTACTS) {
         const template = `Big news! 🚀 I just launched my automated 24/7 Data Bot powered by Clarion A.I (NYSC SAED Project). Get your MTN, Airtel, and Glo data instantly, at either official rates or cheaper! 🔥\n\nThe bot runs on this my number, but it ignores normal chat. To talk to the bot, you MUST trigger it!\n\nJust reply to me with:\n*Data 500* - To see deals around ₦500\n*Data 1000* - To see deals around ₦1000\n\nThe best part? Every time you buy, you're helping fund NYSC community projects! 🇳🇬 Try it right now!`;
 
@@ -1974,18 +1990,19 @@ export const handleMotherMessage = async (sock, msg) => {
         });
       }
 
-      // ── UPGRADE Command (Freemium: Upgrade to Autonomous Mode) ──
-      else if (userData.state === STATES.COMPLETED && /^upgrade(?:\s+(weekly|monthly))?$/i.test(command)) {
-        const upMatch = command.match(/^upgrade(?:\s+(weekly|monthly))?$/i);
-        const tierChoice = upMatch[1] ? upMatch[1].toUpperCase() : null;
+      // ── UPGRADE Command (Upgrade to Autonomous Mode) ──
+      else if (userData.state === STATES.COMPLETED && /^upgrade(?:\s+(confirm|monthly))?$/i.test(command)) {
+        const upMatch = command.match(/^upgrade(?:\s+(confirm|monthly))?$/i);
+        const isConfirming = Boolean(upMatch[1]);
         const balance = await wallet.getBalance(from);
 
         const currentMode = userData.botMode || BOT_MODES.MANUAL;
         const now = new Date();
         const activeSub = userData.subscription;
         const isCurrentlyAutonomous = currentMode === BOT_MODES.AUTONOMOUS && activeSub?.expiresAt && new Date(activeSub.expiresAt) > now;
+        const planConfig = SUBSCRIPTION_PLANS.MONTHLY;
 
-        if (!tierChoice) {
+        if (!isConfirming) {
           let msg = `🚀 *Upgrade to Clarion Autonomous Mode*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
             `Turn your WhatsApp into a 24/7 automated digital store! While you're in CDS, at PPA, or sleeping:\n\n` +
             `⚡ Bot answers customer messages instantly\n` +
@@ -1993,19 +2010,18 @@ export const handleMotherMessage = async (sock, msg) => {
             `💳 Collects payment via dedicated account\n` +
             `📦 Dispenses data automatically in 20 seconds\n` +
             `💰 Automatically credits your profit wallet\n\n` +
-            `*Available Subscription Plans:*\n` +
-            `1️⃣ *Weekly Plan* — ₦${SUBSCRIPTION_PLANS.WEEKLY.price}/week\n` +
-            `   👉 Reply *UPGRADE WEEKLY*\n\n` +
-            `2️⃣ *Monthly Plan* — ₦${SUBSCRIPTION_PLANS.MONTHLY.price}/month (Best Value!)\n` +
-            `   👉 Reply *UPGRADE MONTHLY*\n\n` +
+            `*Subscription Plan:*\n` +
+            `⭐ *Monthly Plan* — ₦${planConfig.price.toLocaleString()}/month\n` +
+            `   👉 Reply *UPGRADE CONFIRM*\n\n` +
             `💰 *Your Profit Wallet Balance:* ₦${balance.toFixed(2)}\n`;
 
           if (isCurrentlyAutonomous) {
             const expDate = new Date(activeSub.expiresAt).toLocaleDateString('en-GB');
-            msg += `\n✨ *Current Status:* Active (${activeSub.plan}) until ${expDate}.\nUpgrading now will extend your subscription!`;
+            const subLabel = activeSub.plan === 'FREE_GRANT' ? 'Complimentary Free AI Grant' : activeSub.plan;
+            msg += `\n✨ *Current Status:* Active (${subLabel}) until ${expDate}.\nUpgrading now will extend your automation by 30 days!`;
           }
 
-          if (balance < SUBSCRIPTION_PLANS.WEEKLY.price) {
+          if (balance < planConfig.price) {
             const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
             msg += `\n⚠️ *Fund your wallet to subscribe:*\n` +
               `🏦 Bank: ${virtualAcct.bankName}\n` +
@@ -2016,20 +2032,15 @@ export const handleMotherMessage = async (sock, msg) => {
           return sock.sendMessage(from, { text: msg });
         }
 
-        const planConfig = SUBSCRIPTION_PLANS[tierChoice];
-        if (!planConfig) {
-          return sock.sendMessage(from, { text: '❌ Invalid plan choice. Reply *UPGRADE WEEKLY* or *UPGRADE MONTHLY*.' });
-        }
-
         if (balance < planConfig.price) {
           const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
           return sock.sendMessage(from, {
-            text: `⚠️ *Insufficient Wallet Balance*\n\nThe ${planConfig.label} requires *₦${planConfig.price.toLocaleString()}*, but your wallet balance is *₦${balance.toFixed(2)}*.\n\nFund your wallet by transferring to your store account:\n🏦 *Bank:* ${virtualAcct.bankName}\n🔢 *Account:* ${virtualAcct.accountNumber}\n👤 *Name:* ${virtualAcct.accountName || userData.verifiedName}\n\nOnce transferred, reply *UPGRADE ${tierChoice}* again!`
+            text: `⚠️ *Insufficient Wallet Balance*\n\nThe ${planConfig.label} requires *₦${planConfig.price.toLocaleString()}*, but your wallet balance is *₦${balance.toFixed(2)}*.\n\nFund your wallet by transferring to your store account:\n🏦 *Bank:* ${virtualAcct.bankName}\n🔢 *Account:* ${virtualAcct.accountNumber}\n👤 *Name:* ${virtualAcct.accountName || userData.verifiedName}\n\nOnce transferred, reply *UPGRADE CONFIRM* again!`
           });
         }
 
         // Deduct from wallet
-        await wallet.recordSubscriptionDebit(from, planConfig.price, tierChoice, { durationDays: planConfig.durationDays });
+        await wallet.recordSubscriptionDebit(from, planConfig.price, 'MONTHLY', { durationDays: planConfig.durationDays });
 
         // Calculate start and end date (extend if already active)
         let baseDate = now;
@@ -2039,7 +2050,7 @@ export const handleMotherMessage = async (sock, msg) => {
         const expiresAt = new Date(baseDate.getTime() + planConfig.durationDays * 24 * 60 * 60 * 1000);
 
         const newSub = {
-          plan: tierChoice,
+          plan: 'MONTHLY',
           price: planConfig.price,
           durationDays: planConfig.durationDays,
           startedAt: now.toISOString(),
@@ -2130,6 +2141,23 @@ export const handleMotherMessage = async (sock, msg) => {
         });
       }
 
+      // ── ANNOUNCE Command (Toggle new contact introductory announcement) ──
+      else if (userData.state === STATES.COMPLETED && /^announce(?:\s+(on|off))?$/i.test(command)) {
+        const sub = command.split(/\s+/)[1]?.toLowerCase();
+        let newState;
+        if (sub === 'on') newState = true;
+        else if (sub === 'off') newState = false;
+        else newState = !(userData.announceNewContacts !== false);
+
+        await saveUser({ ...userData, announceNewContacts: newState });
+
+        return sock.sendMessage(from, {
+          text: newState
+            ? `✅ *New Contact Announcement: ON*\n\nFirst-time visitors will receive your friendly introduction explaining your Clarion franchise and clarifying that normal chatting still works!`
+            : `🔕 *New Contact Announcement: OFF (Paused)*\n\nFirst-time visitors will not receive the introductory message. Bot will only reply when commands or keywords are typed.`
+        });
+      }
+
       // ── HELP / COMMANDS Command (Full Categorized Reference) ──
       else if (userData.state === STATES.COMPLETED && /^(?:help|commands|\?)$/i.test(command)) {
         const isAutonomous = userData.botMode === BOT_MODES.AUTONOMOUS;
@@ -2144,8 +2172,9 @@ export const handleMotherMessage = async (sock, msg) => {
           `• *CANCEL [MO-ID]* — Cancel an unpaid customer order\n\n` +
           `🤖 *AUTOMATION & SUBSCRIPTION:*\n` +
           `• *MODE* — Check current bot mode & remaining subscription days\n` +
-          `• *UPGRADE* — View pricing & turn on 24/7 auto-bot\n` +
-          `• *DOWNGRADE* — Cancel recurring auto-renew at end of billing cycle\n\n` +
+          `• *UPGRADE* — Turn on 24/7 auto-bot (₦950/month)\n` +
+          `• *DOWNGRADE* — Cancel recurring auto-renew at end of billing cycle\n` +
+          `• *ANNOUNCE* — Toggle new-contact intro message (ON/OFF)\n\n` +
           `💰 *WALLET & EARNINGS:*\n` +
           `• *BALANCE* — Check profit balance & pending cashouts\n` +
           `• *WITHDRAW [amount]* — Cash out profits to your locked bank\n` +
@@ -2177,9 +2206,10 @@ export const handleMotherMessage = async (sock, msg) => {
           const daysLeft = Math.max(0, Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)));
 
           if (!isExpired) {
+            const planTitle = sub.plan === 'FREE_GRANT' ? 'Complimentary Free AI Grant' : sub.plan;
             return sock.sendMessage(from, {
               text: `🤖 *Bot Operating Mode: AUTONOMOUS* ⚡\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-                `📦 *Plan:* ${sub.plan} (${daysLeft} days remaining)\n` +
+                `📦 *Plan:* ${planTitle} (${daysLeft} days remaining)\n` +
                 `📅 *Expires:* ${expDate.toLocaleDateString('en-GB')}\n` +
                 `🔄 *Auto-Renew:* ${sub.autoRenew !== false ? '✅ Active' : '❌ Inactive'}\n\n` +
                 `Your ProxyBot is actively responding to customer chats 24/7.\n\n` +
@@ -2195,7 +2225,7 @@ export const handleMotherMessage = async (sock, msg) => {
             `• *ORDER 1GB 08012345678* — Create order\n` +
             `• *ORDERS* — View recent orders\n\n` +
             `🚀 *Want 24/7 automated sales?*\n` +
-            `Text *UPGRADE* to see subscription plans (from ₦500/week)!`
+            `Text *UPGRADE* to activate autonomous mode for *₦950/month*!`
         });
       }
 

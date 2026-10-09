@@ -17,9 +17,20 @@ export const BOT_MODES = {
 };
 
 export const SUBSCRIPTION_PLANS = {
-    WEEKLY:  { key: 'WEEKLY',  price: 500,  durationDays: 7,  label: 'Weekly (₦500/week)' },
-    MONTHLY: { key: 'MONTHLY', price: 1500, durationDays: 30, label: 'Monthly (₦1,500/month)' }
+    MONTHLY: { key: 'MONTHLY', price: 950, durationDays: 30, label: 'Monthly (₦950/month)' }
 };
+
+/**
+ * Returns free complimentary AI autonomous mode grant duration (in days)
+ * based on the partner's donation tier.
+ */
+export function getFreeGrantDays(tier) {
+    if (!tier) return 0;
+    const t = String(tier).toUpperCase();
+    if (t === 'LORD') return 60; // 2 months free for 80% CDS contributors
+    if (['MASTER', 'PIONEER', 'MEMBER'].includes(t)) return 14; // 2 weeks free for 50% & 20%
+    return 0;
+}
 
 // Clarion Partnership Tiers (Dynamic Tripartite Settlement)
 export const PARTNERSHIP_TIERS = {

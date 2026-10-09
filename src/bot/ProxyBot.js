@@ -2,7 +2,7 @@ import { logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
 import payflex from '../services/payflex.js';
 import wallet, { SUBSCRIPTION_PLANS, BOT_MODES } from '../services/WalletService.js';
-import sessionManager from './SessionManager.js';
+import sessionManager, { handleOnboardingWizardInput } from './SessionManager.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
 import { detectNetwork } from '../utils/networkUtils.js';
@@ -92,6 +92,16 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
 
+    // ── Onboarding Wizard Check (if partner is completing setup) ──
+    const partnerPhoneDigits = String(user.phoneNumber || user.phone || user.uid || '').replace(/[^0-9]/g, '').slice(-10);
+    const senderDigits = String(actionableJid || from).replace(/[^0-9]/g, '').slice(-10);
+    const isOwner = msg.key.fromMe || (partnerPhoneDigits && senderDigits && partnerPhoneDigits === senderDigits);
+
+    if (isOwner && user.onboardingStep !== null && user.onboardingStep !== undefined) {
+      const handled = await handleOnboardingWizardInput(sock, from, user, text);
+      if (handled) return;
+    }
+
     // -- Capture/Update Customer Profile --
     if (db.users && actionableJid) {
       try {
@@ -106,8 +116,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
     }
 
-    // ── First-Touch Introduction (once per contact in Autonomous mode) ──
-    if (!from.endsWith('@g.us') && user.botMode === BOT_MODES.AUTONOMOUS) {
+    // ── First-Touch Reassurance Announcement (once per contact in Autonomous mode) ──
+    if (!from.endsWith('@g.us') && !isOwner && user.botMode === BOT_MODES.AUTONOMOUS && user.announceNewContacts !== false) {
       let isIntroduced = false;
       if (db.users && actionableJid) {
         try {
@@ -125,32 +135,19 @@ export const handleProxyMessage = async (sock, msg, user) => {
           }, { merge: true }).catch(() => {});
         }
 
-        // Detect their network from their phone number
-        const detectedNet = detectNetwork(actionableJid);
-        const networkLabel = detectedNet
-          ? detectedNet.toUpperCase()  // "MTN", "AIRTEL", "GLO", "9MOBILE"
-          : 'your network';
+        const storeName = user.brandName || user.franchiseName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
 
-        const storeName = user.brandName || user.franchiseName
-          || ('Clarion AI - ' + (user.verifiedName || user.name || 'Telecom'));
-
-        // Natural typing delay (1.5–2.5s)
+        // Natural typing delay (1.2–2.0s)
         await sock.sendPresenceUpdate('composing', from).catch(() => {});
-        await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+        await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
         await sock.sendMessage(from, {
-          text: `👋 Welcome to *${storeName}*!\n` +
-            `Your 24/7 automated high-speed data portal. ⚡\n\n` +
-            `Looking for cheap & instant data? Clarion AI automatically finds the best subsidized ` +
-            `${networkLabel} data plans matching your budget:\n\n` +
-            `👉 Reply *DATA* — View all ${networkLabel} plans and their current prices\n` +
-            `👉 Reply *DATA 500* (or any amount) — Let Clarion AI find the best plan for your ₦500 budget!\n\n` +
-            `💚 *Community Impact:* A percentage of every purchase goes directly towards supporting ` +
-            `NYSC Community Development Service (CDS) projects! 🇳🇬\n` +
-            `👉 Reply *CDS* to learn more about our community mission & how to contribute.\n\n` +
-            `────────────────────────\n` +
-            `_💡 Feel free to ignore this message if you don't need data right now — ` +
-            `Clarion AI only activates when you send a keyword!_`
+          text: `Big news! 🚀 My line is now powered by *${storeName}*!\n\n` +
+            `Get instant, subsidised MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+            `👉 Just reply *DATA* or *DATA 500* to this chat to see the best plans for your budget!\n\n` +
+            `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬\n\n` +
+            `──────────────\n` +
+            `_Note: You can continue chatting with me normally if you don't need data right now! The storefront only activates when you mention keywords. Have a wonderful day! 😊_`
         });
 
         await sock.sendPresenceUpdate('paused', from).catch(() => {});
@@ -213,7 +210,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           if (sessionManager.motherSock) {
             const partnerJid = user.uid.includes('@') ? user.uid : `${user.uid}@s.whatsapp.net`;
             await sessionManager.motherSock.sendMessage(partnerJid, {
-              text: `⚠️ *Autonomous Mode Expired*\n\nYour ${user.subscription?.plan || 'subscription'} has ended and could not auto-renew.\nYour store is now in Manual Mode.\n\nText *UPGRADE WEEKLY* (₦500) or *UPGRADE MONTHLY* (₦1,500) to reactivate 24/7 automation.`
+              text: `⚠️ *Autonomous Mode Expired*\n\nYour ${user.subscription?.plan || 'subscription'} has ended and could not auto-renew.\nYour store is now in Manual Mode.\n\nText *UPGRADE* to reactivate 24/7 automation for *₦950/month*.`
             }).catch(() => {});
           }
           return; // Silent for this message
@@ -248,7 +245,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `*How It Works:*\n` +
           `20% to 80% of vendor profits flow directly into CDS projects ` +
           `(depending on your vendor's chosen tier).\n\n` +
-          `────────────────────────\n` +
+          `──────────────\n` +
           `Want to make an even bigger impact? You can donate directly:\n\n` +
           `👉 Reply *DONATE* to contribute to the Clarion CDS Fund\n` +
           `👉 Reply *DATA* to buy subsidized data (automatic CDS contribution included)\n\n` +
