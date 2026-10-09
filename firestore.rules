@@ -14,8 +14,6 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // In this specific system, the server (Admin SDK) handles most writes.
-      // We only allow users to read their own profile.
       return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
@@ -23,45 +21,56 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Users collection
+    // ── Users Collection & Subcollections ──
     match /users/{userId} {
-      // Only the user can read their own profile, or admin
+      // User can read their own profile, admin can read/list all
       allow get: if isOwner(userId) || isAdmin();
-      // Writes are handled by Mother Bot (Admin SDK)
       allow list: if isAdmin();
+      allow write: if false; // Writes strictly handled server-side (Admin SDK)
+
+      // Partner Contacts Subcollection
+      match /contacts/{contactId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false;
+      }
+
+      // Partner Manual Orders Subcollection
+      match /manualOrders/{orderId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false;
+      }
     }
 
-    // CDS Personal Proposals Collection
+    // ── CDS Micro-Grant Proposals Collection ──
     match /cds_proposals/{proposalId} {
-      // Corps member can view their own proposal, Admin can view all
-      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow list: if isAdmin();
-      // Writes are strictly server-side (Mother Bot / Admin SDK)
+      // Corps members can view/list their own proposals; Admin can view all
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow write: if false;
     }
 
-    // Plans Cache
+    // ── Plans Cache ──
     match /plans_cache/{planId} {
-      // Publicly readable for the bots to fetch
-      // But in this system, the bots run server-side with Admin SDK
-      // So we can keep this restricted or allow read if we build a frontend
       allow read: if isSignedIn();
-    }
-
-    // Ledger & Transactions (Data, Withdrawals, Broadcasts)
-    match /ledger/{entryId} {
-      // Allows co-members to see their own history (sales, withdrawals, and broadcast batches)
-      // Admins (handled by Admin SDK) bypass this, but frontends are restricted.
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      
-      // Writes are strictly server-side (Mother Bot)
       allow write: if false;
     }
-    // Opt-outs Collection
+
+    // ── Status Captions ──
+    match /status_captions/{captionId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // ── Ledger & Transactions ──
+    match /ledger/{entryId} {
+      // Allows partners to read/query their own ledger history (sales, withdrawals, broadcasts)
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    // ── Opt-outs Collection ──
     match /optouts/{optoutId} {
-      // Allow proxy store owners to see who in their store has opted out if they log into a frontend dashboard
-      allow read: if isSignedIn() && resource.data.storeId == request.auth.uid;
-      allow write: if false; // Writes strictly handled by backend Admin SDK based bots
+      allow read: if isSignedIn() && (resource.data.storeId == request.auth.uid || isAdmin());
+      allow write: if false;
     }
   }
 }

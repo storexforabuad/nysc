@@ -139,6 +139,96 @@ async function startServer() {
     }
   });
 
+  app.post('/api/admin/generate-asset-sample', verifyAdminToken, async (req, res) => {
+    try {
+      const { assetType, customParams = {} } = req.body || {};
+      const name = customParams.name || 'BABATUNDE OLUWASEUN ADEYEMI';
+      const stateCode = customParams.stateCode || 'LA/26A/4892';
+      const franchiseName = customParams.franchiseName || 'Clarion AI - Store';
+      const donationTier = customParams.donationTier || 'MASTER';
+      const phone = customParams.phone || '08119772223';
+      const planName = customParams.planName || 'MTN 5GB SME';
+      const amount = Number(customParams.amount) || 1300;
+      const buyerPhone = customParams.buyerPhone || '08012345678';
+
+      let base64Image = '';
+
+      if (assetType === 'FRANCHISE_CARD') {
+        const userData = {
+          verifiedName: name,
+          name,
+          stateCode,
+          brandName: franchiseName,
+          franchiseName,
+          donationTier,
+          rankBadge: donationTier === 'PIONEER' ? 'LORD' : donationTier,
+          virtualAccount: { bankName: 'HabariPay (GTCO)', accountNumber: '5005005594' },
+          bankDetails: { bankName: 'HabariPay (GTCO)', accountNumber: '5005005594' },
+          totalCdsDonated: 12500,
+          uid: `NYSC-${stateCode.replace(/[^A-Z0-9]/gi, '') || 'CORP'}`
+        };
+        const buffer = await mediaGen.generateProfileCard(userData);
+        base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+
+      } else if (assetType === 'RECEIPT') {
+        const sampleOrder = {
+          id: `TXN_${Date.now().toString().slice(-6)}`,
+          planName,
+          buyerPhone: buyerPhone.includes('@') ? buyerPhone : `${buyerPhone}@s.whatsapp.net`,
+          amount
+        };
+        const outPath = await ReceiptGenerator.generate(sampleOrder, franchiseName);
+        if (!outPath) throw new Error('Receipt generation failed');
+        const fileBuffer = fs.readFileSync(outPath);
+        base64Image = `data:image/jpeg;base64,${fileBuffer.toString('base64')}`;
+
+      } else if (assetType === 'PRICE_CARD') {
+        const buffer = await mediaGen.generatePromoImage(name);
+        base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+
+      } else if (assetType === 'SHARE_CARD') {
+        const userData = {
+          verifiedName: name,
+          name,
+          phone,
+          phoneNumber: phone,
+          isSameNumber: false
+        };
+        const buffer = await mediaGen.generateShareCard(userData);
+        base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+
+      } else if (assetType === 'GIVEAWAY_POSTER') {
+        const userData = {
+          verifiedName: name,
+          name,
+          phone,
+          phoneNumber: phone,
+          isSameNumber: false
+        };
+        const buffer = await mediaGen.generateGiveawayPromoCard(userData, amount);
+        base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+
+      } else if (assetType === 'DONATION_CERTIFICATE') {
+        const donationData = {
+          name,
+          donorName: name,
+          stateCode,
+          amount,
+          refId: `CDS-${Date.now().toString().slice(-6)}`
+        };
+        const buffer = await mediaGen.generateDonationCertificate(donationData);
+        base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+
+      } else {
+        return res.status(400).json({ error: `Unknown assetType: ${assetType}` });
+      }
+
+      res.json({ success: true, assetType, imageBase64: base64Image });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get('/api/admin/generate-test-pricecard', verifyAdminToken, async (req, res) => {
     try {
       const plans = await payflex.getAvailablePlans();

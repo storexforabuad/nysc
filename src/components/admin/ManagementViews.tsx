@@ -3,6 +3,7 @@ import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save } f
 import { motion } from 'motion/react';
 import CdsProposals from './CdsProposals';
 import BroadcastPanel from './BroadcastPanel';
+import AssetStudio from './AssetStudio';
 
 export default function ManagementViews() {
     const [partners, setPartners] = useState<any[]>([]);
@@ -200,6 +201,11 @@ export default function ManagementViews() {
                         </div>
                     ))}
                 </div>
+            </div>
+
+            {/* ── BRAND & ASSET GENERATION STUDIO ── */}
+            <div className="pt-8 border-t border-zinc-800">
+                <AssetStudio />
             </div>
 
             {/* ── CDS GRANT PROPOSALS PANEL ── */}

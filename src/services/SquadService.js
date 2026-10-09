@@ -100,7 +100,8 @@ class SquadService {
                 bankName: 'HabariPay (GTCO)',
                 accountNumber: data.virtual_account_number,
                 accountName: data.account_name || data.first_name + ' ' + data.last_name
-            } catch (error) {
+            };
+        } catch (error) {
                 const detail = error.response?.data
                     ? JSON.stringify(error.response.data)
                     : error.message;

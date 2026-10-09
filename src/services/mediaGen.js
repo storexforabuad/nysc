@@ -742,6 +742,161 @@ class MediaGenerator {
       throw error;
     }
   }
+
+  /**
+   * Generates a Clarion Community Champion Certificate / Donation Receipt.
+   */
+  async generateDonationCertificate(donationData = {}) {
+    try {
+      const width = 1080;
+      const height = 1420;
+      const canvas = createCanvas(width, height);
+      const ctx = canvas.getContext('2d');
+
+      const donorName = (donationData.name || donationData.donorName || 'COMMUNITY CHAMPION').toUpperCase();
+      const stateCode = (donationData.stateCode || 'NYSC DONOR').toUpperCase();
+      const amount = Number(donationData.amount) || 5000;
+      const dateStr = donationData.date || new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      const refId = donationData.refId || `CDS-${Date.now().toString().slice(-6)}`;
+
+      // Background: Warm Cream & Ivory Gradient
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
+      bgGrad.addColorStop(0, '#FAF7EF');
+      bgGrad.addColorStop(1, '#FFFDF8');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, width, height);
+
+      // Outer Gold Double Border Frame
+      ctx.strokeStyle = '#C8A951';
+      ctx.lineWidth = 10;
+      ctx.strokeRect(26, 26, width - 52, height - 52);
+
+      ctx.strokeStyle = '#1E5622';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(42, 42, width - 84, height - 84);
+
+      // Inner White Certificate Card
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.roundRect(60, 60, width - 120, height - 120, 24);
+      ctx.fill();
+      ctx.strokeStyle = '#E0D8C3';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Top Header Banner (Forest Green)
+      ctx.fillStyle = '#1E5622';
+      ctx.beginPath();
+      ctx.roundRect(80, 80, width - 160, 180, 20);
+      ctx.fill();
+
+      // Bugle Horn Emblem
+      drawClarionBugleEmblem(ctx, 160, 170, 1.5);
+
+      ctx.fillStyle = '#C8A951';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText('CLARION A.I. • NYSC SAED PHILANTHROPY', 250, 135);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 38px Arial';
+      ctx.fillText('COMMUNITY CHAMPION CERTIFICATE', 250, 195);
+
+      ctx.fillStyle = '#81C784';
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText('Official CDS Philanthropy & Impact Receipt', 250, 230);
+
+      // Certificate Title Callout
+      ctx.fillStyle = '#555555';
+      ctx.font = 'italic 24px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('THIS CERTIFICATE PROUDLY HONORS', width / 2, 330);
+
+      // Donor Name (Bold Green)
+      ctx.fillStyle = '#1E5622';
+      ctx.font = 'bold 46px Arial';
+      ctx.fillText(donorName.length > 26 ? donorName.substring(0, 26) + '...' : donorName, width / 2, 395);
+
+      ctx.fillStyle = '#C8A951';
+      ctx.font = 'bold 22px Arial';
+      ctx.fillText(`STATE CODE / ID: ${stateCode}`, width / 2, 435);
+
+      // Donation Amount Highlight Box
+      ctx.fillStyle = '#FFFDF5';
+      ctx.beginPath();
+      ctx.roundRect(100, 470, width - 200, 220, 20);
+      ctx.fill();
+      ctx.strokeStyle = '#C8A951';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = '#666666';
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText('CONTRIBUTED DIRECTLY TO NYSC CDS FUND', width / 2, 515);
+
+      ctx.fillStyle = '#FF5722';
+      ctx.font = 'bold 64px Arial';
+      ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, 595);
+
+      ctx.fillStyle = '#1E5622';
+      ctx.font = 'bold 22px Arial';
+      ctx.fillText('✓ VERIFIED DIRECT IMPACT CONTRIBUTION', width / 2, 650);
+
+      // Project Impact Details Box
+      ctx.fillStyle = '#F3EFE3';
+      ctx.beginPath();
+      ctx.roundRect(100, 720, width - 200, 310, 20);
+      ctx.fill();
+      ctx.strokeStyle = '#1E5622';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#1E5622';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText('🌱 COMMUNITY IMPACT ALLOCATION:', 140, 770);
+
+      ctx.fillStyle = '#333333';
+      ctx.font = '22px Arial';
+      ctx.fillText('• 100% routed into NYSC Rural School Clinics & Borehole Projects', 140, 820);
+      ctx.fillText('• Eligible for Priority CDS Micro-Grant Allocation', 140, 865);
+      ctx.fillText('• Contributes directly to your NYSC Philanthropy Rank Badge', 140, 910);
+      ctx.fillText(`• Certificate Receipt Ref: ${refId}`, 140, 955);
+      ctx.fillText(`• Date Issued: ${dateStr}`, 140, 1000);
+
+      // Security Seal & Signature Banner
+      ctx.fillStyle = '#1E5622';
+      ctx.beginPath();
+      ctx.roundRect(100, 1060, width - 200, 180, 20);
+      ctx.fill();
+      ctx.strokeStyle = '#C8A951';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = '#C8A951';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('OFFICIAL CLARION COMMUNITY IMPACT SEAL', width / 2, 1110);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '20px Arial';
+      ctx.fillText('Thank you for driving sustainable youth philanthropy and development in Nigeria! 🇳🇬', width / 2, 1160);
+      ctx.fillStyle = '#81C784';
+      ctx.font = 'bold 18px Arial';
+      ctx.fillText('Share this certificate on WhatsApp Status to inspire fellow corps members!', width / 2, 1205);
+
+      // Bottom Stamp
+      ctx.fillStyle = '#888888';
+      ctx.font = 'bold 18px Arial';
+      ctx.fillText(`CLARION PROTOCOL v3.0  |  NYSC SAED PHILANTHROPY  |  REF: ${refId}`, width / 2, 1310);
+
+      logger.info(`Generated donation certificate for ${donorName}`);
+      return canvas.toBuffer('image/png');
+    } catch (error) {
+      logger.error('Error generating donation certificate:', error);
+      throw error;
+    }
+  }
 }
 
 export default new MediaGenerator();
