@@ -84,7 +84,7 @@ function truncateForNIBSS(fullName) {
 
 export function getPortalMenuText(stateCode) {
   return `📡 *CLARION A.I | NYSC HUB* 🇳🇬\n` +
-    `_Dashboard:* \`${stateCode || 'Active'}\` (Verified)\n` +
+    `*Dashboard:* \`${stateCode || 'Active'}\` _(Verified)_\n` +
     `──────────────\n\n` +
     `Select a department to explore:\n\n` +
     `1️⃣ 🧠 *LEARN* — Camp Survival, PPA Guides & High-Income Skills\n` +
