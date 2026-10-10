@@ -34,11 +34,23 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Partner Promos Subcollection (Campaigns & Claims)
+      match /promos/{promoId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false;
+      }
+
       // Partner Manual Orders Subcollection
       match /manualOrders/{orderId} {
         allow read: if isOwner(userId) || isAdmin();
         allow write: if false;
       }
+    }
+
+    // ── Global Promos Collection (Aggregated reporting for Admin/Partner) ──
+    match /promos/{promoId} {
+      allow read: if isSignedIn() && (resource.data.storeId == request.auth.uid || resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
     }
 
     // ── CDS Micro-Grant Proposals Collection ──

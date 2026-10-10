@@ -455,7 +455,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
           `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`;
 
       const statusKitGate = `──────────────\n` +
-        `Reply *NEXT* to unlock your Promo Fuel Kickstart ⛽\n` +
+        `Reply *NEXT* to configure your Launch Promo Giveaway 🎁\n` +
         `Or reply *SKIP* to go straight to your final checklist.`;
 
       await sock.sendMessage(from, { text: statusKitHeader });
@@ -474,7 +474,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     }
 
     await sock.sendMessage(from, {
-      text: `👆 Reply *NEXT* to receive your WhatsApp Status Launch Kit, or *SKIP* to jump to the final checklist.`
+      text: `👆 Reply *NEXT* to configure your Launch Promo Giveaway, or *SKIP* to jump to the final checklist.`
     });
     return true;
   }
@@ -482,15 +482,22 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
   // STEP 3: Expects NEXT or SKIP
   if (step === 3) {
     if (['next', 'continue', '4', 'fuel', 'promo'].includes(text)) {
-      const promoFuelPitch = `⛽ *STEP 4 OF 4 — PROMO FUEL KICKSTART*\n\n` +
-        `💡 *Pro-Partner Secret:*\n` +
-        `Clarion requires *₦0 startup capital*. But vendors who add *₦500 – ₦1,000* to their wallet on Day 1 to gift free 500MB to 3 close friends or host a launch giveaway see *4x more sales*!\n\n` +
-        `🏦 *Bank:* ${info.virtualAcct.bankName}\n` +
-        `🔢 *Account:* ${info.virtualAcct.accountNumber}\n` +
-        `👤 *Name:* ${info.virtualAcct.accountName || info.partnerName}\n\n` +
-        `Transfer anytime to load Promo Fuel, then text *PROMO* to get your exclusive Giveaway Poster! 🎨\n\n` +
+      const promoFuelPitch = `🎁 *STEP 4 OF 4 — LAUNCH GIVEAWAY ENGINE*\n` +
+        `_Turn your contacts into paying data customers._\n` +
+        `──────────────\n\n` +
+        `👋 *${info.partnerName}*, vendors who gift free data on Day 1 see *4x higher repeat orders*!\n\n` +
+        `💡 *TRY ON CREDIT (₦0 UPFRONT)*:\n` +
+        `We’ve unlocked a *Kickstart Micro-Credit* for your store! You can gift *500MB to 3 friends* on credit today (value: ₦420).\n\n` +
+        `When your friends order data, customer sales auto-clear the ₦420 balance!\n\n` +
         `──────────────\n` +
-        `Reply *FUNDED* once you've transferred, or *SKIP* to finish setup.`;
+        `👉 Reply *PROMO 500 3* to launch your 3-person giveaway on credit right now!\n\n` +
+        `*Or Fund a Custom Giveaway Budget:*\n` +
+        `🏦 *Bank:* ${info.virtualAcct.bankName}\n` +
+        `🔢 *Account:* \`${info.virtualAcct.accountNumber}\`\n` +
+        `👤 *Name:* ${info.virtualAcct.accountName || info.partnerName}\n\n` +
+        `──────────────\n` +
+        `👉 Reply *FUNDED* once transferred to set up a larger promo.\n` +
+        `👉 Reply *SKIP* to finish setup (you can launch promos anytime).`;
 
       await sock.sendMessage(from, { text: promoFuelPitch });
       await db.users.doc(fullUser.uid).set({ onboardingStep: 4 }, { merge: true });
@@ -499,7 +506,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
 
     if (text === 'skip') {
       await sock.sendMessage(from, {
-        text: `No problem! You can always transfer to your store account later and text *PROMO* whenever you're ready. 👌`
+        text: `👌 *No problem at all!*\n──────────────\n\nYour franchise is 100% operational with ₦0 capital. You can top up and launch customer promos anytime by replying *PROMO*.`
       });
       await new Promise(r => setTimeout(r, 1000));
       await finishWizard(sock, from, fullUser, info, isAutonomous, false);
@@ -507,7 +514,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     }
 
     await sock.sendMessage(from, {
-      text: `👆 Reply *NEXT* to unlock Promo Fuel details, or *SKIP* to finish setup.`
+      text: `👆 Reply *NEXT* to configure your Launch Promo Giveaway, or *SKIP* to finish setup.`
     });
     return true;
   }
@@ -517,11 +524,16 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     const isFunded = ['funded', 'done', 'paid', 'sent', 'transferred'].includes(text);
     if (isFunded) {
       await sock.sendMessage(from, {
-        text: `⚡ *PROMO FUEL RECORDED!*\n\nYour store account is linked. Text *PROMO* anytime to download your personalized Giveaway Poster! 🎨`
+        text: `⚡ *PROMO ENGINE UNLOCKED!*\n──────────────\n\n` +
+          `Your store account is linked.\n\n` +
+          `*To launch your first giveaway campaign:*\n` +
+          `👉 Reply *PROMO* to choose data size (e.g. 500MB) & recipient count.\n` +
+          `👉 Or simply share any contact card or phone number to this chat, and your ProxyBot will gift them instantly! 🎁`
       });
     } else {
       await sock.sendMessage(from, {
-        text: `No worries! You can load your wallet anytime and text *PROMO* whenever you're ready. 👌`
+        text: `👌 *No problem at all!*\n──────────────\n\n` +
+          `Your franchise is 100% operational with ₦0 capital. You can top up and launch customer promos anytime by replying *PROMO*.`
       });
     }
 
@@ -541,20 +553,20 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, isFunded) 
     ? `🤖 *Autonomous AI Mode is Active!*\nYour complimentary free automation is running (${daysLeft} days remaining).\nWhen it expires, text *UPGRADE* to extend for *₦950/month*.`
     : `💡 *Want 24/7 full automation?*\nText *UPGRADE* to activate autonomous mode for *₦950/month*!`;
 
-  const finalChecklist = `✅ *YOU'RE FULLY OPERATIONAL, ${info.partnerName}!*\n\n` +
-    `Here is your go-live command centre:\n\n` +
-    `📋 *ORDERS* — View recent orders & status\n` +
-    `💰 *BALANCE* — Check available profits & earnings\n` +
-    `🤖 *MODE* — Check or switch bot mode\n` +
-    `📢 *KIT* — Download promo status kit & share card\n` +
-    `⛽ *PROMO* — Giveaway poster & fuel details\n` +
-    `💸 *WITHDRAW [amount]* — Cash out profits to your locked bank (₦90 fee)\n` +
-    `💬 *ANNOUNCE* — Toggle new-contact intro message (ON/OFF)\n` +
-    `❓ *HELP* — Full manual & command list\n\n` +
+  const finalChecklist = `✅ *YOU'RE FULLY OPERATIONAL, ${info.partnerName}!*\n──────────────\n\n` +
+    `Your digital telecom franchise is officially active:\n\n` +
+    `· 📋 *ORDERS* — Live order feed & delivery status\n` +
+    `· 💰 *BALANCE* — Real-time earnings & wallet balance\n` +
+    `· 🎁 *PROMO* — Launch & manage customer giveaways\n` +
+    `· 🤖 *MODE* — Autopilot controls & renew status\n` +
+    `· 📢 *KIT* — Launch graphics & status templates\n` +
+    `· 💬 *ANNOUNCE* — Toggle first-contact welcome banner\n` +
+    `· 💸 *WITHDRAW [amount]* — Payout to your verified bank\n` +
+    `· ❓ *HELP* — Command directory\n\n` +
     `──────────────\n` +
     `${autoLine}\n\n` +
     `──────────────\n` +
-    `The Clarion A.I team is always here with you. Go build something great! 🚀🇳🇬`;
+    `_The Clarion team is with you. Build something great! 🚀🇳🇬_`;
 
   await sock.sendMessage(from, { text: finalChecklist });
   await db.users.doc(fullUser.uid).set({
@@ -652,7 +664,7 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, isFunded) 
       `1️⃣  Official Franchise Certificate\n` +
       `2️⃣  Storefront Control Deck\n` +
       `3️⃣  Safe Launch Status Template\n` +
-      `4️⃣  Promo Fuel Kickstart\n\n` +
+      `4️⃣  Launch Giveaway Engine\n\n` +
       `──────────────\n` +
       `Reply *READY* to receive your official Franchise Certificate 👇`;
 
@@ -661,6 +673,31 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, isFunded) 
     } catch (err) {
       logger.error('Failed to send Stage 0 activation briefing:', err.message);
     }
+  }
+
+  async sendProxyCustomerMessage(userOrUid, targetJid, messageText) {
+    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
+    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
+    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
+
+    if (worker && typeof worker.postMessage === 'function') {
+      try {
+        worker.postMessage({ type: 'notify_customer', targetJid, message: messageText });
+        return true;
+      } catch (e) {
+        logger.warn(`Failed to dispatch message via worker IPC for ${uid}: ${e.message}`);
+      }
+    }
+
+    if (this.motherSock) {
+      try {
+        await this.motherSock.sendMessage(targetJid, { text: messageText });
+        return true;
+      } catch (err) {
+        logger.error(`Fallback message failed to ${targetJid}: ${err.message}`);
+      }
+    }
+    return false;
   }
 }
 

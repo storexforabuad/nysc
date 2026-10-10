@@ -11,6 +11,7 @@ import mediaGen from './services/mediaGen.js';
 import wallet from './services/WalletService.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
 import { startStatusPostJob } from './jobs/statusPostJob.js';
+import { startSubscriptionReminderJob } from './jobs/SubscriptionReminderJob.js';
 import ReceiptGenerator from './services/ReceiptGenerator.js';
 import PriceCardGenerator from './services/PriceCardGenerator.js';
 import CaptionService from './services/CaptionService.js';
@@ -967,6 +968,7 @@ async function startServer() {
           await sessionManager.initMotherBot();
           startWeeklyReportJob();
           startStatusPostJob();
+          startSubscriptionReminderJob();
           broadcastQueue.start();
 
           // Wire up RetryQueue customer notification callback to Proxy Workers

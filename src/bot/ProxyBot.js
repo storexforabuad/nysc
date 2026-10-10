@@ -486,7 +486,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       });
     }
 
-    if (command === 'menu' || command === 'start' || isDataMatch) {
+    if (command === 'menu' || command === 'start' || command === 'catalog' || isDataMatch) {
       const match = isDataMatch ? command.match(dataCommandRegex) : null;
       const targetPrice = match && match[1] ? parseInt(match[1]) : null;
       const targetPhone = match && match[2] ? match[2] : null;

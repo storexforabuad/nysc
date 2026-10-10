@@ -2369,6 +2369,11 @@ export const handleMotherMessage = async (sock, msg) => {
         }
 
         const balance = await wallet.getBalance(from);
+        if (balance <= 0) {
+          return sock.sendMessage(from, {
+            text: `⚠️ *WITHDRAWAL LOCKED*\n──────────────\n\nYour current wallet balance is *₦${balance.toFixed(2)}* (recovering subscription renewal on credit).\n\nProcess customer sales or top up your wallet to clear the balance.`
+          });
+        }
         if (amount > balance) {
           return sock.sendMessage(from, {
             text: `❌ Insufficient balance.\n\nYour balance is *₦${balance.toFixed(2)}* but you requested *₦${amount.toFixed(2)}*.`
@@ -3062,107 +3067,283 @@ export const handleMotherMessage = async (sock, msg) => {
         return;
       }
 
-      // ── PROMO / GIVEAWAY / FUEL command ─────────────────────
-      else if (/^\.?(?:promo|giveaway|fuel)$/i.test(command)) {
-        const partnerPhone = (userData.phoneNumber || from.split('@')[0]).replace(/[^0-9]/g, '');
-        const isSame = checkIsSameNumber(from, partnerPhone);
+      // ── PROMO / GIVEAWAY ENGINE ─────────────────────────────
+      else if (/^\.?promo(?:\s+(.+))?$/i.test(command) || /^\.?(?:giveaway|fuel)$/i.test(command)) {
+        const promoArgs = command.replace(/^\.?(?:promo|giveaway|fuel)\s*/i, '').trim();
         const balance = await wallet.getBalance(from);
-        const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+        const activePromo = userData.activePromo;
+        const hasActivePromo = activePromo && activePromo.remainingClaims > 0;
 
-        if (balance < 250) {
+        // Subcommand: PROMO CANCEL
+        if (/^cancel$/i.test(promoArgs)) {
+          if (!hasActivePromo) {
+            return sock.sendMessage(from, { text: 'ℹ️ You do not currently have an active promo campaign to cancel.' });
+          }
+          const refundAmount = activePromo.remainingClaims * (activePromo.costPerClaim || 140);
+          if (refundAmount > 0) {
+            await wallet.recordPurchaseCredit?.(from, refundAmount, `Promo Refund: ${activePromo.remainingClaims} unclaimed grants`)
+              .catch(() => {});
+          }
+          await saveUser({ ...userData, activePromo: null });
           return sock.sendMessage(from, {
-            text: `⛽ *Promo Fuel: Kickstart Your Store Engagement!* 🚀\n\n` +
-              `Clarion is 100% free with ₦0 startup capital. BUT vendors who add *₦500 – ₦2,000* to their wallet on Day 1 to run a *Launch Giveaway* see 4x faster sales!\n\n` +
-              `*How to load Promo Fuel:*\n` +
-              `1️⃣ Transfer ₦500 or ₦1,000 to your Dedicated Store Account:\n` +
-              `   🏦 *Bank:* ${virtualAcct.bankName}\n` +
-              `   🔢 *Account:* ${virtualAcct.accountNumber}\n` +
-              `   👤 *Name:* ${virtualAcct.accountName || userData.verifiedName}\n\n` +
-              `2️⃣ Once loaded, we automatically generate your custom *Launch Giveaway Poster* and status text to gift free 500MB to your first 5 friends!\n\n` +
-              `_Transfer anytime to unlock your Launch Giveaway kit._ ⚡`
+            text: `🛑 *PROMO CAMPAIGN CANCELLED*\n──────────────\n\n· Unclaimed Grants: *${activePromo.remainingClaims}*\n· Refunded to Wallet: *₦${refundAmount.toLocaleString()}*\n· New Balance: *₦${(balance + refundAmount).toLocaleString()}*\n\n_You can launch a new campaign anytime by replying PROMO._`
           });
         }
 
-        await sock.sendMessage(from, { text: '🎨 Generating your custom Launch Giveaway Poster...' });
-        try {
-          const promoBuffer = await mediaGen.generateGiveawayPromoCard({
-            ...userData,
-            phone: partnerPhone,
-            isSameNumber: isSame
-          }, balance);
+        // Subcommand: PROMO [sizeMb] [count] (e.g. PROMO 500 5)
+        const setupMatch = promoArgs.match(/^(\d+)\s+(\d+)$/);
+        if (setupMatch) {
+          const sizeMb = parseInt(setupMatch[1], 10);
+          const count = parseInt(setupMatch[2], 10);
 
-          const giveawayStatusText = isSame
-            ? `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-            `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
-            `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
-            `Watch the bot reply and vend your data in 20 seconds! ⚡`
-            : `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-            `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
-            `👉 *To claim: Tap this link to message my bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
-            `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
+          if (sizeMb < 100 || sizeMb > 1000) {
+            return sock.sendMessage(from, {
+              text: `⚠️ *INVALID DATA ALLOCATION*\n──────────────\n\nData size must be between *100MB* and *1,000MB (1.0GB)* per recipient to maintain telecom safety ceilings.`
+            });
+          }
 
-          await sock.sendMessage(from, {
-            image: promoBuffer,
-            caption: `🎁 *YOUR EXCLUSIVE LAUNCH GIVEAWAY POSTER!* 🎨\n\n` +
-              `You have *₦${balance.toFixed(2)}* Promo Fuel in your wallet.\n\n` +
-              `📋 *Copy the text below and post it on your WhatsApp Status with this image:*`
+          if (count < 1 || count > 25) {
+            return sock.sendMessage(from, {
+              text: `⚠️ *INVALID RECIPIENT COUNT*\n──────────────\n\nRecipient count must be between *1* and *25 people* per campaign batch.`
+            });
+          }
+
+          // Estimate wholesale cost (~₦0.28 per MB, e.g. 500MB = ₦140)
+          const costPerClaim = Math.round(sizeMb * 0.28);
+          const totalBudget = costPerClaim * count;
+
+          // Check if eligible for Kickstart Micro-Credit (max ₦500 credit grant, 1-time per partner)
+          const isMicroCredit = (balance < totalBudget && !userData.promoCreditClaimed && totalBudget <= 500);
+
+          if (balance < totalBudget && !isMicroCredit) {
+            const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+            const diff = totalBudget - Math.max(0, balance);
+            return sock.sendMessage(from, {
+              text: `⚠️ *INSUFFICIENT WALLET BALANCE*\n──────────────\n\nLaunching a *${sizeMb}MB* giveaway for *${count} people* requires *₦${totalBudget.toLocaleString()}*.\n\n· Current Balance: *₦${balance.toFixed(2)}*\n· Shortfall: *₦${diff.toLocaleString()}*\n\n*Top up your wallet to activate:*\n🏦 *Bank:* ${virtualAcct.bankName}\n🔢 *Account:* \`${virtualAcct.accountNumber}\`\n👤 *Name:* ${virtualAcct.accountName || userData.verifiedName}\n\n_Reply PROMO once funded!_`
+            });
+          }
+
+          // Reserve budget
+          const campaignId = `PRM-${Date.now().toString(36).toUpperCase()}`;
+          const newPromo = {
+            id: campaignId,
+            sizeMb,
+            totalClaims: count,
+            remainingClaims: count,
+            costPerClaim,
+            budgetReserved: totalBudget,
+            isCreditGranted: isMicroCredit,
+            createdAt: new Date().toISOString()
+          };
+
+          await wallet.recordPurchaseDebit(from, totalBudget, `Promo Budget Reserved ${isMicroCredit ? '(Kickstart Credit)' : ''}: ${sizeMb}MB x ${count} recipients`, { campaignId, sizeMb, count, isMicroCredit });
+          
+          if (db.users) {
+            await db.users.doc(from).collection('promos').doc(campaignId).set(newPromo).catch(() => {});
+          }
+
+          const updateFields = { activePromo: newPromo };
+          if (isMicroCredit) updateFields.promoCreditClaimed = true;
+          await saveUser({ ...userData, ...updateFields });
+
+          const creditNotice = isMicroCredit
+            ? `\n💡 *Kickstart Micro-Credit Activated:* ₦${totalBudget} was issued on credit! As your customers buy data, sales auto-clear the balance.`
+            : '';
+
+          return sock.sendMessage(from, {
+            text: `🎁 *PROMO CAMPAIGN ACTIVE!* ${isMicroCredit ? '(ON CREDIT)' : ''}\n──────────────\n\n👋 *${userData.verifiedName || userData.name || 'Partner'}*, your launch giveaway is now live!\n\n· Allocation: *${sizeMb}MB* per recipient\n· Total Grants: *${count} recipients*\n· Budget Reserved: *₦${totalBudget.toLocaleString()}*${creditNotice}\n\n*How to distribute:*\n👉 Simply share any contact card or phone number to this chat!\n👉 Or reply *GIFT [phone]* (e.g. *GIFT 08012345678*)\n\n_ProxyBot will vend the data and send the customer an official receipt automatically._ ⚡\n\n──────────────\n· Reply *PROMO CANCEL* to refund remaining budget.`
           });
-
-          return sock.sendMessage(from, { text: giveawayStatusText });
-        } catch (err) {
-          logger.error('Error generating giveaway promo card:', err.message);
-          return sock.sendMessage(from, { text: `❌ Could not generate giveaway poster: ${err.message}` });
         }
+
+        // Default: Show promo dashboard / instructions
+        if (hasActivePromo) {
+          return sock.sendMessage(from, {
+            text: `🎁 *CLARION PROMO CONTROL*\n_Reward customers & drive instant repeat sales._\n──────────────\n\nStatus: *ACTIVE CAMPAIGN* 🟢\n· Data Allocation: *${activePromo.sizeMb}MB* per recipient\n· Remaining Grants: *${activePromo.remainingClaims} / ${activePromo.totalClaims}*\n· Budget Reserved: *₦${activePromo.budgetReserved}*\n\n*How to distribute:*\n👉 Share any contact card or type *GIFT [phone]*\n👉 Reply *PROMO CANCEL* to refund unused balance\n\n──────────────\n· Reply *0* for Main Menu`
+          });
+        }
+
+        const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+        return sock.sendMessage(from, {
+          text: `🎁 *CLARION PROMO CONTROL*\n_Reward customers & drive instant repeat sales._\n──────────────\n\nStatus: *NO ACTIVE CAMPAIGN* ⚪\nWallet Balance: *₦${balance.toFixed(2)}*\n\n*Launch a Giveaway Campaign:*\n· Data Size: *100MB to 1,000MB* per recipient\n· Recipient Ceiling: *1 to 25 people* per batch\n\n──────────────\n👉 Reply *PROMO 500 5* (Gifts 500MB to 5 people)\n👉 Reply *PROMO 1000 3* (Gifts 1GB to 3 people)\n👉 Reply *PROMO [MB] [recipients]* for custom setup`
+        });
       }
 
-      // ── GIFT command ───────────────────────────────────────
+      // ── GIFT command (Direct Promo Dispatch & Auto-Receipt) ──
       else if (/^\.?gift\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})(?:\s+(\S+))?$/i.test(command)) {
         const giftMatch = command.match(/^\.?gift\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})(?:\s+(\S+))?$/i);
         let targetPhone = giftMatch[1];
         if (targetPhone.startsWith('234') && targetPhone.length === 13) {
           targetPhone = '0' + targetPhone.slice(3);
         }
-        const planArg = giftMatch[2] || '500MB';
+        const planArg = giftMatch[2];
         const network = detectNetwork(targetPhone) || 'mtn';
+        const targetJid = targetPhone.startsWith('0') ? `234${targetPhone.slice(1)}@s.whatsapp.net` : `${targetPhone}@s.whatsapp.net`;
 
+        const activePromo = userData.activePromo;
+        const hasActivePromo = activePromo && activePromo.remainingClaims > 0;
+
+        let giftSizeMb = hasActivePromo ? activePromo.sizeMb : (planArg ? parseInt(planArg) || 500 : 500);
+
+        // Find best matching plan
         const plans = await payflex.getAvailablePlans();
         const networkPlans = plans.filter(p => p.network.toLowerCase().includes(network.toLowerCase()));
-
-        let matchedPlan = networkPlans.find(p => p.name.toLowerCase().includes(planArg.toLowerCase())) || networkPlans[0];
+        let matchedPlan = networkPlans.find(p => p.name.toLowerCase().includes(`${giftSizeMb}mb`)) ||
+                          networkPlans.find(p => p.name.toLowerCase().includes('500mb')) ||
+                          networkPlans[0];
 
         if (!matchedPlan) {
           return sock.sendMessage(from, { text: `❌ No matching data plan found for ${network.toUpperCase()}.` });
         }
 
         const balance = await wallet.getBalance(from);
-        if (balance < matchedPlan.basePrice) {
-          return sock.sendMessage(from, {
-            text: `⚠️ *Insufficient Wallet Balance to Gift Data*\n\n` +
-              `Gifting *${matchedPlan.name}* costs *₦${matchedPlan.basePrice}* wholesale, but your balance is *₦${balance.toFixed(2)}*.\n\n` +
-              `To fund your wallet, transfer to:\n` +
-              `🏦 *Bank:* ${userData.virtualAccount?.bankName || CENTRAL_HUB_ACCOUNT.bankName}\n` +
-              `🔢 *Account:* ${userData.virtualAccount?.accountNumber || CENTRAL_HUB_ACCOUNT.accountNumber}`
-          });
+
+        // If not using active promo reserve, check wallet balance
+        if (!hasActivePromo) {
+          if (balance < matchedPlan.basePrice) {
+            return sock.sendMessage(from, {
+              text: `⚠️ *Insufficient Wallet Balance to Gift Data*\n\n` +
+                `Gifting *${matchedPlan.name}* costs *₦${matchedPlan.basePrice}* wholesale, but your balance is *₦${balance.toFixed(2)}*.\n\n` +
+                `Launch a promo campaign by replying *PROMO 500 5* or fund your wallet.`
+            });
+          }
         }
 
         await sock.sendMessage(from, { text: `⏳ Dispensing promotional gift of *${matchedPlan.name}* to *${targetPhone}* (${network.toUpperCase()})...` });
 
         try {
-          await wallet.recordPurchaseDebit(from, matchedPlan.basePrice, `Promo Gift: ${matchedPlan.name} to ${targetPhone}`, { targetPhone, planName: matchedPlan.name });
+          // If not active promo, debit wallet now
+          if (!hasActivePromo) {
+            await wallet.recordPurchaseDebit(from, matchedPlan.basePrice, `Promo Gift: ${matchedPlan.name} to ${targetPhone}`, { targetPhone, planName: matchedPlan.name });
+          }
+
+          // Dispense data
           await payflex.dispenseData(targetPhone, matchedPlan.serial);
-          const newBal = (balance - matchedPlan.basePrice).toFixed(2);
+
+          // Check if target is a returning contact or new contact
+          let isReturning = false;
+          if (db.users) {
+            try {
+              const contactDoc = await db.users.doc(from).collection('contacts').doc(targetJid).get();
+              if (contactDoc.exists) isReturning = true;
+            } catch (e) {}
+          }
+
+          // Record / update contact
+          if (db.users) {
+            await db.users.doc(from).collection('contacts').doc(targetJid).set({
+              phone: targetPhone,
+              lastSeen: new Date().toISOString(),
+              lastPromoDelivered: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+          }
+
+          const partnerName = userData.verifiedName || userData.name || 'Your Partner';
+          const brandName = userData.brandName || ('Clarion AI - ' + partnerName);
+          const orderId = Date.now().toString(36).toUpperCase();
+
+          // Prepare Context-Aware Customer Receipt
+          const customerReceipt = !isReturning
+            ? `🎉 *SPECIAL GIFT FROM ${partnerName}!*
+──────────────
+
+👋 Hello! You have been gifted *${giftSizeMb}MB Free Data* on behalf of *${brandName}*.
+
+*Digital Voucher Receipt:*
+· Reference: \`#PRM-${orderId}\`
+· Package: \`${giftSizeMb}MB Instant Data\`
+· Cost to You: *₦0 (100% Free)*
+· Status: \`DELIVERED ✅\`
+
+_This gift has been delivered directly to your line with no deductions or catch._
+
+──────────────
+*Need affordable data anytime?*
+👉 Reply *DATA* to view all network plans.
+👉 Reply *DATA 1000* to see plans for ₦1,000.`
+            : `🎁 *CUSTOMER APPRECIATION REWARD*
+──────────────
+
+👋 Thank you for choosing *${brandName}*!
+
+You’ve just been awarded *${giftSizeMb}MB Free Data*:
+
+· Voucher Ref: \`#PRM-${orderId}\`
+· Package: \`${giftSizeMb}MB High-Speed Data\`
+· Status: \`DELIVERED ✅\`
+
+──────────────
+*Ready to top up your line?*
+👉 Reply *DATA* for instant 24/7 delivery.
+👉 Reply *DATA 2000* to view ₦2,000 plans.`;
+
+          // Send receipt via ProxyBot to the customer!
+          await sessionManager.sendProxyCustomerMessage(from, targetJid, customerReceipt);
+
+          // Update promo claims if active
+          let remainingNote = '';
+          if (hasActivePromo) {
+            activePromo.remainingClaims -= 1;
+            if (activePromo.remainingClaims <= 0) {
+              activePromo.status = 'COMPLETED';
+              await saveUser({ ...userData, activePromo: null });
+              remainingNote = `\n🎉 *All ${activePromo.totalClaims} promo grants have now been delivered!*`;
+            } else {
+              await saveUser({ ...userData, activePromo });
+              remainingNote = `\n· Remaining Grants: *${activePromo.remainingClaims} left*`;
+            }
+          }
 
           return sock.sendMessage(from, {
-            text: `🎁 *Promo Data Gift Vended Successfully!*\n\n` +
-              `📱 *Recipient:* ${targetPhone}\n` +
-              `📦 *Plan:* ${matchedPlan.name} (${network.toUpperCase()})\n` +
-              `💰 *Wholesale Cost:* ₦${matchedPlan.basePrice}\n` +
-              `🪙 *Remaining Balance:* ₦${newBal}\n\n` +
-              `_Your contact just experienced your 20-second automated delivery firsthand!_ 🚀`
+            text: `🎁 *PROMO DATA GIFT DELIVERED!* ✅\n──────────────\n\n· Recipient: *${targetPhone}* (${network.toUpperCase()})\n· Package: *${matchedPlan.name}*\n· Customer Receipt: *Dispatched automatically via ProxyBot* ⚡${remainingNote}\n\n_Your customer just experienced your 20-second automated delivery firsthand!_ 🚀`
           });
         } catch (giftErr) {
           logger.error('Error vending promo gift:', giftErr.message);
-          return sock.sendMessage(from, { text: `❌ Gift delivery failed: ${giftErr.message}. Balance was not deducted.` });
+          return sock.sendMessage(from, { text: `❌ Gift delivery failed: ${giftErr.message}.` });
+        }
+      }
+
+      // ── Contact Card / Shared Number Handler in COMPLETED state ──
+      else if (userData.state === STATES.COMPLETED) {
+        const vcard = msg.message?.contactMessage?.vcard || msg.message?.contactsArrayMessage?.contacts?.[0]?.vcard;
+        let detectedPhone = null;
+        if (vcard) {
+          const waidMatch = vcard.match(/waid=(\d+)/i);
+          const telMatch = vcard.match(/TEL[^:]*:([+0-9\s-]+)/i);
+          detectedPhone = waidMatch ? waidMatch[1] : (telMatch ? telMatch[1].replace(/[^0-9]/g, '') : null);
+        } else {
+          const cleanCmd = command.replace(/[\s-]/g, '');
+          if (/^(?:0|\+?234)[789][01]\d{8}$/.test(cleanCmd) &&
+              !cleanCmd.toLowerCase().startsWith('check') &&
+              !cleanCmd.toLowerCase().startsWith('order') &&
+              !cleanCmd.toLowerCase().startsWith('gift') &&
+              !cleanCmd.toLowerCase().startsWith('promo')) {
+            detectedPhone = cleanCmd;
+          }
+        }
+
+        if (detectedPhone) {
+          if (detectedPhone.startsWith('234') && detectedPhone.length === 13) {
+            detectedPhone = '0' + detectedPhone.slice(3);
+          }
+          const net = detectNetwork(detectedPhone) || 'mtn';
+          const hasActiveClaims = userData.activePromo?.remainingClaims > 0;
+
+          let cardMsg = `👤 *CONTACT DETECTED: ${detectedPhone}*\n` +
+            `_Network: ${net.toUpperCase()}_\n` +
+            `──────────────\n\n`;
+
+          if (hasActiveClaims) {
+            cardMsg += `🎁 *GIVEAWAY AVAILABLE (${userData.activePromo.remainingClaims} remaining):*\n` +
+              `Reply *GIFT ${detectedPhone}* to deliver *${userData.activePromo.sizeMb}MB* with an automated digital receipt! ⚡\n\n`;
+          }
+
+          cardMsg += `*Quick Store Commands:*\n` +
+            `· Reply *CHECK ${detectedPhone.slice(0, 4)} 1GB* to view retail plans\n` +
+            `· Reply *ORDER 1GB ${detectedPhone}* to create an order invoice\n\n` +
+            `──────────────\n` +
+            `· Reply *0* for Main Menu`;
+
+          return sock.sendMessage(from, { text: cardMsg });
         }
       }
     }
