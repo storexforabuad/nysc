@@ -170,6 +170,15 @@ async function startWorker(isInitialBoot = true) {
             } catch (e) {
                 logger.error(`[WORKER] Failed to send owner alert: ${e.message}`);
             }
+        } else if (msg.type === 'text_status') {
+            const { text } = msg;
+            const statusJid = 'status@broadcast';
+            try {
+                await sock.sendMessage(statusJid, { text });
+                logger.info(`[WORKER] Posted text status for ${user.uid}`);
+            } catch (e) {
+                logger.error(`[WORKER] Text status post failed for ${user.uid}: ${e.message}`);
+            }
         }
     });
 }

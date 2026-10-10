@@ -486,6 +486,107 @@ export const handleProxyMessage = async (sock, msg, user) => {
       });
     }
 
+    // ── PROMO Claim Keyword ──
+    if (command === 'promo') {
+      const activePromo = user.activePromo;
+      if (!activePromo || activePromo.status !== 'ACTIVE' || (activePromo.claimsRemaining || 0) <= 0) {
+        return sock.sendMessage(from, {
+          text: `❌ *PROMO ENDED OR EXPIRED*\n\n` +
+            `Sorry! The free data giveaway has ended or all grants have been claimed.\n\n` +
+            `👉 Reply *DATA* to view our affordable daily data packages starting from ₦250!`
+        });
+      }
+
+      const claimedBy = activePromo.claimedBy || [];
+      const cleanCustomerPhone = actionableJid.split('@')[0];
+      if (claimedBy.includes(actionableJid) || claimedBy.includes(cleanCustomerPhone)) {
+        return sock.sendMessage(from, {
+          text: `⚠️ *PROMO ALREADY CLAIMED*\n\n` +
+            `You have already claimed your free data grant from this promo!\n\n` +
+            `👉 Reply *DATA* to view our full data catalog.`
+        });
+      }
+
+      // Claim eligible!
+      const newRemaining = Math.max(0, (activePromo.claimsRemaining || 1) - 1);
+      const isCompleted = newRemaining === 0;
+      const updatedPromo = {
+        ...activePromo,
+        claimsRemaining: newRemaining,
+        claimedBy: [...claimedBy, actionableJid],
+        status: isCompleted ? 'COMPLETED' : 'ACTIVE'
+      };
+
+      // Save updated promo to Firestore
+      if (db.users) {
+        await db.users.doc(user.uid).set({ activePromo: updatedPromo }, { merge: true }).catch(() => {});
+      }
+      user.activePromo = updatedPromo;
+
+      // Check if contact was previously introduced
+      let isFirstTime = true;
+      if (db.users && actionableJid) {
+        try {
+          const contactDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
+          if (contactDoc.exists && contactDoc.data().introduced === true) {
+            isFirstTime = false;
+          }
+          await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
+            introduced: true,
+            introducedAt: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
+        } catch (e) {}
+      }
+
+      // Dispense free data grant
+      const grantMb = activePromo.mbPerContact || 500;
+      try {
+        const plans = await payflex.getAvailablePlans();
+        const grantPlan = plans.find(p => p.name.includes('500MB') || p.name.includes('500 MB')) || plans[0];
+        if (grantPlan) {
+          await payflex.dispenseData(cleanCustomerPhone, grantPlan.serial);
+        }
+      } catch (err) {
+        logger.error(`Promo data dispense error for ${cleanCustomerPhone}:`, err.message);
+      }
+
+      const storeName = user.brandName || user.franchiseName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+
+      let receiptText = '';
+      if (isFirstTime) {
+        receiptText = `🎉 *PROMO DATA DELIVERED!* ⚡\n\n` +
+          `Welcome! You've received *${grantMb}MB Free Data* courtesy of *${storeName}*! 🇳🇬\n\n` +
+          `📱 *Recipient:* ${cleanCustomerPhone}\n` +
+          `📦 *Grant:* ${grantMb}MB Free Data\n` +
+          `💰 *Price:* ₦0 (FREE GIFT)\n\n` +
+          `──────────────────\n` +
+          `🔥 *Need more data? Check out our best daily plans:*\n\n` +
+          `1️⃣ *1GB Daily* — ₦280 (Reply *BUY 101*)\n` +
+          `2️⃣ *2GB Weekly* — ₦550 (Reply *BUY 102*)\n` +
+          `3️⃣ *5GB Monthly* — ₦1,350 (Reply *BUY 105*)\n\n` +
+          `👉 Reply *DATA* anytime to view all networks & packages!\n` +
+          `💚 _Every purchase supports NYSC Community Development projects._`;
+      } else {
+        receiptText = `🎉 *PROMO DATA DELIVERED!* ⚡\n\n` +
+          `Your *${grantMb}MB Free Data* has been credited to your line!\n\n` +
+          `📱 *Recipient:* ${cleanCustomerPhone}\n` +
+          `📦 *Grant:* ${grantMb}MB Free Data\n` +
+          `💰 *Price:* ₦0 (FREE GIFT)\n\n` +
+          `──────────────────\n` +
+          `🔥 *Top Plans for You:*\n\n` +
+          `1️⃣ *1GB Daily* — ₦280 (Reply *BUY 101*)\n` +
+          `2️⃣ *2GB Weekly* — ₦550 (Reply *BUY 102*)\n` +
+          `3️⃣ *5GB Monthly* — ₦1,350 (Reply *BUY 105*)\n\n` +
+          `👉 Reply *DATA* to view all packages.`;
+      }
+
+      await sock.sendMessage(from, { text: receiptText });
+
+      // Dispatch dynamic status update across session manager
+      sessionManager.dispatchDynamicPromoStatus(user.uid, updatedPromo);
+      return;
+    }
+
     if (command === 'menu' || command === 'start' || command === 'catalog' || isDataMatch) {
       const match = isDataMatch ? command.match(dataCommandRegex) : null;
       const targetPrice = match && match[1] ? parseInt(match[1]) : null;

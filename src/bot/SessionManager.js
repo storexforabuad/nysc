@@ -699,6 +699,40 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, isFunded) 
     }
     return false;
   }
+
+  async dispatchDynamicPromoStatus(userOrUid, activePromo) {
+    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
+    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
+    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
+    if (!worker) return false;
+
+    const brandName = (typeof userOrUid === 'object' && userOrUid.brandName)
+      ? userOrUid.brandName
+      : ('Clarion AI Store');
+    const sizeMb = activePromo?.sizeMb || 500;
+    const totalClaims = activePromo?.totalClaims || 5;
+    const remainingClaims = Math.max(0, activePromo?.remainingClaims ?? 0);
+
+    let text = '';
+    if (remainingClaims === totalClaims) {
+      text = `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\n──────────────\n\nMy 24/7 automated data storefront (*${brandName}*) is officially live!\n\n🎁 I'm gifting *${sizeMb}MB FREE DATA* to the first *${remainingClaims} people* who test my store right now!\n\n👉 *How to claim:*\nMessage this number & reply *PROMO* to claim your free data instantly!\n\n──────────────\n_⚡ ${remainingClaims} of ${totalClaims} free grants remaining_`;
+    } else if (remainingClaims > 1) {
+      text = `🚨 *GIVEAWAY COUNTDOWN!* ⏳\n──────────────\n\n*${brandName}* launch giveaway update:\n\n🔥 Only *${remainingClaims} FREE DATA GRANTS* left! (*${sizeMb}MB Instant Data*)\n\n👉 Message this number now & reply *PROMO* before it runs out!\n\n──────────────\n_⚡ ${remainingClaims} of ${totalClaims} grants remaining_`;
+    } else if (remainingClaims === 1) {
+      text = `⚡ *LAST FREE DATA GRANT!* 🏃‍♂️\n──────────────\n\nOnly *1 FREE GRANT LEFT* for *${sizeMb}MB Data* on *${brandName}*!\n\n👉 Message right now & reply *PROMO* to grab the final slot!`;
+    } else {
+      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7.\n👉 Reply *DATA 1000* to view ₦1,000 budget plans.`;
+    }
+
+    try {
+      worker.postMessage({ type: 'text_status', text });
+      logger.info(`[PROMO-STATUS] Dispatched dynamic status update for ${uid} (${remainingClaims} remaining)`);
+      return true;
+    } catch (e) {
+      logger.error(`[PROMO-STATUS] Failed to dispatch promo status for ${uid}: ${e.message}`);
+      return false;
+    }
+  }
 }
 
 export default new SessionManager();

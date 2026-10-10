@@ -148,6 +148,36 @@ const sendPromoStatus = async () => {
   await sendStatusToWorkers([selected], '✨ Clarion Status update — stay connected to the best data offers.');
 };
 
+const DAILY_TEXT_STATUSES = [
+  "⚡ Cheap MTN, Airtel & Glo data available 24/7!\n\n👉 Reply *DATA* to order instantly.",
+  "📱 Running low on data?\n\n👉 Reply *DATA 500* or *DATA 1000* for instant automated top-up!",
+  "🇳🇬 Did you know? Every data purchase here funds local NYSC CDS projects!\n\n👉 Reply *DATA* to support & save.",
+  "🎓 Need WAEC or NECO result checking PINs?\n\n👉 Reply *PIN WAEC* or *PIN NECO* to buy instantly!",
+  "💳 Buy Airtime for any network in seconds!\n\n👉 Reply *CARD 500* to try now.",
+  "⚡ Need high-speed data right now?\n\n👉 Reply *DATA* to view our instant delivery catalog!",
+  "🎉 Cheap data deals available for the weekend!\n\n👉 Reply *DATA* to order now."
+];
+
+const sendDailyTextStatus = async () => {
+  if (!sessionManager.sessions || sessionManager.sessions.size === 0) return;
+
+  const dayOfWeek = new Date().getDay(); // 0 (Sun) - 6 (Sat)
+  const todayStatusText = DAILY_TEXT_STATUSES[dayOfWeek];
+
+  for (const [uid, worker] of sessionManager.sessions.entries()) {
+    try {
+      // Check if user has an active promo running; if so, skip non-promo text status
+      const userDoc = await sessionManager.getUser(uid);
+      if (userDoc?.activePromo?.status === 'ACTIVE' && userDoc?.activePromo?.claimsRemaining > 0) {
+        continue;
+      }
+      worker.postMessage({ type: 'text_status', text: todayStatusText });
+    } catch (err) {
+      logger.error(`Failed to send daily text status to worker for user ${uid}:`, err.message);
+    }
+  }
+};
+
 export function startStatusPostJob() {
   if (config.mockMode && process.env.TEST_CRON !== 'true') {
     logger.info('Skipping status job initialization in mock mode (set TEST_CRON=true to override).');
@@ -164,6 +194,11 @@ export function startStatusPostJob() {
   cron.schedule('0 7 * * *', async () => {
     logger.info('Posting daily price card status.');
     await sendPriceCardStatus();
+  }, { timezone: 'Africa/Lagos' });
+
+  cron.schedule('0 9 * * *', async () => {
+    logger.info('Posting daily non-promo text status.');
+    await sendDailyTextStatus();
   }, { timezone: 'Africa/Lagos' });
 
   cron.schedule('30 12 * * *', async () => {

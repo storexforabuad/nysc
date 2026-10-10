@@ -3146,6 +3146,9 @@ export const handleMotherMessage = async (sock, msg) => {
           if (isMicroCredit) updateFields.promoCreditClaimed = true;
           await saveUser({ ...userData, ...updateFields });
 
+          // Auto-post dynamic launch status to WhatsApp Status
+          sessionManager.dispatchDynamicPromoStatus(userData, newPromo);
+
           const creditNotice = isMicroCredit
             ? `\n💡 *Kickstart Micro-Credit Activated:* ₦${totalBudget} was issued on credit! As your customers buy data, sales auto-clear the balance.`
             : '';
@@ -3291,6 +3294,7 @@ You’ve just been awarded *${giftSizeMb}MB Free Data*:
               await saveUser({ ...userData, activePromo });
               remainingNote = `\n· Remaining Grants: *${activePromo.remainingClaims} left*`;
             }
+            sessionManager.dispatchDynamicPromoStatus(userData, activePromo);
           }
 
           return sock.sendMessage(from, {
