@@ -444,11 +444,11 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
 
       const statusKitCopy = info.isSameNumber
         ? `Big news! 🚀 My line is now powered by *${info.storeName}*!\n\n` +
-          `Get instant, subsidised MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+          `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
           `👉 Just reply *DATA* or *DATA 500* to this chat to see the best plans for your budget!\n\n` +
           `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`
         : `Big news! 🚀 I just launched *${info.storeName}*!\n\n` +
-          `Get instant, subsidised MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
+          `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
           `👉 Message my store line to order:\n` +
           `https://wa.me/234${info.botTenDigits}\n\n` +
           `Or text ${info.formattedStoreNumber}!\n\n` +

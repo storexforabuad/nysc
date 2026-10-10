@@ -89,7 +89,7 @@ export function getPortalMenuText(stateCode) {
     `1 · 🧠 *LEARN*\n` +
     `Camp survival, PPA guides & high-income skills\n\n` +
     `2 · 💼 *EARN*\n` +
-    `24/7 digital telecom franchise & automated retail\n\n` +
+    `24/7 digital telecom franchise, automated retail & jobs\n\n` +
     `3 · 🏗️ *BUILD*\n` +
     `Venture foundry, production & startup grants\n\n` +
     `4 · 🛍️ *MERCH*\n` +
@@ -131,8 +131,8 @@ export function getEarnMenuText() {
     `   Run a personal data, airtime, exam PINs (WAEC/NECO), electricity & cable TV bot on WhatsApp with ₦0 capital.\n\n` +
     `2️⃣ 🛍️ *Compass™ Online Storefronts*\n` +
     `   Sell your physical or digital products via WhatsApp & Web with automated bot checkout.\n\n` +
-    `3️⃣ 🤝 *Clarion Affiliate & Creator Partner Program*\n` +
-    `   Earn weekly cash bonuses recommending Clarion services, apparel & kits.\n\n` +
+    `3️⃣ 🤝 *Creator Partner Program*\n` +
+    `   Earn weekly cash rewards recommending Clarion products.\n\n` +
     `4️⃣ 📋 *NYSC Job Board & Talent Placement*\n` +
     `   Direct corporate match with top companies, remote micro-gigs & PPA placement.\n\n` +
     `──────────────\n` +
@@ -447,7 +447,7 @@ export const handleMotherMessage = async (sock, msg) => {
             donationTier: 'HUB',
             status: 'AWAITING_PAYMENT',
             createdAt: new Date().toISOString()
-          }).catch(() => {});
+          }).catch(() => { });
         }
 
         return sock.sendMessage(from, {
@@ -525,7 +525,7 @@ export const handleMotherMessage = async (sock, msg) => {
             donationTier: 'HUB',
             status: 'AWAITING_PAYMENT',
             createdAt: new Date().toISOString()
-          }).catch(() => {});
+          }).catch(() => { });
         }
 
         return sock.sendMessage(from, {
@@ -620,7 +620,7 @@ export const handleMotherMessage = async (sock, msg) => {
             donationTier: 'HUB',
             status: 'AWAITING_PAYMENT',
             createdAt: new Date().toISOString()
-          }).catch(() => {});
+          }).catch(() => { });
         }
 
         return sock.sendMessage(from, {
@@ -1960,7 +1960,7 @@ export const handleMotherMessage = async (sock, msg) => {
             docRef = db.users.doc(partnerUid).collection('manualOrders').doc(orderId);
             const snap = await docRef.get();
             if (snap.exists) order = snap.data();
-          } catch (e) {}
+          } catch (e) { }
         }
 
         if (!order) {
@@ -1981,7 +1981,7 @@ export const handleMotherMessage = async (sock, msg) => {
         order.cancelledAt = new Date().toISOString();
 
         if (docRef) {
-          await docRef.update({ status: 'CANCELLED', cancelledAt: order.cancelledAt }).catch(() => {});
+          await docRef.update({ status: 'CANCELLED', cancelledAt: order.cancelledAt }).catch(() => { });
         }
         mockManualOrders.set(orderId, order);
 
@@ -2003,30 +2003,39 @@ export const handleMotherMessage = async (sock, msg) => {
         const planConfig = SUBSCRIPTION_PLANS.MONTHLY;
 
         if (!isConfirming) {
-          let msg = `🚀 *Upgrade to Clarion Autonomous Mode*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-            `Turn your WhatsApp into a 24/7 automated digital store! While you're in CDS, at PPA, or sleeping:\n\n` +
-            `⚡ Bot answers customer messages instantly\n` +
-            `📊 Shows data catalogs & pricing\n` +
-            `💳 Collects payment via dedicated account\n` +
-            `📦 Dispenses data automatically in 20 seconds\n` +
-            `💰 Automatically credits your profit wallet\n\n` +
-            `*Subscription Plan:*\n` +
-            `⭐ *Monthly Plan* — ₦${planConfig.price.toLocaleString()}/month\n` +
-            `   👉 Reply *UPGRADE CONFIRM*\n\n` +
-            `💰 *Your Profit Wallet Balance:* ₦${balance.toFixed(2)}\n`;
+          let msg = `⚡ *CLARION AI UPGRADE*\n` +
+            `_Run a 24/7 automated data business — zero manual effort._\n` +
+            `──────────────\n\n` +
+            `Here is what happens when you sell *manually:*\n\n` +
+            `😰 Your customer messages you first.\n` +
+            `😰 They send payment *after* you send the data.\n` +
+            `😰 Some say _"I'll send later."_ Then they go quiet. 🫠\n` +
+            `😰 You chase them. It gets awkward. You lose a friend and ₦500.\n` +
+            `😰 You can only serve people when *you* are awake.\n\n` +
+            `Here is what happens when your *Clarion AI* handles it:\n\n` +
+            `✅ Customer types *DATA* or *DATA 500* at 3am.\n` +
+            `✅ AI shows plans instantly.\n` +
+            `✅ Customer picks one and transfers payment directly.\n` +
+            `✅ Data vends *automatically* the moment payment hits.\n` +
+            `✅ No debt. No awkward chats. No missed orders. Ever.\n\n` +
+            `──────────────\n` +
+            `💳 *Activate AI Automation — ₦${planConfig.price.toLocaleString()}/month*\n\n` +
+            `💰 *Your Wallet Balance:* ₦${balance.toFixed(2)}\n`;
 
           if (isCurrentlyAutonomous) {
             const expDate = new Date(activeSub.expiresAt).toLocaleDateString('en-GB');
             const subLabel = activeSub.plan === 'FREE_GRANT' ? 'Complimentary Free AI Grant' : activeSub.plan;
-            msg += `\n✨ *Current Status:* Active (${subLabel}) until ${expDate}.\nUpgrading now will extend your automation by 30 days!`;
+            msg += `\n✨ *Currently Active:* ${subLabel} until ${expDate}\n_Upgrading now extends by 30 days._\n`;
           }
 
           if (balance < planConfig.price) {
             const virtualAcct = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
-            msg += `\n⚠️ *Fund your wallet to subscribe:*\n` +
-              `🏦 Bank: ${virtualAcct.bankName}\n` +
-              `🔢 Account: ${virtualAcct.accountNumber}\n` +
-              `👤 Name: ${virtualAcct.accountName || userData.verifiedName}`;
+            msg += `\n⚠️ *Fund your wallet first:*\n` +
+              `🏦 HabariPay GTCO · \`${virtualAcct.accountNumber}\`\n` +
+              `👤 ${virtualAcct.accountName || userData.verifiedName}\n\n` +
+              `_Transfer ₦${planConfig.price.toLocaleString()} then reply *UPGRADE CONFIRM*._`;
+          } else {
+            msg += `\n👉 Reply *UPGRADE CONFIRM* to activate.`;
           }
 
           return sock.sendMessage(from, { text: msg });
@@ -2153,43 +2162,44 @@ export const handleMotherMessage = async (sock, msg) => {
 
         return sock.sendMessage(from, {
           text: newState
-            ? `✅ *New Contact Announcement: ON*\n\nFirst-time visitors will receive your friendly introduction explaining your Clarion franchise and clarifying that normal chatting still works!`
-            : `🔕 *New Contact Announcement: OFF (Paused)*\n\nFirst-time visitors will not receive the introductory message. Bot will only reply when commands or keywords are typed.`
+            ? `✅ *ANNOUNCE: ON*\n──────────────\n\nNew contacts will receive a friendly welcome note explaining that your line is AI-powered and that normal chatting still works perfectly.`
+            : `🔕 *ANNOUNCE: OFF*\n──────────────\n\nFirst-contact welcome messages are paused. Your bot will only respond when keywords are used.`
         });
       }
 
-      // ── HELP / COMMANDS Command (Full Categorized Reference) ──
+      // ── HELP / COMMANDS Command ──
       else if (userData.state === STATES.COMPLETED && /^(?:help|commands|\?)$/i.test(command)) {
         const isAutonomous = userData.botMode === BOT_MODES.AUTONOMOUS;
-        const modeBadge = isAutonomous ? '🤖 AUTONOMOUS' : '👤 MANUAL';
+        const modeBadge = isAutonomous ? '*AUTONOMOUS* 🤖' : '*MANUAL* 👤';
 
-        const helpMsg = `📖 *Clarion Command Center* (${modeBadge})\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-          `🛒 *STOREFRONT & SALES:*\n` +
-          `• *CHECK [prefix] [size]* — E.g. *CHECK 0801 1GB* or *CHECK 0802 ALL*\n` +
-          `• *ORDER [size] [phone]* — E.g. *ORDER 1GB 08012345678* (auto-detects network!)\n` +
-          `• *ORDERS* — View your pending & recent orders\n` +
-          `• *CANCEL [MO-ID]* — Cancel an unpaid customer order\n\n` +
-          `🤖 *AUTOMATION & SUBSCRIPTION:*\n` +
-          `• *MODE* — Check current bot mode & remaining subscription days\n` +
-          `• *UPGRADE* — Turn on 24/7 auto-bot (₦950/month)\n` +
-          `• *DOWNGRADE* — Cancel recurring auto-renew at end of billing cycle\n` +
-          `• *ANNOUNCE* — Toggle new-contact intro message (ON/OFF)\n\n` +
-          `💰 *WALLET & EARNINGS:*\n` +
-          `• *BALANCE* — Check profit balance & pending cashouts\n` +
-          `• *WITHDRAW [amount]* — Cash out profits to your locked bank\n` +
-          `• *HISTORY* — View your transaction log\n\n` +
-          `📢 *MARKETING & VIRAL GROWTH:*\n` +
-          `• *KIT* — Download your promotional status text & share card\n` +
-          `• *PROMO* — View Launch Giveaway Poster & Promo Fuel\n` +
-          `• *GIFT [phone] [plan]* — Gift promotional data to friends\n\n` +
-          `🎖️ *COMMUNITY & IMPACT:*\n` +
-          `• *RANK* / *PROFILE* — View your Official NYSC Franchise License\n` +
-          `• *IMPACT* — View your CDS donation milestone score\n` +
-          `• *CDS APPLY* — Apply for a community micro-grant\n` +
-          `• *CDS STATUS* — Check status of grant applications\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `_Tip: Text any command above to trigger it instantly!_ ⚡`;
+        const helpMsg = `❓ *COMMAND DIRECTORY*\n` +
+          `_Mode: ${modeBadge}_\n` +
+          `──────────────\n\n` +
+          `🛒 *Sales & Storefront*\n` +
+          `· *CHECK [prefix] [size]* — e.g. CHECK 0801 1GB\n` +
+          `· *ORDER [size] [phone]* — e.g. ORDER 1GB 08012345678\n` +
+          `· *ORDERS* — View pending & recent orders\n` +
+          `· *CANCEL [MO-ID]* — Cancel an unpaid order\n\n` +
+          `🤖 *Automation*\n` +
+          `· *MODE* — Check bot mode & subscription status\n` +
+          `· *UPGRADE* — Activate 24/7 AI automation (₦950/mo)\n` +
+          `· *DOWNGRADE* — Cancel auto-renew at billing cycle end\n` +
+          `· *ANNOUNCE* — First-contact welcome toggle (ON/OFF)\n\n` +
+          `💰 *Wallet & Earnings*\n` +
+          `· *BALANCE* — Check profit balance & cashouts\n` +
+          `· *WITHDRAW [amount]* — Cash out to your bank\n` +
+          `· *HISTORY* — View transaction log\n\n` +
+          `📢 *Growth & Marketing*\n` +
+          `· *KIT* — Promotional status text & share card\n` +
+          `· *PROMO* — Launch giveaway poster & promo fuel\n` +
+          `· *GIFT [phone] [plan]* — Gift data to a friend\n\n` +
+          `🎖️ *Community & Impact*\n` +
+          `· *RANK* / *PROFILE* — NYSC Franchise License\n` +
+          `· *IMPACT* — CDS donation milestone score\n` +
+          `· *CDS APPLY* — Apply for a community micro-grant\n` +
+          `· *CDS STATUS* — Check grant application status\n\n` +
+          `──────────────\n` +
+          `👉 Reply any command above to proceed. ⚡`;
 
         return sock.sendMessage(from, { text: helpMsg });
       }
@@ -2207,25 +2217,40 @@ export const handleMotherMessage = async (sock, msg) => {
 
           if (!isExpired) {
             const planTitle = sub.plan === 'FREE_GRANT' ? 'Complimentary Free AI Grant' : sub.plan;
+            const announceStatus = userData.announceNewContacts !== false ? 'ENABLED 📢' : 'OFF 🔕';
             return sock.sendMessage(from, {
-              text: `🤖 *Bot Operating Mode: AUTONOMOUS* ⚡\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-                `📦 *Plan:* ${planTitle} (${daysLeft} days remaining)\n` +
-                `📅 *Expires:* ${expDate.toLocaleDateString('en-GB')}\n` +
-                `🔄 *Auto-Renew:* ${sub.autoRenew !== false ? '✅ Active' : '❌ Inactive'}\n\n` +
-                `Your ProxyBot is actively responding to customer chats 24/7.\n\n` +
-                `_Commands: *DOWNGRADE* to switch to manual, or *UPGRADE* to extend._`
+              text: `⚙️ *AUTOPILOT CONTROLS*\n` +
+                `_Manage your ProxyBot AI response engine._\n` +
+                `──────────────\n\n` +
+                `Status: *AUTONOMOUS ACTIVE* 🤖\n` +
+                `Plan: ${planTitle} · ${daysLeft} days left\n` +
+                `Expires: ${expDate.toLocaleDateString('en-GB')}\n` +
+                `Auto-Renew: ${sub.autoRenew !== false ? '✅ Active' : '❌ Inactive'}\n` +
+                `First-Contact Intro: *${announceStatus}*\n\n` +
+                `· Reply *DOWNGRADE* — Switch to manual mode\n` +
+                `· Reply *UPGRADE* — Extend automation\n` +
+                `· Reply *ANNOUNCE ON/OFF* — Toggle welcome messages\n\n` +
+                `──────────────\n` +
+                `· Reply *0* for Main Menu`
             });
           }
         }
 
+        const announceStatus = userData.announceNewContacts !== false ? 'ENABLED 📢' : 'OFF 🔕';
         return sock.sendMessage(from, {
-          text: `👤 *Bot Operating Mode: MANUAL (Free)*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-            `Your ProxyBot is *silent*. You handle customer chats yourself and use MotherBot for quick processing:\n\n` +
-            `• *CHECK 0801 1GB* — Lookup network plans\n` +
-            `• *ORDER 1GB 08012345678* — Create order\n` +
-            `• *ORDERS* — View recent orders\n\n` +
-            `🚀 *Want 24/7 automated sales?*\n` +
-            `Text *UPGRADE* to activate autonomous mode for *₦950/month*!`
+          text: `⚙️ *AUTOPILOT CONTROLS*\n` +
+            `_Manage your ProxyBot AI response engine._\n` +
+            `──────────────\n\n` +
+            `Status: *MANUAL (Free)* 👤\n` +
+            `First-Contact Intro: *${announceStatus}*\n\n` +
+            `Your ProxyBot is silent. You handle customers manually:\n` +
+            `· *CHECK 0801 1GB* — Look up plans\n` +
+            `· *ORDER 1GB 08012345678* — Create order\n` +
+            `· *ORDERS* — View recent orders\n\n` +
+            `· Reply *UPGRADE* — Activate 24/7 AI automation (₦950/mo)\n` +
+            `· Reply *ANNOUNCE ON/OFF* — Toggle welcome messages\n\n` +
+            `──────────────\n` +
+            `· Reply *0* for Main Menu`
         });
       }
 
@@ -2654,10 +2679,10 @@ export const handleMotherMessage = async (sock, msg) => {
           (tier === 'PIONEER'
             ? `• Clarion Lord Executive Badge & Rank\n• Maximum 64% Personal Profit Retention\n• Priority CDS Grant Proposal Consideration\n• Dedicated Enterprise Cloud Node`
             : tier === 'LORD'
-            ? `• Clarion Lord Executive Badge & Honors\n• Highest CDS Philanthropist Standing (64% Pool)\n• VIP Community Recognition`
-            : tier === 'MASTER'
-            ? `• Clarion Master Enterprise Standing\n• Balanced 40/40 Social Enterprise Split`
-            : `• Clarion Standard Partner\n• 64% Personal Profit Retention`) +
+              ? `• Clarion Lord Executive Badge & Honors\n• Highest CDS Philanthropist Standing (64% Pool)\n• VIP Community Recognition`
+              : tier === 'MASTER'
+                ? `• Clarion Master Enterprise Standing\n• Balanced 40/40 Social Enterprise Split`
+                : `• Clarion Standard Partner\n• 64% Personal Profit Retention`) +
           `\n\n_Type *ID* anytime to download your Official Franchise Identification Card._`;
 
         return sock.sendMessage(from, { text: rankMsg });
@@ -2902,7 +2927,7 @@ export const handleMotherMessage = async (sock, msg) => {
             if (!snap.empty) {
               userProposals = snap.docs.map(doc => doc.data());
             }
-          } catch (e) {}
+          } catch (e) { }
         }
         if (userProposals.length === 0 && mockCdsProposals.size > 0) {
           userProposals = Array.from(mockCdsProposals.values()).filter(p => p.userId === from);
@@ -3016,15 +3041,15 @@ export const handleMotherMessage = async (sock, msg) => {
 
           const captionText = isSame
             ? `📢 *Your Safe Launch Promotional Share Card!*\n\n` +
-              `1️⃣ Save this image to your gallery.\n` +
-              `2️⃣ Copy the message above.\n` +
-              `3️⃣ Post both to your WhatsApp Status!\n\n` +
-              `_When your contacts view your status and reply 'DATA', your automated bot takes over and sells data instantly!_ 🚀`
+            `1️⃣ Save this image to your gallery.\n` +
+            `2️⃣ Copy the message above.\n` +
+            `3️⃣ Post both to your WhatsApp Status!\n\n` +
+            `_When your contacts view your status and reply 'DATA', your automated bot takes over and sells data instantly!_ 🚀`
             : `📢 *Your Safe Launch Promotional Share Card!*\n\n` +
-              `1️⃣ Save this image to your gallery.\n` +
-              `2️⃣ Copy the message above.\n` +
-              `3️⃣ Post both to your WhatsApp Status and forward to 20 friends or groups.\n\n` +
-              `_When they tap your wa.me link, your bot takes over and sells data automatically!_ 🚀`;
+            `1️⃣ Save this image to your gallery.\n` +
+            `2️⃣ Copy the message above.\n` +
+            `3️⃣ Post both to your WhatsApp Status and forward to 20 friends or groups.\n\n` +
+            `_When they tap your wa.me link, your bot takes over and sells data automatically!_ 🚀`;
 
           await sock.sendMessage(from, {
             image: shareBuffer,
@@ -3068,13 +3093,13 @@ export const handleMotherMessage = async (sock, msg) => {
 
           const giveawayStatusText = isSame
             ? `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-              `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
-              `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
-              `Watch the bot reply and vend your data in 20 seconds! ⚡`
+            `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+            `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
+            `Watch the bot reply and vend your data in 20 seconds! ⚡`
             : `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-              `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
-              `👉 *To claim: Tap this link to message my bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
-              `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
+            `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+            `👉 *To claim: Tap this link to message my bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
+            `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
 
           await sock.sendMessage(from, {
             image: promoBuffer,

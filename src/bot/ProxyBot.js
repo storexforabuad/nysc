@@ -142,12 +142,12 @@ export const handleProxyMessage = async (sock, msg, user) => {
         await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
         await sock.sendMessage(from, {
-          text: `Big news! 🚀 My line is now powered by *${storeName}*!\n\n` +
-            `Get instant, subsidised MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
-            `👉 Just reply *DATA* or *DATA 500* to this chat to see the best plans for your budget!\n\n` +
-            `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬\n\n` +
-            `──────────────\n` +
-            `_Note: You can continue chatting with me normally if you don't need data right now! The storefront only activates when you mention keywords. Have a wonderful day! 😊_`
+          text: `👋 *Quick note!* My line is powered by *${storeName}*. ⚡\n\n` +
+            `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically.\n\n` +
+            `👉 Reply *DATA* or *DATA 500* to view plans for your budget!\n\n` +
+            `💚 _A portion of every purchase funds NYSC Community Development projects._ 🇳🇬\n\n` +
+            `_You can keep chatting with me normally — the bot only responds when you use keywords._\n` +
+            `_Have a great day! 😊_`
         });
 
         await sock.sendPresenceUpdate('paused', from).catch(() => {});
@@ -509,20 +509,21 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       const storeName = user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Telecom'));
-      let menuText = `👋 Welcome to *${storeName}*!\n\n`;
+      const networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
+      let menuText = `⚡ *CLARION TELECOM CATALOG*\n_Affordable data · Instant delivery 24/7_\n──────────────\n\n`;
 
-      let networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
       if (detectedNet && targetPhone) {
-        menuText += `📶 *${networkStr}* network detected for ${targetPhone}\n\n`;
+        menuText += `📶 *${networkStr}* detected for ${targetPhone}\n\n`;
       } else if (detectedNet) {
-        menuText += `📶 *${networkStr}* network detected\n\n`;
+        menuText += `📶 *${networkStr}* detected\n\n`;
       }
 
       if (targetPrice) {
-        menuText += `*Best subsidized ${networkStr} data plans for your ₦${targetPrice} budget:*\n`;
+        menuText += `💰 *Best plans near ₦${targetPrice} budget:*\n`;
       } else {
-        menuText += `*All ${networkStr} data plans and current prices:*\n`;
+        menuText += `📶 *${networkStr} Data Plans:*\n`;
       }
+
 
       if (filteredPlans.length === 0) {
         menuText += `\n❌ No plans found matching your criteria.`;
@@ -530,7 +531,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         // Render dynamically grouped duration categories natively for all networks
         const durationGroups = {};
         for (const plan of filteredPlans) {
-          const cat = plan.durationCategory || '🗓️ *Other Plans:*';
+          const cat = plan.durationCategory || '🗓️ Other Plans';
           if (!durationGroups[cat]) durationGroups[cat] = [];
           durationGroups[cat].push(plan);
         }
@@ -539,14 +540,13 @@ export const handleProxyMessage = async (sock, msg, user) => {
         for (const cat of Object.keys(durationGroups)) {
           menuText += `\n${cat}\n`;
           durationGroups[cat].forEach(plan => {
-            const officialTag = plan.officialPrice ? ` (Official: ₦${plan.officialPrice})` : '';
-            menuText += `👉 *${plan.name} = ₦${plan.basePrice}* - ₦${plan.sellPrice}${officialTag}\n`;
-            menuText += `   Reply *BUY ${plan.serial}* to order.\n`;
+            menuText += `· *${plan.name}* — *₦${plan.sellPrice}*\n`;
+            menuText += `  👉 Reply *BUY ${plan.serial}*\n`;
           });
         }
       }
 
-      menuText += '\n\n_Transfer exact amount and data will be vended instantly._\n_Reply *CANCEL* to exit anytime._';
+      menuText += '\n──────────────\n_Transfer exact amount upon prompt. Data dispenses instantly._\n· Reply *CANCEL* to exit';
       return sock.sendMessage(from, { text: menuText });
     }
 
@@ -632,7 +632,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             handleMilestoneCheck(user.uid, prevCds, newCds, user).catch(() => {});
           }
 
-          return sock.sendMessage(from, { text: `✅ *Great News!*\n\nYour ${plan.name} plan has been successfully delivered and deducted from your Clarion Wallet.\n\nThank you for using Clarion A.I! 🎉` });
+          return sock.sendMessage(from, { text: `✅ *DATA DELIVERED!*\n──────────────\n\n📦 *Plan:* ${plan.name}\n💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\nThank you for choosing Clarion AI! 🎉\n· Reply *DATA* for your next order` });
         } catch (dispenseError) {
           // If Peyflex fails again during wallet buy, push it to FAILED_DISPENSE for RetryQueue to handle
           if (db.ledger) {
@@ -643,7 +643,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               updatedAt: new Date().toISOString()
             });
           }
-          return sock.sendMessage(from, { text: `⚠️ We experienced a slight delay dispensing your data. Don't worry! Our automated system will retry this order and you'll get your data shortly.` });
+          return sock.sendMessage(from, { text: `⚠️ *DELIVERY DELAY DETECTED*\n──────────────\n\nYour payment of *₦${plan.sellPrice.toLocaleString()}* is safely confirmed. ✅\n\nTelecom network servers are experiencing a brief delay. Our automated engine is retrying right now.\n\n_You do not need to resend payment. Your funds are 100% safe._` });
         }
       }
 
@@ -663,7 +663,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
       const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
-      const paymentInstruction = `💳 *Order Confirmation: ${plan.name}*\n\nTo complete your purchase, please transfer *₦${plan.sellPrice}* to the secure Clarion collection account below:\n\nBank: ${bankInfo.bankName}\nAccount: ${bankInfo.accountNumber}\nName: ${accountName}\n\n✅ Your data will be dispensed automatically upon payment detection.\n\nReply *CANCEL* to abort this order.`;
+      const paymentInstruction = `💳 *ORDER CONFIRMATION*\n_${plan.name}_\n──────────────\n\nTransfer exactly *₦${plan.sellPrice}* to complete your order:\n\n🏦 *Bank:* ${bankInfo.bankName}\n🔢 *Account:* \`${bankInfo.accountNumber}\`\n👤 *Name:* ${accountName}\n\n──────────────\n⚡ _Data vends automatically once transfer is detected._\n· Reply *CANCEL* to abort order`;
       return sock.sendMessage(from, { text: paymentInstruction });
     }
 
