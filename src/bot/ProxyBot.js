@@ -92,6 +92,22 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
 
+    // Ensure in-memory user has latest approval/mode state if pending
+    if (user.terminalApproved !== true || user.botMode !== BOT_MODES.AUTONOMOUS) {
+      if (db.users && user?.uid) {
+        try {
+          const freshDoc = await db.users.doc(user.uid).get();
+          if (freshDoc.exists) {
+            const freshData = freshDoc.data();
+            if (freshData.terminalApproved === true) user.terminalApproved = true;
+            if (freshData.botMode) user.botMode = freshData.botMode;
+            if (freshData.subscription) user.subscription = freshData.subscription;
+            if (freshData.onboardingStep !== undefined) user.onboardingStep = freshData.onboardingStep;
+          }
+        } catch (e) {}
+      }
+    }
+
     // ── Onboarding Wizard Check (if partner is completing setup) ──
     const partnerPhoneDigits = String(user.phoneNumber || user.phone || user.uid || '').replace(/[^0-9]/g, '').slice(-10);
     const senderDigits = String(actionableJid || from).replace(/[^0-9]/g, '').slice(-10);

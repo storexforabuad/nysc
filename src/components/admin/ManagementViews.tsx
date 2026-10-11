@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import CdsProposals from './CdsProposals';
 import BroadcastPanel from './BroadcastPanel';
 import AssetStudio from './AssetStudio';
+import PitchAndMerchPanel from './PitchAndMerchPanel';
 
 export default function ManagementViews() {
     const [partners, setPartners] = useState<any[]>([]);
@@ -211,6 +212,11 @@ export default function ManagementViews() {
             {/* ── CDS GRANT PROPOSALS PANEL ── */}
             <div className="pt-8 border-t border-zinc-800">
                 <CdsProposals />
+            </div>
+
+            {/* ── VENTURE PITCHES & MERCH COLLABORATIONS PANEL ── */}
+            <div className="pt-8 border-t border-zinc-800">
+                <PitchAndMerchPanel />
             </div>
 
             {/* ── BROADCAST CONTROL CENTER ── */}

@@ -1,7 +1,7 @@
 import os from 'os';
 import { db } from './firebase.js';
 import { logger } from '../config/env.js';
-import wallet from './WalletService.js';
+import wallet, { getFreeGrantDays } from './WalletService.js';
 import sessionManager from '../bot/SessionManager.js';
 import mediaGen from './mediaGen.js';
 
@@ -415,13 +415,40 @@ class AdminService {
             if (!userDoc.exists) return { success: false, message: 'Vendor not found' };
 
             const userData = userDoc.data();
-            await userRef.set({
+            const tier = userData.partnershipTier || userData.donationTier || 'MEMBER';
+            const grantDays = getFreeGrantDays(tier);
+            const now = new Date();
+            const expiresAt = new Date(now.getTime() + grantDays * 24 * 60 * 60 * 1000).toISOString();
+
+            const subscription = {
+                plan: 'FREE_GRANT',
+                price: 0,
+                durationDays: grantDays,
+                startedAt: now.toISOString(),
+                expiresAt,
+                autoRenew: false
+            };
+
+            const updates = {
                 terminalApproved: true,
                 approvalStatus: 'APPROVED',
-                approvedAt: new Date().toISOString()
-            }, { merge: true });
+                approvedAt: now.toISOString(),
+                botMode: 'autonomous',
+                subscription,
+                onboardingStep: 0,
+                announceNewContacts: true
+            };
 
-            userData.terminalApproved = true;
+            await userRef.set(updates, { merge: true });
+            Object.assign(userData, updates);
+
+            // Hot-reload running ProxyWorker thread immediately
+            sessionManager.updateWorkerUser(userId, {
+                terminalApproved: true,
+                botMode: 'autonomous',
+                subscription,
+                announceNewContacts: true
+            });
 
             // Trigger official Franchise License Card and post-onboarding activation kit
             try {
@@ -432,7 +459,7 @@ class AdminService {
                 logger.error('Failed to dispatch approved card:', cardErr.message);
             }
 
-            return { success: true, message: `Vendor ${userId} approved successfully` };
+            return { success: true, message: `Vendor ${userId} approved & autonomous bot activated successfully` };
         } catch (error) {
             logger.error('Error approving vendor:', error.message);
             return { success: false, error: error.message };

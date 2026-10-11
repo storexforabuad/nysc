@@ -20,8 +20,8 @@ const PITCHES_DIR = path.resolve('storage/pitches');
 if (!fs.existsSync(DESIGNS_DIR)) fs.mkdirSync(DESIGNS_DIR, { recursive: true });
 if (!fs.existsSync(PITCHES_DIR)) fs.mkdirSync(PITCHES_DIR, { recursive: true });
 
-export const mockPitches = new Map();
-export const mockDesigns = new Map();
+import { mockPitches, mockDesigns } from '../services/AdminService.js';
+export { mockPitches, mockDesigns };
 export const mockContributors = new Map();
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
@@ -328,8 +328,10 @@ export const handleMotherMessage = async (sock, msg) => {
     messageContent?.buttonsResponseMessage?.selectedDisplayText ||
     '';
   const pushName = msg.pushName || 'Co-member';
+  const isDoc = !!(messageContent?.documentMessage || messageContent?.documentWithCaptionMessage);
+  const isImage = !!(messageContent?.imageMessage);
 
-  if (!text && !msg.message?.contactMessage && !msg.message?.contactsArrayMessage) {
+  if (!text && !isDoc && !isImage && !msg.message?.contactMessage && !msg.message?.contactsArrayMessage) {
     if (!msg.message?.protocolMessage) {
       logger.info({ msg: msg.message }, 'Received non-text message');
     }
@@ -776,22 +778,67 @@ export const handleMotherMessage = async (sock, msg) => {
       } else if (lower === '0' || lower === 'menu') {
         return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
       } else if (lower === 'pitch') {
-        await saveUser({ ...userData, state: STATES.AWAITING_PITCH_SUBMISSION });
+        let existingCount = 0;
+        let lastPitchId = null;
+        if (db.pitches) {
+          try {
+            const snap = await db.pitches.where('userId', '==', from).where('status', '==', 'PENDING').get();
+            existingCount = snap.size;
+            if (!snap.empty) lastPitchId = snap.docs[0].id;
+          } catch (e) {}
+        }
+        if (existingCount >= 3) {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Submission Limit Reached*\n\nYou already have ${existingCount} venture pitches pending review (Latest: *${lastPitchId}*).\nOur investment board will review them shortly before new submissions can be made.\n\n• Reply *0* to return to Main Menu`
+          });
+        }
+
+        await saveUser({ ...userData, pendingPitchFiles: [], pendingPitchNotes: '', state: STATES.AWAITING_PITCH_SUBMISSION });
+
+        let notice = '';
+        if (existingCount > 0) {
+          notice = `📋 *Notice:* You currently have ${existingCount} pitch under review (Ref: *${lastPitchId}*). You can submit another deck below.\n\n`;
+        }
+
         return sock.sendMessage(from, {
           text: `📄 *CLARION VENTURE & ACCELERATOR SUBMISSION*\n` +
             `──────────────\n\n` +
+            `${notice}` +
             `We review applications weekly for grant funding, studio time, and production sponsorship.\n\n` +
-            `Please send your pitch in one of two ways right now:\n` +
-            `1️⃣ *Send a PDF document* of your Executive Summary / Deck.\n` +
-            `2️⃣ *Or simply type out your summary here* (Problem, Solution, Team, What you need).\n\n` +
+            `Please send your pitch materials:\n` +
+            `1️⃣ *Send PDF documents* of your Executive Summary / Deck.\n` +
+            `2️⃣ *Type out details* here (Problem, Solution, Team, What you need).\n` +
+            `3️⃣ When you have sent all files and notes, reply *DONE* to submit!\n\n` +
             `──────────────\n` +
             `• Reply *CANCEL* to exit back to the Build Hub`
         });
       } else if (lower === 'design') {
+        let existingCount = 0;
+        let lastDesignId = null;
+        if (db.merchDesigns) {
+          try {
+            const snap = await db.merchDesigns.where('userId', '==', from).where('status', '==', 'PENDING').get();
+            existingCount = snap.size;
+            if (!snap.empty) lastDesignId = snap.docs[0].id;
+          } catch (e) {}
+        }
+        if (existingCount >= 3) {
+          return sock.sendMessage(from, {
+            text: `⚠️ *Submission Limit Reached*\n\nYou already have ${existingCount} merch designs pending review (Latest: *${lastDesignId}*).\nOur production team will review them shortly before new submissions can be made.\n\n• Reply *0* to return to Main Menu`
+          });
+        }
+
         await saveUser({ ...userData, pendingDesigns: [], state: STATES.AWAITING_DESIGN_SUBMISSION });
+
+        let notice = '';
+        if (existingCount > 0) {
+          notice = `📋 *Notice:* You currently have ${existingCount} design submission under review (Ref: *${lastDesignId}*). You can submit another concept below.\n\n`;
+        }
+
         return sock.sendMessage(from, {
           text: `🎨 *SEASON 1 (S1) DESIGNER COLLABORATION RULES*\n` +
             `──────────────\n\n` +
+            `${notice}` +
             `Are you a corps member fashion designer, illustrator, or tailor? If your design is selected:\n` +
             `✅ We manufacture it in our physical production space.\n` +
             `✅ We handle national distribution and delivery.\n` +
@@ -801,7 +848,7 @@ export const handleMotherMessage = async (sock, msg) => {
             `2. *Color Palette:* Must utilize Clarion signature colors (Clarion Orange, Forest Green, Cream, or Clean White) alongside the Clarion logo.\n` +
             `3. *Allowed Categories:* Bomber jackets, raglan/ringer tees, sports jerseys (Team A/B), tote bags, caps, or water bottle graphics.\n\n` +
             `👉 *Upload your sketches, mockup images, or PDF documents now!*\n` +
-            `_(You can send multiple files. When you have sent all files, reply *DONE* to submit)._\n\n` +
+            `_(You can send multiple files or type your notes. When finished, reply *DONE* to submit)._\n\n` +
             `──────────────\n` +
             `• Reply *CANCEL* to return to Merch Store`
         });
@@ -845,6 +892,32 @@ export const handleMotherMessage = async (sock, msg) => {
         await saveUser({ ...userData, state: STATES.PORTAL_MENU });
         return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
       } else if (lower === '1') {
+        const hasFranchise = userData.terminalApproved === true || !!userData.virtualAccount || userData.state === STATES.COMPLETED;
+        if (hasFranchise) {
+          const storeName = userData.brandName || userData.franchiseName || ('Clarion AI - ' + (userData.verifiedName || 'Store'));
+          const sub = userData.subscription;
+          const daysLeft = sub?.expiresAt ? Math.max(0, Math.ceil((new Date(sub.expiresAt) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
+          const balance = await wallet.getBalance(from);
+
+          return sock.sendMessage(from, {
+            text: `🏪 *YOUR TELECOM FRANCHISE IS ACTIVE & OPERATING!* 🟢\n` +
+              `──────────────\n\n` +
+              `🏢 *Store:* ${storeName}\n` +
+              `📱 *Terminal Line:* ${userData.phoneNumber || from.split('@')[0]}\n` +
+              `🤖 *Mode:* ${userData.botMode === 'autonomous' ? `Autonomous AI (${daysLeft} days remaining)` : 'Manual'}\n` +
+              `💰 *Wallet:* ₦${balance.toLocaleString()}\n\n` +
+              `*Quick Management Commands:*\n` +
+              `👉 Reply *ORDERS* — Live order feed\n` +
+              `👉 Reply *BALANCE* — Real-time earnings\n` +
+              `👉 Reply *PROMO* — Manage customer giveaways\n` +
+              `👉 Reply *STATUS* — Daily WhatsApp status schedule\n` +
+              `👉 Reply *MODE* — Automation controls\n\n` +
+              `──────────────\n` +
+              `• Reply *0* to return to EARN Hub\n` +
+              `• Reply *MENU* to return to Main Portal`
+          });
+        }
+
         const batchInfo = parseNyscBatch(userData.stateCode);
         if (batchInfo.isActiveCohort) {
           await saveUser({ ...userData, state: STATES.AWAITING_TIER_SELECTION });
@@ -934,54 +1007,88 @@ export const handleMotherMessage = async (sock, msg) => {
     }
     else if (userData.state === STATES.AWAITING_PITCH_SUBMISSION) {
       if (command.toLowerCase() === 'cancel') {
-        await saveUser({ ...userData, state: STATES.PORTAL_MENU });
+        await saveUser({ ...userData, pendingPitchFiles: [], pendingPitchNotes: '', state: STATES.PORTAL_MENU });
         return sock.sendMessage(from, { text: getBuildMenuText() });
       }
 
-      let fileSavedPath = null;
-      const isDoc = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage || msg.message?.imageMessage);
-      if (isDoc) {
+      const isMedia = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage || msg.message?.imageMessage);
+
+      if (command.toLowerCase() === 'done') {
+        const files = userData.pendingPitchFiles || [];
+        const notes = userData.pendingPitchNotes || '';
+
+        if (files.length === 0 && notes.trim().length === 0) {
+          return sock.sendMessage(from, {
+            text: `❌ No pitch deck or summary text received yet.\n\nPlease upload a PDF document or type your summary, or reply *CANCEL* to exit.`
+          });
+        }
+
+        const pitchId = `CLARION-PITCH-${Math.floor(1000 + Math.random() * 9000)}`;
+        const pitchEntry = {
+          id: pitchId,
+          pitchId,
+          userId: from,
+          stateCode: userData.stateCode || 'NYSC',
+          verifiedName: userData.verifiedName || userData.name || 'Corps Member',
+          summary: notes.trim() || (files.length > 0 ? `${files.length} document(s) attached` : 'Pitch Submission'),
+          files,
+          filePath: files[0] || null,
+          status: 'PENDING',
+          submittedAt: new Date().toISOString()
+        };
+
+        if (db.pitches) {
+          await db.pitches.doc(pitchId).set(pitchEntry).catch(err => logger.warn(`Firestore pitch save failed: ${err.message}`));
+        }
+        mockPitches.set(pitchId, pitchEntry);
+
+        await saveUser({ ...userData, pendingPitchFiles: [], pendingPitchNotes: '', state: STATES.PORTAL_MENU });
+
+        return sock.sendMessage(from, {
+          text: `✅ *PITCH RECEIVED & LOGGED!*\n` +
+            `──────────────\n\n` +
+            `Reference ID: *${pitchId}*\n` +
+            `Attached: ${files.length} document(s)${notes ? ' + executive notes' : ''}.\n\n` +
+            `Your executive summary has been cataloged in the Clarion Ventures Dashboard for review.\n\n` +
+            `We will notify you right here on WhatsApp once reviewed!\n\n` +
+            `──────────────\n` +
+            `• Reply *0* to explore other departments\n` +
+            `• Reply *MENU* to view Main Portal`
+        });
+      }
+
+      if (isMedia) {
         try {
           const buffer = await downloadMediaMessage(msg, 'buffer', {});
-          const fileName = `${from.replace(/[^0-9]/g, '')}_${Date.now()}.pdf`;
+          const ext = msg.message?.imageMessage ? 'jpg' : 'pdf';
+          const originalDocName = msg.message?.documentMessage?.fileName || msg.message?.documentWithCaptionMessage?.message?.documentMessage?.fileName;
+          const fileName = `${from.replace(/[^0-9]/g, '')}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
           const fullPath = path.join(PITCHES_DIR, fileName);
           fs.writeFileSync(fullPath, buffer);
-          fileSavedPath = fullPath;
+
+          const curFiles = userData.pendingPitchFiles || [];
+          curFiles.push(fullPath);
+          await saveUser({ ...userData, pendingPitchFiles: curFiles });
+
+          const displayName = originalDocName || `${ext.toUpperCase()} file`;
+          return sock.sendMessage(from, {
+            text: `📥 *Document Received:* \`${displayName}\` (${curFiles.length} attached)\n\nYou can send another PDF document, type your pitch notes here, or reply *DONE* to finalize your submission!`
+          });
         } catch (e) {
           logger.warn(`Could not save pitch media file: ${e.message}`);
+          return sock.sendMessage(from, { text: `❌ Could not download file: ${e.message}. Please try resending.` });
         }
       }
 
-      const pitchId = `CLARION-PITCH-${Math.floor(1000 + Math.random() * 9000)}`;
-      const pitchEntry = {
-        id: pitchId,
-        pitchId,
-        userId: from,
-        stateCode: userData.stateCode || 'NYSC',
-        verifiedName: userData.verifiedName || userData.name || 'Corps Member',
-        summary: command || (isDoc ? 'Document attached' : 'Pitch Submission'),
-        filePath: fileSavedPath,
-        status: 'PENDING',
-        submittedAt: new Date().toISOString()
-      };
-
-      if (db.pitches) {
-        await db.pitches.doc(pitchId).set(pitchEntry).catch(err => logger.warn(`Firestore pitch save failed: ${err.message}`));
+      // If user types text summary
+      if (command && command.length > 0) {
+        const curNotes = userData.pendingPitchNotes ? `${userData.pendingPitchNotes}\n\n${command}` : command;
+        await saveUser({ ...userData, pendingPitchNotes: curNotes });
+        const fileCount = (userData.pendingPitchFiles || []).length;
+        return sock.sendMessage(from, {
+          text: `📝 *Pitch Details Saved!*\n\n${fileCount > 0 ? `(${fileCount} file(s) attached)\n` : ''}You can upload a PDF deck, send more details, or reply *DONE* to submit!\n• Reply *CANCEL* to exit.`
+        });
       }
-      mockPitches.set(pitchId, pitchEntry);
-
-      await saveUser({ ...userData, state: STATES.PORTAL_MENU });
-
-      return sock.sendMessage(from, {
-        text: `✅ *PITCH RECEIVED & LOGGED!*\n` +
-          `──────────────\n\n` +
-          `Reference ID: *${pitchId}*\n` +
-          `Your executive summary has been logged into the Clarion Ventures Dashboard for review.\n\n` +
-          `We will notify you right here on WhatsApp once reviewed!\n\n` +
-          `──────────────\n` +
-          `• Reply *0* to explore other departments\n` +
-          `• Reply *MENU* to view Main Portal`
-      });
     }
     else if (userData.state === STATES.AWAITING_DESIGN_SUBMISSION) {
       if (command.toLowerCase() === 'cancel') {

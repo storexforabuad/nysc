@@ -27,8 +27,8 @@ export const SUBSCRIPTION_PLANS = {
 export function getFreeGrantDays(tier) {
     if (!tier) return 0;
     const t = String(tier).toUpperCase();
-    if (t === 'LORD') return 60; // 2 months free for 80% CDS contributors
-    if (['MASTER', 'PIONEER', 'MEMBER'].includes(t)) return 14; // 2 weeks free for 50% & 20%
+    if (t === 'LORD' || t === 'PIONEER') return 60; // 2 months (60 days) free for Pioneer Class & Lord Rank
+    if (['MASTER', 'MEMBER'].includes(t)) return 14; // 2 weeks (14 days) free for Master & Member
     return 0;
 }
 

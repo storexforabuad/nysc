@@ -179,6 +179,11 @@ async function startWorker(isInitialBoot = true) {
             } catch (e) {
                 logger.error(`[WORKER] Text status post failed for ${user.uid}: ${e.message}`);
             }
+        } else if (msg.type === 'update_user') {
+            if (msg.updates) {
+                Object.assign(user, msg.updates);
+                logger.info(`[WORKER] User state hot-reloaded for ${user.uid}: botMode=${user.botMode}, approved=${user.terminalApproved}`);
+            }
         }
     });
 }

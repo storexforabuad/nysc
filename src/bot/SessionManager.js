@@ -371,14 +371,22 @@ class SessionManager {
       }
     }
 
+    // Immediately push hot-reload to running ProxyWorker thread
+    this.updateWorkerUser(phoneJid, {
+      terminalApproved: true,
+      botMode: updates.botMode,
+      subscription: updates.subscription,
+      announceNewContacts: true
+    });
+
     // 3. Stage 0 — Tier-Aware Welcome Briefing
     let tierHeader = '';
     const tierUpper = String(tier || '').toUpperCase();
-    if (tierUpper === 'LORD') {
+    if (tierUpper === 'LORD' || tierUpper === 'PIONEER') {
       tierHeader = `🔱 *CLARION LORD — PIONEER BENEFIT ACTIVATED*\n\n` +
-        `As an 80% CDS contributor, you've been granted *2 months of free Autonomous AI Mode* (60 days). ⚡\n\n` +
+        `As a founding CDS contributor, you've been granted *2 months of free Autonomous AI Mode* (60 days). ⚡\n\n` +
         `Your store runs 24/7 — completely automated — with no subscription fees required.`;
-    } else if (['MASTER', 'PIONEER', 'MEMBER'].includes(tierUpper)) {
+    } else if (['MASTER', 'MEMBER'].includes(tierUpper)) {
       tierHeader = `⭐ *PARTNER BENEFIT ACTIVATED*\n\n` +
         `As a Clarion Partner (${tierUpper}), you've been granted *2 weeks of free Autonomous AI Mode* (14 days). ⚡\n\n` +
         `Your store will answer customer messages and deliver orders automatically.`;
@@ -390,11 +398,12 @@ class SessionManager {
 
     const stage0Msg = `${tierHeader}\n\n` +
       `──────────────\n` +
-      `📋 *Your 4-Step Onboarding Kit:*\n` +
+      `📋 *Your 5-Step Onboarding Kit:*\n` +
       `1️⃣  Official Franchise Certificate\n` +
-      `2️⃣  Storefront Control Deck\n` +
-      `3️⃣  Safe Launch Status Template\n` +
-      `4️⃣  Launch Giveaway Engine\n\n` +
+      `2️⃣  Storefront Control Deck & Commands\n` +
+      `3️⃣  Launch Giveaway Engine (₦0 Credit)\n` +
+      `4️⃣  Auto-Status Launch Broadcast\n` +
+      `5️⃣  7-Day Daily Auto-Status Schedule\n\n` +
       `──────────────\n` +
       `Reply *READY* to receive your official Franchise Certificate 👇`;
 
@@ -463,6 +472,22 @@ class SessionManager {
       return false;
     }
   }
+
+  updateWorkerUser(userOrUid, updates) {
+    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
+    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
+    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
+    if (worker && typeof worker.postMessage === 'function') {
+      try {
+        worker.postMessage({ type: 'update_user', updates });
+        logger.info(`[IPC] Dispatched update_user to worker for ${uid}`);
+        return true;
+      } catch (e) {
+        logger.error(`[IPC] Failed to update worker user for ${uid}: ${e.message}`);
+      }
+    }
+    return false;
+  }
 }
 
 function resolvePartnerInfo(fullUser, phoneJid) {
@@ -522,7 +547,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         const cardBuffer = await mediaGen.generateProfileCard(fullUser);
         await sock.sendMessage(from, {
           image: cardBuffer,
-          caption: `🪪 *STEP 1 OF 4 — YOUR OFFICIAL FRANCHISE CERTIFICATE*\n\n` +
+          caption: `🪪 *STEP 1 OF 5 — YOUR OFFICIAL FRANCHISE CERTIFICATE*\n\n` +
             `This is your proof of ownership as a licensed Clarion Digital Storefront operator under the NYSC SAED Initiative.\n\n` +
             `*Save this image* — you'll need it to verify your status in the Clarion Partner network.\n\n` +
             `──────────────\n` +
@@ -531,7 +556,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       } catch (cardErr) {
         logger.error('Failed to generate activation profile card:', cardErr.message);
         await sock.sendMessage(from, {
-          text: `🪪 *STEP 1 OF 4 — YOUR OFFICIAL FRANCHISE CERTIFICATE*\n\n` +
+          text: `🪪 *STEP 1 OF 5 — YOUR OFFICIAL FRANCHISE CERTIFICATE*\n\n` +
             `Congratulations, *${info.partnerName}*! Your digital enterprise is officially licensed and active under the NYSC SAED Initiative.\n\n` +
             `──────────────\n` +
             `Reply *NEXT* to view your live storefront details 🏪`
@@ -542,7 +567,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     }
 
     if (text === 'skip') {
-      await finishWizard(sock, from, fullUser, info, isAutonomous, false);
+      await finishWizard(sock, from, fullUser, info, isAutonomous);
       return true;
     }
 
@@ -559,7 +584,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         ? `🤖 *Mode:* Autonomous (AI handles customer chats & orders 24/7 automatically)`
         : `📱 *Mode:* Manual (You process orders with quick text commands)`;
 
-      const controlDeckMsg = `🏪 *STEP 2 OF 4 — YOUR STOREFRONT IS LIVE*\n\n` +
+      const controlDeckMsg = `🏪 *STEP 2 OF 5 — YOUR STOREFRONT IS LIVE*\n\n` +
         `Your Clarion Digital Store is active on:\n` +
         `📲 *${info.formattedStoreNumber}*\n\n` +
         `${modeLine}\n\n` +
@@ -575,9 +600,11 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         `   You receive a confirmation & customer receipt. Done! 💰\n\n` +
         `──────────────\n` +
         `*Store Commands (text me anytime):*\n` +
-        `📋 *ORDERS* · 💰 *BALANCE* · 💸 *WITHDRAW [amt]* · 🤖 *MODE*\n\n` +
+        `📦 Sales: *DATA* · *ORDERS* · *CHECK*\n` +
+        `💰 Wallet: *BALANCE* · *WITHDRAW [amt]*\n` +
+        `🤖 Operations: *MODE* · *PROMO* · *STATUS*\n\n` +
         `──────────────\n` +
-        `Reply *NEXT* to get your WhatsApp Status Launch Kit 📣`;
+        `Reply *NEXT* to configure your Launch Promo Giveaway 🎁`;
 
       await sock.sendMessage(from, { text: controlDeckMsg });
       await db.users.doc(fullUser.uid).set({ onboardingStep: 2 }, { merge: true });
@@ -585,7 +612,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     }
 
     if (text === 'skip') {
-      await finishWizard(sock, from, fullUser, info, isAutonomous, false);
+      await finishWizard(sock, from, fullUser, info, isAutonomous);
       return true;
     }
 
@@ -595,80 +622,26 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     return true;
   }
 
-  // STEP 2: Expects NEXT or SKIP
+  // STEP 2: Transition to Launch Promo Engine (Step 3)
   if (step === 2) {
-    if (['next', 'continue', '3', 'ok', 'yes'].includes(text)) {
-      const statusKitHeader = `📣 *STEP 3 OF 4 — YOUR LAUNCH STATUS TEMPLATE*\n\n` +
-        `Tap & hold the *next message* below to copy it, then post it directly to your WhatsApp Status without editing! 👇`;
+    if (['next', 'continue', '3', 'ok', 'yes', 'promo'].includes(text)) {
+      const promoFuelPitch = `🎁 *STEP 3 OF 5 — LAUNCH GIVEAWAY ENGINE*\n` +
+        `_Turn your contacts into paying data customers._\n` +
+        `──────────────\n\n` +
+        `👋 *${info.partnerName}*, vendors who gift free data on Day 1 see *4x higher repeat orders*!\n\n` +
+        `💡 *KICKSTART ON CREDIT (₦0 UPFRONT)*:\n` +
+        `We've unlocked a kickstart gift of *500MB to 3 friends* on credit (₦0 upfront). This is auto-cleared from your future sales profits as customers buy data — you never pay out of pocket, and you can fund more giveaways later whenever you want!\n\n` +
+        `──────────────\n` +
+        `👉 Reply *PROMO 500 3* to activate your 3-person gift on credit!\n` +
+        `👉 Or reply *SKIP* to proceed without a promo for now.`;
 
-      const statusKitCopy = info.isSameNumber
-        ? `Big news! 🚀 My line is now powered by *${info.storeName}*!\n\n` +
-          `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
-          `👉 Just reply *DATA* or *DATA 500* to this chat to see the best plans for your budget!\n\n` +
-          `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`
-        : `Big news! 🚀 I just launched *${info.storeName}*!\n\n` +
-          `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically. ⚡\n\n` +
-          `👉 Message my store line to order:\n` +
-          `https://wa.me/234${info.botTenDigits}\n\n` +
-          `Or text ${info.formattedStoreNumber}!\n\n` +
-          `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`;
-
-      const statusKitGate = `──────────────\n` +
-        `Reply *NEXT* to configure your Launch Promo Giveaway 🎁\n` +
-        `Or reply *SKIP* to go straight to your final checklist.`;
-
-      await sock.sendMessage(from, { text: statusKitHeader });
-      await new Promise(r => setTimeout(r, 1000));
-      await sock.sendMessage(from, { text: statusKitCopy });
-      await new Promise(r => setTimeout(r, 1200));
-      await sock.sendMessage(from, { text: statusKitGate });
-
+      await sock.sendMessage(from, { text: promoFuelPitch });
       await db.users.doc(fullUser.uid).set({ onboardingStep: 3 }, { merge: true });
       return true;
     }
 
     if (text === 'skip') {
-      await finishWizard(sock, from, fullUser, info, isAutonomous, false);
-      return true;
-    }
-
-    await sock.sendMessage(from, {
-      text: `👆 Reply *NEXT* to configure your Launch Promo Giveaway, or *SKIP* to jump to the final checklist.`
-    });
-    return true;
-  }
-
-  // STEP 3: Expects NEXT or SKIP
-  if (step === 3) {
-    if (['next', 'continue', '4', 'fuel', 'promo'].includes(text)) {
-      const promoFuelPitch = `🎁 *STEP 4 OF 4 — LAUNCH GIVEAWAY ENGINE*\n` +
-        `_Turn your contacts into paying data customers._\n` +
-        `──────────────\n\n` +
-        `👋 *${info.partnerName}*, vendors who gift free data on Day 1 see *4x higher repeat orders*!\n\n` +
-        `💡 *TRY ON CREDIT (₦0 UPFRONT)*:\n` +
-        `We’ve unlocked a *Kickstart Micro-Credit* for your store! You can gift *500MB to 3 friends* on credit today (value: ₦420).\n\n` +
-        `When your friends order data, customer sales auto-clear the ₦420 balance!\n\n` +
-        `──────────────\n` +
-        `👉 Reply *PROMO 500 3* to launch your 3-person giveaway on credit right now!\n\n` +
-        `*Or Fund a Custom Giveaway Budget:*\n` +
-        `🏦 *Bank:* ${info.virtualAcct.bankName}\n` +
-        `🔢 *Account:* \`${info.virtualAcct.accountNumber}\`\n` +
-        `👤 *Name:* ${info.virtualAcct.accountName || info.partnerName}\n\n` +
-        `──────────────\n` +
-        `👉 Reply *FUNDED* once transferred to set up a larger promo.\n` +
-        `👉 Reply *SKIP* to finish setup (you can launch promos anytime).`;
-
-      await sock.sendMessage(from, { text: promoFuelPitch });
-      await db.users.doc(fullUser.uid).set({ onboardingStep: 4 }, { merge: true });
-      return true;
-    }
-
-    if (text === 'skip') {
-      await sock.sendMessage(from, {
-        text: `👌 *No problem at all!*\n──────────────\n\nYour franchise is 100% operational with ₦0 capital. You can top up and launch customer promos anytime by replying *PROMO*.`
-      });
-      await new Promise(r => setTimeout(r, 1000));
-      await finishWizard(sock, from, fullUser, info, isAutonomous, false);
+      await finishWizard(sock, from, fullUser, info, isAutonomous);
       return true;
     }
 
@@ -678,52 +651,147 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     return true;
   }
 
-  // STEP 4: Expects FUNDED or SKIP
-  if (step === 4) {
-    const isFunded = ['funded', 'done', 'paid', 'sent', 'transferred'].includes(text);
-    if (isFunded) {
+  // STEP 3: Promo decision -> Show Step 4 Auto-Status Launch Gate
+  if (step === 3) {
+    let promoActivated = false;
+    if (text.includes('promo') || text.includes('500') || text === 'yes' || text === 'credit' || text === '1') {
+      promoActivated = true;
+      const activePromo = {
+        sizeMb: 500,
+        mbPerContact: 500,
+        totalClaims: 3,
+        claimsRemaining: 3,
+        status: 'ACTIVE',
+        claimedBy: [],
+        createdAt: new Date().toISOString()
+      };
+      await db.users.doc(fullUser.uid).set({ activePromo, promoActive: true }, { merge: true });
+      fullUser.activePromo = activePromo;
+      fullUser.promoActive = true;
+
       await sock.sendMessage(from, {
-        text: `⚡ *PROMO ENGINE UNLOCKED!*\n──────────────\n\n` +
-          `Your store account is linked.\n\n` +
-          `*To launch your first giveaway campaign:*\n` +
-          `👉 Reply *PROMO* to choose data size (e.g. 500MB) & recipient count.\n` +
-          `👉 Or simply share any contact card or phone number to this chat, and your ProxyBot will gift them instantly! 🎁`
+        text: `🎉 *3-Person 500MB Giveaway Activated on Credit!* ⚡\nYour contacts can message this number and reply *PROMO* to claim their 500MB free data grant.`
       });
+      await new Promise(r => setTimeout(r, 1000));
     } else {
-      await sock.sendMessage(from, {
-        text: `👌 *No problem at all!*\n──────────────\n\n` +
-          `Your franchise is 100% operational with ₦0 capital. You can top up and launch customer promos anytime by replying *PROMO*.`
-      });
+      await db.users.doc(fullUser.uid).set({ promoActive: false }, { merge: true });
+      fullUser.promoActive = false;
     }
 
-    await new Promise(r => setTimeout(r, 1000));
-    await finishWizard(sock, from, fullUser, info, isAutonomous, isFunded);
+    // Step 4: Show context-aware status preview
+    const statusPreview = promoActivated
+      ? `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\n──────────────\n\n` +
+        `My 24/7 automated data storefront (*${info.storeName}*) is officially live!\n\n` +
+        `🎁 I'm gifting *500MB FREE DATA* to the first *3 people* who test my store right now!\n\n` +
+        `👉 *How to claim:*\n` +
+        `Message this number & reply *PROMO* to claim your free data instantly!\n\n` +
+        `──────────────\n` +
+        `_⚡ 3 of 3 free grants remaining_`
+      : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is officially live!\n\n` +
+        `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7. ⚡\n\n` +
+        `👉 Just reply *DATA* or *DATA 1000* to this chat to view all available packages!\n\n` +
+        `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`;
+
+    const statusGateMsg = `📢 *STEP 4 OF 5 — AUTO LAUNCH STATUS PREVIEW*\n\n` +
+      `We are ready to automatically broadcast this announcement to your WhatsApp Status:\n` +
+      `──────────────\n\n` +
+      `${statusPreview}\n\n` +
+      `──────────────\n` +
+      `👉 Reply *APPROVE* to post this to your WhatsApp Status automatically! 🚀\n` +
+      `👉 Or reply *SKIP* to skip status posting for now.`;
+
+    await sock.sendMessage(from, { text: statusGateMsg });
+    await db.users.doc(fullUser.uid).set({ onboardingStep: 4, pendingStatusText: statusPreview }, { merge: true });
+    return true;
+  }
+
+  // STEP 4: Auto-Status Approval -> Show Step 5 7-Day Schedule
+  if (step === 4) {
+    if (['approve', 'post', 'yes', 'ok', '1'].includes(text)) {
+      const statusText = fullUser.pendingStatusText || (fullUser.promoActive
+        ? `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\nMy 24/7 automated data store (*${info.storeName}*) is live! Reply *PROMO* to claim 500MB free data now!`
+        : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is live! Reply *DATA* to order.`);
+
+      try {
+        const worker = sessionManager.sessions.get(from) || sessionManager.sessions.get(fullUser.uid);
+        if (worker && typeof worker.postMessage === 'function') {
+          worker.postMessage({ type: 'text_status', text: statusText });
+        }
+        await sock.sendMessage(from, { text: `✅ *Launch announcement posted to your WhatsApp Status!* 🚀` });
+      } catch (err) {
+        logger.error('Failed to post auto launch status:', err.message);
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    } else {
+      await sock.sendMessage(from, { text: `👌 Status posting skipped for now.` });
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    const scheduleMsg = `📅 *STEP 5 OF 5 — 7-DAY DAILY AUTO-STATUS SCHEDULE*\n` +
+      `Your store automatically posts 1 high-converting status daily at 9:00 AM:\n\n` +
+      `· Day 1 (Mon): ⚡ Cheap MTN, Airtel & Glo 24/7 (Reply *DATA*)\n` +
+      `· Day 2 (Tue): 📱 Running low on data? (Reply *DATA 500*)\n` +
+      `· Day 3 (Wed): 🇳🇬 Support NYSC CDS community projects (Reply *DATA*)\n` +
+      `· Day 4 (Thu): 🎓 WAEC & NECO Result Checker PINs (Reply *PIN WAEC*)\n` +
+      `· Day 5 (Fri): 💳 Instant Airtime Top-ups (Reply *CARD 500*)\n` +
+      `· Day 6 (Sat): ⚡ Weekend High-Speed Bundles (Reply *DATA*)\n` +
+      `· Day 7 (Sun): 🎉 Sunday Data Deals & Top-ups (Reply *DATA*)\n` +
+      `──────────────\n` +
+      `Auto-Posting is currently: *ACTIVE* 🟢\n` +
+      `(You can toggle anytime by replying *STATUS ON* or *STATUS OFF*)\n\n` +
+      `👉 Reply *NEXT* to view your final operational checklist!`;
+
+    await sock.sendMessage(from, { text: scheduleMsg });
+    await db.users.doc(fullUser.uid).set({ onboardingStep: 5 }, { merge: true });
+    return true;
+  }
+
+  // STEP 5: Finalization -> finishWizard
+  if (step === 5) {
+    await finishWizard(sock, from, fullUser, info, isAutonomous);
     return true;
   }
 
   return false;
 }
 
-async function finishWizard(sock, from, fullUser, info, isAutonomous, isFunded) {
+async function finishWizard(sock, from, fullUser, info, isAutonomous) {
   const sub = fullUser.subscription;
   const daysLeft = sub?.expiresAt ? Math.max(0, Math.ceil((new Date(sub.expiresAt) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
+  const tier = String(fullUser.partnershipTier || fullUser.donationTier || 'MEMBER').toUpperCase();
+  const tierBadge = (tier === 'LORD' || tier === 'PIONEER') ? 'Pioneer Lord' : 'Clarion Partner';
+  const expiryFormatted = sub?.expiresAt
+    ? new Date(sub.expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    : 'Active';
 
-  const autoLine = isAutonomous
-    ? `🤖 *Autonomous AI Mode is Active!*\nYour complimentary free automation is running (${daysLeft} days remaining).\nWhen it expires, text *UPGRADE* to extend for *₦950/month*.`
-    : `💡 *Want 24/7 full automation?*\nText *UPGRADE* to activate autonomous mode for *₦950/month*!`;
+  const autoPledge = isAutonomous
+    ? `⚡ *100% ₦0 CAPITAL COMMITMENT*\n` +
+      `Your Autonomous AI Mode is active & running 100% free for *${daysLeft} days* (${tierBadge} Privilege).\n` +
+      `AI answers your customers, calculates prices, and delivers data automatically 24/7 while you sleep or attend CDS.\n` +
+      `Complimentary trial active until: *${expiryFormatted}*.`
+    : `📱 *STORE MODE: MANUAL*\n` +
+      `You can process customer orders manually with text commands anytime.`;
 
-  const finalChecklist = `✅ *YOU'RE FULLY OPERATIONAL, ${info.partnerName}!*\n──────────────\n\n` +
+  const finalChecklist = `✅ *YOU'RE FULLY OPERATIONAL, ${info.partnerName}!*\n` +
+    `──────────────\n\n` +
     `Your digital telecom franchise is officially active:\n\n` +
-    `· 📋 *ORDERS* — Live order feed & delivery status\n` +
-    `· 💰 *BALANCE* — Real-time earnings & wallet balance\n` +
-    `· 🎁 *PROMO* — Launch & manage customer giveaways\n` +
-    `· 🤖 *MODE* — Autopilot controls & renew status\n` +
-    `· 📢 *KIT* — Launch graphics & status templates\n` +
-    `· 💬 *ANNOUNCE* — Toggle first-contact welcome banner\n` +
-    `· 💸 *WITHDRAW [amount]* — Payout to your verified bank\n` +
-    `· ❓ *HELP* — Command directory\n\n` +
+    `📦 *SALES COMMANDS*\n` +
+    `· *DATA* — View full data catalog\n` +
+    `· *CHECK [net] [size]* — Instant price check\n` +
+    `· *ORDER [size] [phone]* — Manual customer order\n` +
+    `· *ORDERS* — Live order feed & delivery status\n\n` +
+    `💰 *WALLET & CASHOUT*\n` +
+    `· *BALANCE* — Real-time earnings & wallet balance\n` +
+    `· *WITHDRAW [amount]* — Payout to your verified bank\n\n` +
+    `📢 *MARKETING & LAUNCH*\n` +
+    `· *PROMO* — Launch & monitor customer giveaways\n` +
+    `· *STATUS* — View & toggle daily WhatsApp status\n` +
+    `· *KIT* — Store graphics & marketing assets\n` +
+    `· *ANNOUNCE* — Toggle first-contact greeting banner\n\n` +
+    `🤖 *AUTOMATION*\n` +
+    `· *MODE* — View AI autopilot status\n\n` +
     `──────────────\n` +
-    `${autoLine}\n\n` +
+    `${autoPledge}\n\n` +
     `──────────────\n` +
     `_The Clarion team is with you. Build something great! 🚀🇳🇬_`;
 

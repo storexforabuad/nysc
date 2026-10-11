@@ -66,11 +66,17 @@ async function startServer() {
 
   // Admin Verification Middleware
   const verifyAdminToken = (req, res, next) => {
+    let token = null;
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
+    }
+
+    if (!token) {
       return res.status(401).json({ error: 'Missing or invalid token' });
     }
-    const token = authHeader.split(' ')[1];
     try {
       jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
       next();
@@ -367,6 +373,24 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  app.get('/api/admin/files/pitch/:filename', verifyAdminToken, (req, res) => {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.resolve('storage/pitches', filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    res.sendFile(filePath);
+  });
+
+  app.get('/api/admin/files/design/:filename', verifyAdminToken, (req, res) => {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.resolve('storage/designs', filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    res.sendFile(filePath);
   });
 
   // --- BROADCAST ADMIN ROUTES ---
