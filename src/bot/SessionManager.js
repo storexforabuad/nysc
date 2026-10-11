@@ -8,6 +8,7 @@ import mediaGen from '../services/mediaGen.js';
 import path from 'path';
 import fs from 'fs';
 import { Worker } from 'worker_threads';
+import { getFreeGrantDays } from '../services/WalletService.js';
 
 class SessionManager {
   constructor() {
@@ -304,7 +305,165 @@ class SessionManager {
     return [];
   }
 
-import { getFreeGrantDays } from '../services/WalletService.js';
+  async _sendActivationSuccessMessages(phoneJid, user) {
+    if (!this.motherSock) return;
+
+    let fullUser = user;
+    if (db.users && user?.uid) {
+      try {
+        const uDoc = await db.users.doc(user.uid).get();
+        if (uDoc.exists) fullUser = { uid: user.uid, ...uDoc.data() };
+      } catch (e) { }
+    }
+
+    const info = resolvePartnerInfo(fullUser, phoneJid);
+
+    // 1. Approval Gate: Unapproved terminals receive review notice
+    if (!fullUser.terminalApproved) {
+      const pendingNotice = `⏳ *TERMINAL APPLICATION UNDER REVIEW*\n\n` +
+        `🏢 *Franchise Brand:* ${fullUser.brandName || fullUser.franchiseName || 'Clarion AI Store'}\n` +
+        `👤 *Operator:* ${info.partnerName} (\`${fullUser.stateCode || 'NYSC'}\`)\n` +
+        `🔖 *Terminal Status:* PENDING ADMINISTRATIVE APPROVAL\n\n` +
+        `*What happens next?*\n` +
+        `To ensure telecom reliability and security, our administrative board reviews and approves terminal licenses within 24 hours.\n\n` +
+        `Once approved by admin:\n` +
+        `1. You will receive an official notification right here on WhatsApp.\n` +
+        `2. Your official Clarion Franchise License Card will be dispatched.\n` +
+        `3. Your proxy bot will activate automated vending!\n\n` +
+        `💡 _Note: While awaiting approval, any manual data purchases on MotherBot route through the Clarion Central Hub Account._`;
+
+      await this.motherSock.sendMessage(phoneJid, { text: pendingNotice });
+      return;
+    }
+
+    // 2. Approved! Apply donation tier free grant and prepare Stage 0 Onboarding Briefing
+    const tier = fullUser.partnershipTier || fullUser.donationTier;
+    const grantDays = getFreeGrantDays(tier);
+    const now = new Date();
+    const updates = {
+      onboardingStep: 0,
+      announceNewContacts: true
+    };
+
+    if (grantDays > 0) {
+      const expiresAt = new Date(now.getTime() + grantDays * 24 * 60 * 60 * 1000);
+      updates.botMode = 'autonomous';
+      updates.subscription = {
+        plan: 'FREE_GRANT',
+        price: 0,
+        durationDays: grantDays,
+        startedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        autoRenew: false
+      };
+      fullUser.botMode = 'autonomous';
+      fullUser.subscription = updates.subscription;
+    } else {
+      updates.botMode = 'manual';
+      fullUser.botMode = 'manual';
+    }
+
+    if (db.users && (user?.uid || fullUser?.uid)) {
+      try {
+        await db.users.doc(user?.uid || fullUser.uid).set(updates, { merge: true });
+      } catch (e) {
+        logger.error('Failed to set onboarding step in DB:', e.message);
+      }
+    }
+
+    // 3. Stage 0 — Tier-Aware Welcome Briefing
+    let tierHeader = '';
+    const tierUpper = String(tier || '').toUpperCase();
+    if (tierUpper === 'LORD') {
+      tierHeader = `🔱 *CLARION LORD — PIONEER BENEFIT ACTIVATED*\n\n` +
+        `As an 80% CDS contributor, you've been granted *2 months of free Autonomous AI Mode* (60 days). ⚡\n\n` +
+        `Your store runs 24/7 — completely automated — with no subscription fees required.`;
+    } else if (['MASTER', 'PIONEER', 'MEMBER'].includes(tierUpper)) {
+      tierHeader = `⭐ *PARTNER BENEFIT ACTIVATED*\n\n` +
+        `As a Clarion Partner (${tierUpper}), you've been granted *2 weeks of free Autonomous AI Mode* (14 days). ⚡\n\n` +
+        `Your store will answer customer messages and deliver orders automatically.`;
+    } else {
+      tierHeader = `🎊 *Welcome to the Clarion Network, ${info.partnerName}!*\n\n` +
+        `Your digital franchise has been officially licensed. 🪪\n\n` +
+        `Before your store goes live to the world, we'll walk you through everything — one step at a time.`;
+    }
+
+    const stage0Msg = `${tierHeader}\n\n` +
+      `──────────────\n` +
+      `📋 *Your 4-Step Onboarding Kit:*\n` +
+      `1️⃣  Official Franchise Certificate\n` +
+      `2️⃣  Storefront Control Deck\n` +
+      `3️⃣  Safe Launch Status Template\n` +
+      `4️⃣  Launch Giveaway Engine\n\n` +
+      `──────────────\n` +
+      `Reply *READY* to receive your official Franchise Certificate 👇`;
+
+    try {
+      await this.motherSock.sendMessage(phoneJid, { text: stage0Msg });
+    } catch (err) {
+      logger.error('Failed to send Stage 0 activation briefing:', err.message);
+    }
+  }
+
+  async sendProxyCustomerMessage(userOrUid, targetJid, messageText) {
+    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
+    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
+    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
+
+    if (worker && typeof worker.postMessage === 'function') {
+      try {
+        worker.postMessage({ type: 'notify_customer', targetJid, message: messageText });
+        return true;
+      } catch (e) {
+        logger.warn(`Failed to dispatch message via worker IPC for ${uid}: ${e.message}`);
+      }
+    }
+
+    if (this.motherSock) {
+      try {
+        await this.motherSock.sendMessage(targetJid, { text: messageText });
+        return true;
+      } catch (err) {
+        logger.error(`Fallback message failed to ${targetJid}: ${err.message}`);
+      }
+    }
+    return false;
+  }
+
+  async dispatchDynamicPromoStatus(userOrUid, activePromo) {
+    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
+    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
+    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
+    if (!worker) return false;
+
+    const brandName = (typeof userOrUid === 'object' && userOrUid.brandName)
+      ? userOrUid.brandName
+      : ('Clarion AI Store');
+    const sizeMb = activePromo?.sizeMb || 500;
+    const totalClaims = activePromo?.totalClaims || 5;
+    const remainingClaims = Math.max(0, activePromo?.remainingClaims ?? 0);
+
+    let text = '';
+    if (remainingClaims === totalClaims) {
+      text = `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\n──────────────\n\nMy 24/7 automated data storefront (*${brandName}*) is officially live!\n\n🎁 I'm gifting *${sizeMb}MB FREE DATA* to the first *${remainingClaims} people* who test my store right now!\n\n👉 *How to claim:*\nMessage this number & reply *PROMO* to claim your free data instantly!\n\n──────────────\n_⚡ ${remainingClaims} of ${totalClaims} free grants remaining_`;
+    } else if (remainingClaims > 1) {
+      text = `🚨 *GIVEAWAY COUNTDOWN!* ⏳\n──────────────\n\n*${brandName}* launch giveaway update:\n\n🔥 Only *${remainingClaims} FREE DATA GRANTS* left! (*${sizeMb}MB Instant Data*)\n\n👉 Message this number now & reply *PROMO* before it runs out!\n\n──────────────\n_⚡ ${remainingClaims} of ${totalClaims} grants remaining_`;
+    } else if (remainingClaims === 1) {
+      text = `⚡ *LAST FREE DATA GRANT!* 🏃‍♂️\n──────────────\n\nOnly *1 FREE GRANT LEFT* for *${sizeMb}MB Data* on *${brandName}*!\n\n👉 Message right now & reply *PROMO* to grab the final slot!`;
+    } else {
+      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7.\n👉 Reply *DATA 1000* to view ₦1,000 budget plans.`;
+    }
+
+    try {
+      worker.postMessage({ type: 'text_status', text });
+      logger.info(`[PROMO-STATUS] Dispatched dynamic status update for ${uid} (${remainingClaims} remaining)`);
+      return true;
+    } catch (e) {
+      logger.error(`[PROMO-STATUS] Failed to dispatch promo status for ${uid}: ${e.message}`);
+      return false;
+    }
+  }
+}
 
 function resolvePartnerInfo(fullUser, phoneJid) {
   let rawPhone = fullUser.phoneNumber || fullUser.phone || '';
@@ -573,166 +732,6 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, isFunded) 
     onboardingStep: null,
     onboardingComplete: true
   }, { merge: true });
-}
-
-  async _sendActivationSuccessMessages(phoneJid, user) {
-    if (!this.motherSock) return;
-
-    let fullUser = user;
-    if (db.users && user?.uid) {
-      try {
-        const uDoc = await db.users.doc(user.uid).get();
-        if (uDoc.exists) fullUser = { uid: user.uid, ...uDoc.data() };
-      } catch (e) { }
-    }
-
-    const info = resolvePartnerInfo(fullUser, phoneJid);
-
-    // 1. Approval Gate: Unapproved terminals receive review notice
-    if (!fullUser.terminalApproved) {
-      const pendingNotice = `⏳ *TERMINAL APPLICATION UNDER REVIEW*\n\n` +
-        `🏢 *Franchise Brand:* ${fullUser.brandName || fullUser.franchiseName || 'Clarion AI Store'}\n` +
-        `👤 *Operator:* ${info.partnerName} (\`${fullUser.stateCode || 'NYSC'}\`)\n` +
-        `🔖 *Terminal Status:* PENDING ADMINISTRATIVE APPROVAL\n\n` +
-        `*What happens next?*\n` +
-        `To ensure telecom reliability and security, our administrative board reviews and approves terminal licenses within 24 hours.\n\n` +
-        `Once approved by admin:\n` +
-        `1. You will receive an official notification right here on WhatsApp.\n` +
-        `2. Your official Clarion Franchise License Card will be dispatched.\n` +
-        `3. Your proxy bot will activate automated vending!\n\n` +
-        `💡 _Note: While awaiting approval, any manual data purchases on MotherBot route through the Clarion Central Hub Account._`;
-
-      await this.motherSock.sendMessage(phoneJid, { text: pendingNotice });
-      return;
-    }
-
-    // 2. Approved! Apply donation tier free grant and prepare Stage 0 Onboarding Briefing
-    const tier = fullUser.partnershipTier || fullUser.donationTier;
-    const grantDays = getFreeGrantDays(tier);
-    const now = new Date();
-    const updates = {
-      onboardingStep: 0,
-      announceNewContacts: true
-    };
-
-    if (grantDays > 0) {
-      const expiresAt = new Date(now.getTime() + grantDays * 24 * 60 * 60 * 1000);
-      updates.botMode = 'autonomous';
-      updates.subscription = {
-        plan: 'FREE_GRANT',
-        price: 0,
-        durationDays: grantDays,
-        startedAt: now.toISOString(),
-        expiresAt: expiresAt.toISOString(),
-        autoRenew: false
-      };
-      fullUser.botMode = 'autonomous';
-      fullUser.subscription = updates.subscription;
-    } else {
-      updates.botMode = 'manual';
-      fullUser.botMode = 'manual';
-    }
-
-    if (db.users && (user?.uid || fullUser?.uid)) {
-      try {
-        await db.users.doc(user?.uid || fullUser.uid).set(updates, { merge: true });
-      } catch (e) {
-        logger.error('Failed to set onboarding step in DB:', e.message);
-      }
-    }
-
-    // 3. Stage 0 — Tier-Aware Welcome Briefing
-    let tierHeader = '';
-    const tierUpper = String(tier || '').toUpperCase();
-    if (tierUpper === 'LORD') {
-      tierHeader = `🔱 *CLARION LORD — PIONEER BENEFIT ACTIVATED*\n\n` +
-        `As an 80% CDS contributor, you've been granted *2 months of free Autonomous AI Mode* (60 days). ⚡\n\n` +
-        `Your store runs 24/7 — completely automated — with no subscription fees required.`;
-    } else if (['MASTER', 'PIONEER', 'MEMBER'].includes(tierUpper)) {
-      tierHeader = `⭐ *PARTNER BENEFIT ACTIVATED*\n\n` +
-        `As a Clarion Partner (${tierUpper}), you've been granted *2 weeks of free Autonomous AI Mode* (14 days). ⚡\n\n` +
-        `Your store will answer customer messages and deliver orders automatically.`;
-    } else {
-      tierHeader = `🎊 *Welcome to the Clarion Network, ${info.partnerName}!*\n\n` +
-        `Your digital franchise has been officially licensed. 🪪\n\n` +
-        `Before your store goes live to the world, we'll walk you through everything — one step at a time.`;
-    }
-
-    const stage0Msg = `${tierHeader}\n\n` +
-      `──────────────\n` +
-      `📋 *Your 4-Step Onboarding Kit:*\n` +
-      `1️⃣  Official Franchise Certificate\n` +
-      `2️⃣  Storefront Control Deck\n` +
-      `3️⃣  Safe Launch Status Template\n` +
-      `4️⃣  Launch Giveaway Engine\n\n` +
-      `──────────────\n` +
-      `Reply *READY* to receive your official Franchise Certificate 👇`;
-
-    try {
-      await this.motherSock.sendMessage(phoneJid, { text: stage0Msg });
-    } catch (err) {
-      logger.error('Failed to send Stage 0 activation briefing:', err.message);
-    }
-  }
-
-  async sendProxyCustomerMessage(userOrUid, targetJid, messageText) {
-    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
-    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
-    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
-
-    if (worker && typeof worker.postMessage === 'function') {
-      try {
-        worker.postMessage({ type: 'notify_customer', targetJid, message: messageText });
-        return true;
-      } catch (e) {
-        logger.warn(`Failed to dispatch message via worker IPC for ${uid}: ${e.message}`);
-      }
-    }
-
-    if (this.motherSock) {
-      try {
-        await this.motherSock.sendMessage(targetJid, { text: messageText });
-        return true;
-      } catch (err) {
-        logger.error(`Fallback message failed to ${targetJid}: ${err.message}`);
-      }
-    }
-    return false;
-  }
-
-  async dispatchDynamicPromoStatus(userOrUid, activePromo) {
-    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
-    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
-    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
-    if (!worker) return false;
-
-    const brandName = (typeof userOrUid === 'object' && userOrUid.brandName)
-      ? userOrUid.brandName
-      : ('Clarion AI Store');
-    const sizeMb = activePromo?.sizeMb || 500;
-    const totalClaims = activePromo?.totalClaims || 5;
-    const remainingClaims = Math.max(0, activePromo?.remainingClaims ?? 0);
-
-    let text = '';
-    if (remainingClaims === totalClaims) {
-      text = `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\n──────────────\n\nMy 24/7 automated data storefront (*${brandName}*) is officially live!\n\n🎁 I'm gifting *${sizeMb}MB FREE DATA* to the first *${remainingClaims} people* who test my store right now!\n\n👉 *How to claim:*\nMessage this number & reply *PROMO* to claim your free data instantly!\n\n──────────────\n_⚡ ${remainingClaims} of ${totalClaims} free grants remaining_`;
-    } else if (remainingClaims > 1) {
-      text = `🚨 *GIVEAWAY COUNTDOWN!* ⏳\n──────────────\n\n*${brandName}* launch giveaway update:\n\n🔥 Only *${remainingClaims} FREE DATA GRANTS* left! (*${sizeMb}MB Instant Data*)\n\n👉 Message this number now & reply *PROMO* before it runs out!\n\n──────────────\n_⚡ ${remainingClaims} of ${totalClaims} grants remaining_`;
-    } else if (remainingClaims === 1) {
-      text = `⚡ *LAST FREE DATA GRANT!* 🏃‍♂️\n──────────────\n\nOnly *1 FREE GRANT LEFT* for *${sizeMb}MB Data* on *${brandName}*!\n\n👉 Message right now & reply *PROMO* to grab the final slot!`;
-    } else {
-      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7.\n👉 Reply *DATA 1000* to view ₦1,000 budget plans.`;
-    }
-
-    try {
-      worker.postMessage({ type: 'text_status', text });
-      logger.info(`[PROMO-STATUS] Dispatched dynamic status update for ${uid} (${remainingClaims} remaining)`);
-      return true;
-    } catch (e) {
-      logger.error(`[PROMO-STATUS] Failed to dispatch promo status for ${uid}: ${e.message}`);
-      return false;
-    }
-  }
 }
 
 export default new SessionManager();
