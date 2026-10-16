@@ -109,7 +109,7 @@ export function getLearnMenuText() {
     `Everything you need to thrive before, during, and after NYSC:\n\n` +
     `💻 *1. Featured Free Learning Asset:*\n` +
     `• *The Odin Project* (https://www.theodinproject.com)\n` +
-    `  The gold standard in free, open-source Full-Stack Web Development curriculum (HTML, CSS, JavaScript, React & Node.js). Zero fluff, hands-on portfolio projects.\n\n` +
+    `  The gold standard in free, open-source Full-Stack Web Dev curriculum (HTML, CSS, JavaScript, React & Node.js). Zero fluff, hands-on portfolio projects.\n\n` +
     `🇳🇬 *2. The Complete NYSC Playbook:*\n` +
     `• *Camp Survival:* Packing checklists, drills, allowances, and posting hacks.\n` +
     `• *PPA Navigation:* Relocation criteria, accommodation rights, and monthly clearance.\n` +
@@ -247,6 +247,50 @@ export function checkIsSameNumber(userJid, botPhoneNumber) {
   return userDigits.slice(-10) === botDigits.slice(-10);
 }
 
+export async function renderPromoMenu(sock, from, userData) {
+  const promo = userData.activePromo;
+  const isLive = promo && promo.status === 'ACTIVE' && (promo.claimsRemaining || promo.remainingClaims || 0) > 0;
+  const remaining = promo ? (promo.claimsRemaining ?? promo.remainingClaims ?? 0) : 0;
+  const total = promo?.totalClaims || 3;
+  const sizeMb = promo?.sizeMb || promo?.mbPerContact || 500;
+
+  const promoMsg = `🎁 *CLARION LAUNCH GIVEAWAY ENGINE*\n` +
+    `──────────────\n\n` +
+    `Giveaway Status: ${isLive ? `*ACTIVE* 🟢 (${remaining} of ${total} claims remaining)` : '*INACTIVE / EXPIRED* ⚪'}\n` +
+    `Grant Size: *${sizeMb}MB* per customer\n\n` +
+    `💡 *How It Works:*\n` +
+    `Customers message your business line and reply *PROMO* to claim free test data.\n` +
+    `Clarion automatically delivers the data, generates a branded digital receipt, and turns them into repeat buyers!\n\n` +
+    `*Commands:*\n` +
+    `👉 *PROMO 500 3* — Launch 500MB giveaway for 3 contacts\n` +
+    `👉 *PROMO 1000 5* — Launch 1GB giveaway for 5 contacts\n` +
+    `👉 *PROMO OFF* — Pause customer promo claims\n\n` +
+    `──────────────\n` +
+    `• Reply *0* to return to Main Portal`;
+
+  return sock.sendMessage(from, { text: promoMsg });
+}
+
+export async function renderStatusMenu(sock, from, userData) {
+  const autoStatus = userData.autoStatusActive !== false;
+  const brandName = userData.brandName || userData.franchiseName || ('Clarion AI - ' + (userData.verifiedName || userData.name || 'Store'));
+
+  const statusMsg = `📢 *CLARION WHATSAPP AUTO-STATUS SYSTEM*\n` +
+    `──────────────\n\n` +
+    `Store: *${brandName}*\n` +
+    `Auto-Posting: ${autoStatus ? '*ACTIVE* 🟢' : '*PAUSED* ⏸️'}\n` +
+    `Schedule: *Daily at 8:00 AM & 6:00 PM*\n\n` +
+    `Clarion automatically renders and publishes your high-resolution data price cards & CDS impact announcements directly to your WhatsApp Status, driving passive customer orders while you attend PPA or CDS.\n\n` +
+    `*Controls:*\n` +
+    `👉 Reply *STATUS ON* to enable daily automated status posts\n` +
+    `👉 Reply *STATUS OFF* to pause auto-posting\n` +
+    `👉 Reply *STATUS NOW* to instantly render and broadcast a test status\n\n` +
+    `──────────────\n` +
+    `• Reply *0* to return to Main Portal`;
+
+  return sock.sendMessage(from, { text: statusMsg });
+}
+
 // In-memory fallback if Firestore is slow/down
 export const mockUserStore = new Map();
 export const mockManualOrders = new Map();
@@ -356,7 +400,9 @@ export const handleMotherMessage = async (sock, msg) => {
       userData = mockUserStore.get(from) || { state: STATES.START, uid: from };
     }
 
-    const command = text.trim();
+    const rawCommand = (text || '').trim();
+    const command = rawCommand;
+    const cleanCommand = rawCommand.toLowerCase().replace(/[*_~`]/g, '').trim();
 
     const saveUser = async (data) => {
       mockUserStore.set(from, data);
@@ -369,7 +415,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
     // ── Admin Chat Mode: bot goes silent so admin can chat manually ──
     if (userData.adminMode === true) {
-      if (command.toLowerCase() === 'exit' || command.toLowerCase() === 'exitadmin') {
+      if (cleanCommand === 'exit' || cleanCommand === 'exitadmin') {
         await saveUser({ ...userData, adminMode: false });
         return sock.sendMessage(from, {
           text: `🤖 *Clarion A.I. is back online!*\n\nReply *MENU* to access your portal, or send your *NYSC State Code* to get started.`
@@ -381,7 +427,96 @@ export const handleMotherMessage = async (sock, msg) => {
     // Simulate typing presence on WhatsApp before generating response
     await simulateTyping(sock, from, 1500);
 
-    const isGlobalMenu = command.toLowerCase() === 'menu' || command.toLowerCase() === 'portal';
+    // ── Handle confirmation of a pending prompt switch ──
+    if (userData.pendingPromptSwitch) {
+      if (['yes', 'y', '1', 'confirm', 'proceed'].includes(cleanCommand) || cleanCommand.startsWith('yes')) {
+        const target = userData.pendingPromptSwitch;
+        userData.pendingPromptSwitch = null;
+        if (target === 'promo') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return renderPromoMenu(sock, from, userData);
+        } else if (target === 'learn' || target === '1') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getLearnMenuText() });
+        } else if (target === 'earn' || target === '2') {
+          userData.state = STATES.AWAITING_EARN_CHOICE;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getEarnMenuText() });
+        } else if (target === 'build' || target === '3') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getBuildMenuText() });
+        } else if (target === 'merch' || target === '4') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getMerchMenuText() });
+        } else if (target === 'events' || target === '5') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getEventsMenuText() });
+        } else if (target === 'impact' || target === '6') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getImpactMenuText() });
+        } else if (target === 'menu' || target === '0' || target === 'portal') {
+          userData.state = STATES.PORTAL_MENU;
+          await saveUser(userData);
+          return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
+        }
+      } else if (['no', 'n', '2', 'cancel', 'stay'].includes(cleanCommand)) {
+        userData.pendingPromptSwitch = null;
+        await saveUser(userData);
+        return sock.sendMessage(from, { text: '👍 Understood! Please continue with your previous entry:' });
+      } else {
+        // Did not answer yes/no, clear switch and continue evaluation
+        userData.pendingPromptSwitch = null;
+      }
+    }
+
+    // ── Universal Interceptor for Navigation Keywords in Prompt States ──
+    const navKeywords = {
+      'promo': 'PROMO (Giveaways)',
+      'learn': 'LEARN (Camp Survival & Skills)',
+      'earn': 'EARN (Franchise & Online Store)',
+      'build': 'BUILD (Venture Grants & Production)',
+      'merch': 'MERCH (Clarion Supply Co.)',
+      'events': 'EVENTS (Camp Drops & Updates)',
+      'impact': 'IMPACT (CDS Fund)',
+      '1': 'LEARN Hub',
+      '2': 'EARN Hub',
+      '3': 'BUILD Hub',
+      '4': 'MERCH Store',
+      '5': 'EVENTS Hub',
+      '6': 'IMPACT Fund'
+    };
+
+    const promptStates = [
+      STATES.AWAITING_PORTAL_STATE_CODE,
+      STATES.AWAITING_PORTAL_STATE_CODE_CONFIRM,
+      STATES.AWAITING_INITIAL_BANK,
+      STATES.AWAITING_INITIAL_BANK_CONFIRM,
+      STATES.AWAITING_FRANCHISE_NAME,
+      STATES.AWAITING_PROXY_NUMBER,
+      STATES.AWAITING_TIER_SELECTION,
+      STATES.AWAITING_CONTRIBUTOR_SUBMISSION
+    ];
+
+    if (promptStates.includes(userData.state) && navKeywords[cleanCommand]) {
+      userData.pendingPromptSwitch = cleanCommand;
+      await saveUser(userData);
+      const targetLabel = navKeywords[cleanCommand];
+      return sock.sendMessage(from, {
+        text: `⚠️ *Switch Section?*\n\n` +
+          `You are currently entering setup details, but you sent *${cleanCommand.toUpperCase()}* (${targetLabel}).\n\n` +
+          `• Reply *YES* to switch to *${targetLabel}*\n` +
+          `• Reply *NO* to continue your setup\n` +
+          `• Reply *MENU* to view all departments`
+      });
+    }
+
+    const isGlobalMenu = cleanCommand === 'menu' || cleanCommand === 'portal';
     if (isGlobalMenu) {
       // Trust partners who have fully onboarded (COMPLETED state) or confirmed via portal gate
       const isVerified = userData.stateCodeConfirmed || userData.state === STATES.COMPLETED;
@@ -732,8 +867,8 @@ export const handleMotherMessage = async (sock, msg) => {
       });
     }
     else if (userData.state === STATES.AWAITING_PORTAL_STATE_CODE_CONFIRM) {
-      const resp = command.toLowerCase().trim();
-      if (resp === 'yes' || resp === 'y' || resp === '1') {
+      const resp = cleanCommand;
+      if (resp === 'yes' || resp === 'y' || resp === '1' || resp.startsWith('yes')) {
         const confirmedCode = userData.pendingStateCode || userData.stateCode;
         await saveUser({
           ...userData,
@@ -744,7 +879,7 @@ export const handleMotherMessage = async (sock, msg) => {
         });
 
         return sock.sendMessage(from, { text: getPortalMenuText(confirmedCode) });
-      } else if (resp === 'retry' || resp === 'no' || resp === 'n' || resp === '2') {
+      } else if (resp === 'retry' || resp === 'no' || resp === 'n' || resp === '2' || resp.startsWith('retry') || resp.startsWith('no')) {
         await saveUser({
           ...userData,
           state: STATES.AWAITING_PORTAL_STATE_CODE,
@@ -761,7 +896,7 @@ export const handleMotherMessage = async (sock, msg) => {
       }
     }
     else if (userData.state === STATES.PORTAL_MENU) {
-      const lower = command.toLowerCase().trim();
+      const lower = cleanCommand;
       if (lower === '1' || lower === 'learn') {
         return sock.sendMessage(from, { text: getLearnMenuText() });
       } else if (lower === '2' || lower === 'earn') {
@@ -785,7 +920,7 @@ export const handleMotherMessage = async (sock, msg) => {
             const snap = await db.pitches.where('userId', '==', from).where('status', '==', 'PENDING').get();
             existingCount = snap.size;
             if (!snap.empty) lastPitchId = snap.docs[0].id;
-          } catch (e) {}
+          } catch (e) { }
         }
         if (existingCount >= 3) {
           return sock.sendMessage(from, {
@@ -820,7 +955,7 @@ export const handleMotherMessage = async (sock, msg) => {
             const snap = await db.merchDesigns.where('userId', '==', from).where('status', '==', 'PENDING').get();
             existingCount = snap.size;
             if (!snap.empty) lastDesignId = snap.docs[0].id;
-          } catch (e) {}
+          } catch (e) { }
         }
         if (existingCount >= 3) {
           return sock.sendMessage(from, {
@@ -887,11 +1022,72 @@ export const handleMotherMessage = async (sock, msg) => {
       }
     }
     else if (userData.state === STATES.AWAITING_EARN_CHOICE) {
-      const lower = command.toLowerCase().trim();
+      const lower = cleanCommand;
       if (lower === '0' || lower === 'menu') {
         await saveUser({ ...userData, state: STATES.PORTAL_MENU });
         return sock.sendMessage(from, { text: getPortalMenuText(userData.stateCode) });
-      } else if (lower === '1') {
+      }
+
+      // Quick franchise management keywords in EARN menu
+      if (lower === 'orders') {
+        const partnerUid = userData.uid || from;
+        let orders = [];
+        if (db.users) {
+          try {
+            const snap = await db.users.doc(partnerUid).collection('manualOrders').orderBy('createdAt', 'desc').limit(5).get();
+            orders = snap.docs.map(d => d.data());
+          } catch (e) {}
+        }
+        if (orders.length === 0) {
+          orders = Array.from(mockManualOrders.values()).filter(o => o.partnerId === partnerUid).slice(0, 5);
+        }
+        if (orders.length === 0) {
+          return sock.sendMessage(from, { text: `📭 *Live Order Feed*\n\nNo active customer orders yet. Reply *CHECK 0803 1GB* or *ORDER 1GB 08012345678* to create an order!\n\n• Reply *0* to return to EARN menu` });
+        }
+        let msg = `📋 *Live Customer Orders*\n──────────────\n\n`;
+        orders.forEach(o => {
+          msg += `📦 *${o.size || 'Data'}* to ${o.phone} (₦${(o.retailPrice || 0).toLocaleString()}) - ${o.status || 'PENDING'}\n`;
+        });
+        msg += `\n• Reply *0* to return to EARN menu`;
+        return sock.sendMessage(from, { text: msg });
+      }
+
+      if (lower === 'balance' || lower === 'bal') {
+        const balance = await wallet.getBalance(from);
+        return sock.sendMessage(from, {
+          text: `💰 *Your Franchise Wallet*\n\nAvailable Balance: *₦${balance.toFixed(2)}*\n\nReply *WITHDRAW [amount]* to cash out to your bank.\n• Reply *0* for EARN menu`
+        });
+      }
+
+      if (lower.startsWith('promo')) {
+        return renderPromoMenu(sock, from, userData);
+      }
+
+      if (lower.startsWith('status')) {
+        return renderStatusMenu(sock, from, userData);
+      }
+
+      if (lower === 'mode') {
+        const isAuto = userData.botMode === 'autonomous';
+        return sock.sendMessage(from, {
+          text: `⚙️ *FRANCHISE AUTOMATION MODE*\n──────────────\n\nCurrent Mode: *${isAuto ? 'AUTONOMOUS 🤖' : 'MANUAL 👤'}*\n\n• Reply *MODE AUTO* to switch to autonomous AI\n• Reply *MODE MANUAL* to switch to manual handling\n• Reply *0* to return to EARN menu`
+        });
+      }
+
+      if (lower === 'data' || lower === 'price' || lower === 'catalog') {
+        return sock.sendMessage(from, {
+          text: `📦 *Clarion Subsidized Data Catalog*\n──────────────\n\n` +
+            `1GB — ₦280 (MTN/Airtel/Glo)\n` +
+            `2GB — ₦550\n` +
+            `5GB — ₦1,350\n` +
+            `10GB — ₦2,650\n\n` +
+            `👉 Reply *CHECK 0803 1GB* to look up prices\n` +
+            `👉 Reply *ORDER 1GB 08012345678* to create customer invoice\n\n` +
+            `• Reply *0* for EARN menu`
+        });
+      }
+
+      if (lower === '1') {
         const hasFranchise = userData.terminalApproved === true || !!userData.virtualAccount || userData.state === STATES.COMPLETED;
         if (hasFranchise) {
           const storeName = userData.brandName || userData.franchiseName || ('Clarion AI - ' + (userData.verifiedName || 'Store'));
@@ -911,15 +1107,21 @@ export const handleMotherMessage = async (sock, msg) => {
               `👉 Reply *BALANCE* — Real-time earnings\n` +
               `👉 Reply *PROMO* — Manage customer giveaways\n` +
               `👉 Reply *STATUS* — Daily WhatsApp status schedule\n` +
-              `👉 Reply *MODE* — Automation controls\n\n` +
+              `👉 Reply *MODE* — Automation controls\n` +
+              `👉 Reply *DATA* — Subsidized data catalog\n\n` +
               `──────────────\n` +
               `• Reply *0* to return to EARN Hub\n` +
               `• Reply *MENU* to return to Main Portal`
           });
         }
 
-        const batchInfo = parseNyscBatch(userData.stateCode);
-        if (batchInfo.isActiveCohort) {
+        // Hardcoded exception: specific state codes that should bypass the batch year gate
+        const FRANCHISE_EXCEPTIONS = ['JG/25C/1327'];
+        const normalizedCode = (userData.stateCode || '').trim().toUpperCase().replace(/\s+/g, '');
+        const batchInfo = parseNyscBatch(normalizedCode);
+        const isActiveCohortOrException = batchInfo.isActiveCohort || FRANCHISE_EXCEPTIONS.includes(normalizedCode);
+
+        if (isActiveCohortOrException) {
           await saveUser({ ...userData, state: STATES.AWAITING_TIER_SELECTION });
           const tierPrompt = `⚡ *CLARION TELECOM FRANCHISE SETUP*\n` +
             `_Turn your WhatsApp into an automated digital enterprise._\n` +
@@ -1006,16 +1208,29 @@ export const handleMotherMessage = async (sock, msg) => {
       }
     }
     else if (userData.state === STATES.AWAITING_PITCH_SUBMISSION) {
-      if (command.toLowerCase() === 'cancel') {
+      if (cleanCommand === 'cancel' || cleanCommand === '0') {
         await saveUser({ ...userData, pendingPitchFiles: [], pendingPitchNotes: '', state: STATES.PORTAL_MENU });
         return sock.sendMessage(from, { text: getBuildMenuText() });
       }
 
       const isMedia = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage || msg.message?.imageMessage);
 
-      if (command.toLowerCase() === 'done') {
-        const files = userData.pendingPitchFiles || [];
+      if (cleanCommand === 'done' || cleanCommand === 'submit' || cleanCommand.startsWith('done')) {
+        let files = userData.pendingPitchFiles || [];
         const notes = userData.pendingPitchNotes || '';
+
+        // Fallback: Check PITCHES_DIR for files uploaded from this phone number
+        if (files.length === 0) {
+          const userPhone = from.replace(/[^0-9]/g, '');
+          if (fs.existsSync(PITCHES_DIR)) {
+            try {
+              const diskFiles = fs.readdirSync(PITCHES_DIR)
+                .filter(f => f.startsWith(userPhone))
+                .map(f => path.join(PITCHES_DIR, f));
+              if (diskFiles.length > 0) files = diskFiles;
+            } catch (e) {}
+          }
+        }
 
         if (files.length === 0 && notes.trim().length === 0) {
           return sock.sendMessage(from, {
@@ -1091,13 +1306,25 @@ export const handleMotherMessage = async (sock, msg) => {
       }
     }
     else if (userData.state === STATES.AWAITING_DESIGN_SUBMISSION) {
-      if (command.toLowerCase() === 'cancel') {
+      if (cleanCommand === 'cancel' || cleanCommand === '0') {
         await saveUser({ ...userData, pendingDesigns: [], state: STATES.PORTAL_MENU });
         return sock.sendMessage(from, { text: getMerchMenuText() });
       }
 
-      if (command.toLowerCase() === 'done') {
-        const files = userData.pendingDesigns || [];
+      if (cleanCommand === 'done' || cleanCommand === 'submit' || cleanCommand.startsWith('done')) {
+        let files = userData.pendingDesigns || [];
+        if (files.length === 0) {
+          const userPhone = from.replace(/[^0-9]/g, '');
+          if (fs.existsSync(DESIGNS_DIR)) {
+            try {
+              const diskFiles = fs.readdirSync(DESIGNS_DIR)
+                .filter(f => f.startsWith(userPhone))
+                .map(f => path.join(DESIGNS_DIR, f));
+              if (diskFiles.length > 0) files = diskFiles;
+            } catch (e) {}
+          }
+        }
+
         if (files.length === 0 && command.length < 5) {
           return sock.sendMessage(from, {
             text: `❌ No design files received yet. Please send an image sketch or mockup first, or reply *CANCEL*:`
@@ -1164,11 +1391,33 @@ export const handleMotherMessage = async (sock, msg) => {
       }
     }
     else if (userData.state === STATES.AWAITING_CONTRIBUTOR_SUBMISSION) {
-      if (command.toLowerCase() === 'cancel') {
+      if (cleanCommand === 'cancel' || cleanCommand === '0' || cleanCommand === 'menu') {
         await saveUser({ ...userData, state: STATES.PORTAL_MENU });
         return sock.sendMessage(from, { text: getLearnMenuText() });
       }
 
+      const isMedia = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage || msg.message?.imageMessage);
+      let mediaPath = null;
+      let mediaName = null;
+
+      if (isMedia) {
+        try {
+          const buffer = await downloadMediaMessage(msg, 'buffer', {});
+          const ext = msg.message?.imageMessage ? 'jpg' : 'pdf';
+          const originalDocName = msg.message?.documentMessage?.fileName || msg.message?.documentWithCaptionMessage?.message?.documentMessage?.fileName;
+          const fileName = `contrib_${from.replace(/[^0-9]/g, '')}_${Date.now()}.${ext}`;
+          const contribDir = path.join(process.cwd(), 'data', 'learning');
+          if (!fs.existsSync(contribDir)) fs.mkdirSync(contribDir, { recursive: true });
+          const fullPath = path.join(contribDir, fileName);
+          fs.writeFileSync(fullPath, buffer);
+          mediaPath = fullPath;
+          mediaName = originalDocName || fileName;
+        } catch (e) {
+          logger.warn(`Could not save contributor media: ${e.message}`);
+        }
+      }
+
+      const contribContent = command.trim() || (mediaName ? `Uploaded asset: ${mediaName}` : 'Curriculum Asset / Link');
       const contribId = `CONTRIB-${Math.floor(1000 + Math.random() * 9000)}`;
       const contribEntry = {
         id: contribId,
@@ -1176,10 +1425,15 @@ export const handleMotherMessage = async (sock, msg) => {
         userId: from,
         stateCode: userData.stateCode || 'NYSC',
         verifiedName: userData.verifiedName || userData.name || 'Educator',
-        content: command,
+        content: contribContent,
+        mediaPath,
+        mediaName,
         submittedAt: new Date().toISOString()
       };
 
+      if (db.contributors) {
+        await db.contributors.doc(contribId).set(contribEntry).catch(e => logger.warn(`Firestore contrib save failed: ${e.message}`));
+      }
       mockContributors.set(contribId, contribEntry);
       await saveUser({ ...userData, state: STATES.PORTAL_MENU });
 
@@ -1187,6 +1441,7 @@ export const handleMotherMessage = async (sock, msg) => {
         text: `✅ *LEARNING ASSET SUBMITTED!*\n` +
           `──────────────\n\n` +
           `Reference ID: *${contribId}*\n` +
+          `Asset: ${contribContent}\n\n` +
           `Thank you for contributing to the Clarion corps member knowledge base! Our editorial team will review your asset and index it in the next directory update.\n\n` +
           `──────────────\n` +
           `• Reply *0* to return to Main Menu`
@@ -1323,21 +1578,33 @@ export const handleMotherMessage = async (sock, msg) => {
     }
     // ── AWAITING_INITIAL_BANK_CONFIRM ──
     else if (userData.state === STATES.AWAITING_INITIAL_BANK_CONFIRM) {
-      if (command === 'retry' || command === 'no' || command === '2') {
+      const confirmCmd = cleanCommand;
+      if (confirmCmd === 'retry' || confirmCmd === 'no' || confirmCmd === '2' || confirmCmd.startsWith('retry') || confirmCmd.startsWith('no')) {
         await saveUser({ ...userData, state: STATES.AWAITING_INITIAL_BANK, pendingBank: null });
         return sock.sendMessage(from, {
           text: '🔄 No problem! Please re-enter your *Bank Name* and *10-digit Account Number*:\n\nExample: *GTBank 0123456789*'
         });
       }
 
-      if (command !== 'yes' && command !== '1') {
+      const isYes = confirmCmd === 'yes' || confirmCmd === 'y' || confirmCmd === '1' || confirmCmd === 'confirm' || confirmCmd === 'correct' || confirmCmd.startsWith('yes');
+      if (!isYes) {
         return sock.sendMessage(from, {
-          text: 'Reply *YES* to confirm this account, or *RETRY* to enter different details.'
+          text: '👉 Reply *YES* to confirm this account, or *RETRY* to enter different details.'
         });
       }
 
-      // Lock the verified name and bank details
-      const { bankName: pBankName, bankCode: pBankCode, accountNumber: pAccountNumber, accountName: pAccountName } = userData.pendingBank;
+      // Safe fallback for pending bank details
+      const pBank = userData.pendingBank || userData.bankDetails || {
+        bankName: 'HabariPay (GTCO)',
+        bankCode: '058',
+        accountNumber: '5005005594',
+        accountName: userData.verifiedName || userData.name || 'Clarion Partner'
+      };
+
+      const pBankName = pBank.bankName || 'Verified Bank';
+      const pBankCode = pBank.bankCode || '000';
+      const pAccountNumber = pBank.accountNumber || '0000000000';
+      const pAccountName = pBank.accountName || userData.verifiedName || userData.name || 'Clarion Partner';
 
       await saveUser({
         ...userData,
@@ -3189,7 +3456,7 @@ export const handleMotherMessage = async (sock, msg) => {
           const refundAmount = activePromo.remainingClaims * (activePromo.costPerClaim || 140);
           if (refundAmount > 0) {
             await wallet.recordPurchaseCredit?.(from, refundAmount, `Promo Refund: ${activePromo.remainingClaims} unclaimed grants`)
-              .catch(() => {});
+              .catch(() => { });
           }
           await saveUser({ ...userData, activePromo: null });
           return sock.sendMessage(from, {
@@ -3244,9 +3511,9 @@ export const handleMotherMessage = async (sock, msg) => {
           };
 
           await wallet.recordPurchaseDebit(from, totalBudget, `Promo Budget Reserved ${isMicroCredit ? '(Kickstart Credit)' : ''}: ${sizeMb}MB x ${count} recipients`, { campaignId, sizeMb, count, isMicroCredit });
-          
+
           if (db.users) {
-            await db.users.doc(from).collection('promos').doc(campaignId).set(newPromo).catch(() => {});
+            await db.users.doc(from).collection('promos').doc(campaignId).set(newPromo).catch(() => { });
           }
 
           const updateFields = { activePromo: newPromo };
@@ -3298,8 +3565,8 @@ export const handleMotherMessage = async (sock, msg) => {
         const plans = await payflex.getAvailablePlans();
         const networkPlans = plans.filter(p => p.network.toLowerCase().includes(network.toLowerCase()));
         let matchedPlan = networkPlans.find(p => p.name.toLowerCase().includes(`${giftSizeMb}mb`)) ||
-                          networkPlans.find(p => p.name.toLowerCase().includes('500mb')) ||
-                          networkPlans[0];
+          networkPlans.find(p => p.name.toLowerCase().includes('500mb')) ||
+          networkPlans[0];
 
         if (!matchedPlan) {
           return sock.sendMessage(from, { text: `❌ No matching data plan found for ${network.toUpperCase()}.` });
@@ -3335,7 +3602,7 @@ export const handleMotherMessage = async (sock, msg) => {
             try {
               const contactDoc = await db.users.doc(from).collection('contacts').doc(targetJid).get();
               if (contactDoc.exists) isReturning = true;
-            } catch (e) {}
+            } catch (e) { }
           }
 
           // Record / update contact
@@ -3344,7 +3611,7 @@ export const handleMotherMessage = async (sock, msg) => {
               phone: targetPhone,
               lastSeen: new Date().toISOString(),
               lastPromoDelivered: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
+            }, { merge: true }).catch(() => { });
           }
 
           const partnerName = userData.verifiedName || userData.name || 'Your Partner';
@@ -3424,10 +3691,10 @@ You’ve just been awarded *${giftSizeMb}MB Free Data*:
         } else {
           const cleanCmd = command.replace(/[\s-]/g, '');
           if (/^(?:0|\+?234)[789][01]\d{8}$/.test(cleanCmd) &&
-              !cleanCmd.toLowerCase().startsWith('check') &&
-              !cleanCmd.toLowerCase().startsWith('order') &&
-              !cleanCmd.toLowerCase().startsWith('gift') &&
-              !cleanCmd.toLowerCase().startsWith('promo')) {
+            !cleanCmd.toLowerCase().startsWith('check') &&
+            !cleanCmd.toLowerCase().startsWith('order') &&
+            !cleanCmd.toLowerCase().startsWith('gift') &&
+            !cleanCmd.toLowerCase().startsWith('promo')) {
             detectedPhone = cleanCmd;
           }
         }

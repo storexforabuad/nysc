@@ -179,11 +179,6 @@ const sendDailyTextStatus = async () => {
 };
 
 export function startStatusPostJob() {
-  if (config.mockMode && process.env.TEST_CRON !== 'true') {
-    logger.info('Skipping status job initialization in mock mode (set TEST_CRON=true to override).');
-    return;
-  }
-
   ensureMediaDirs();
 
   cron.schedule('0 0 * * 0', async () => {
@@ -221,5 +216,27 @@ export function startStatusPostJob() {
     cleanupOldReceipts();
   }, { timezone: 'Africa/Lagos' });
 
-  logger.info('Status post CRON jobs scheduled.');
+  logger.info(`Status post CRON jobs scheduled (mockMode=${!!config.mockMode}).`);
 }
+
+export async function triggerManualStatusBroadcast(type = 'price_card') {
+  logger.info(`Manual status broadcast triggered: ${type}`);
+  if (type === 'price_card') {
+    await sendPriceCardStatus();
+  } else if (type === 'text') {
+    await sendDailyTextStatus();
+  } else if (type === 'promo') {
+    await sendPromoStatus();
+  } else if (type === 'receipt') {
+    await sendReceiptStatus();
+  }
+}
+
+export {
+  sendWeeklyPriceCards,
+  sendPriceCardStatus,
+  sendDailyTextStatus,
+  sendReceiptStatus,
+  sendPromoStatus,
+  cleanupOldReceipts
+};

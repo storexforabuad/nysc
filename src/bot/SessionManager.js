@@ -1,14 +1,14 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { logger } from '../config/env.js';
+import { config, logger } from '../config/env.js';
 import { db } from '../services/firebase.js';
-import { handleMotherMessage, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
+import { handleMotherMessage, CENTRAL_HUB_ACCOUNT, mockUserStore } from './MotherBot.js';
 import mediaGen from '../services/mediaGen.js';
 import path from 'path';
 import fs from 'fs';
 import { Worker } from 'worker_threads';
-import { getFreeGrantDays } from '../services/WalletService.js';
+import { getFreeGrantDays, BOT_MODES } from '../services/WalletService.js';
 
 class SessionManager {
   constructor() {
@@ -122,13 +122,23 @@ class SessionManager {
       if (msg.type === 'new_login') {
         logger.info(`✅ Activation payload accepted for ${user.uid}!`);
         const ownerJid = user.ownerJid || user.motherJid || phoneJid;
+        const defaultMode = (config.mockMode ? BOT_MODES.AUTONOMOUS : BOT_MODES.MANUAL);
+        const resolvedMode = user.botMode || defaultMode;
+        const resolvedApproved = user.terminalApproved !== undefined ? user.terminalApproved : (config.mockMode ? true : false);
+
+        user.botMode = resolvedMode;
+        user.terminalApproved = resolvedApproved;
+
         const activationData = {
           state: 'COMPLETED',
-          botMode: 'manual',
+          botMode: resolvedMode,
+          terminalApproved: resolvedApproved,
           phoneJid,
           phoneNumber,
           pairedAt: new Date().toISOString()
         };
+        if (user.subscription) activationData.subscription = user.subscription;
+        if (user.announceNewContacts !== undefined) activationData.announceNewContacts = user.announceNewContacts;
 
         if (db.users) {
           db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
@@ -147,13 +157,23 @@ class SessionManager {
         this.pendingPairings.delete(user.uid);
 
         const ownerJid = user.ownerJid || user.motherJid || phoneJid;
+        const defaultMode = (config.mockMode ? BOT_MODES.AUTONOMOUS : BOT_MODES.MANUAL);
+        const resolvedMode = user.botMode || defaultMode;
+        const resolvedApproved = user.terminalApproved !== undefined ? user.terminalApproved : (config.mockMode ? true : false);
+
+        user.botMode = resolvedMode;
+        user.terminalApproved = resolvedApproved;
+
         const activationData = {
           state: 'COMPLETED',
-          botMode: 'manual',
+          botMode: resolvedMode,
+          terminalApproved: resolvedApproved,
           phoneJid,
           phoneNumber,
           pairedAt: new Date().toISOString()
         };
+        if (user.subscription) activationData.subscription = user.subscription;
+        if (user.announceNewContacts !== undefined) activationData.announceNewContacts = user.announceNewContacts;
 
         if (db.users) {
           db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
@@ -205,6 +225,10 @@ class SessionManager {
   }
 
   startProxyBot(user) {
+    if (config.mockMode) {
+      if (user.terminalApproved === undefined) user.terminalApproved = true;
+      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    }
     const sessionKey = user.phoneJid || user.uid;
     if (this.sessions.has(sessionKey)) return;
 
@@ -227,6 +251,10 @@ class SessionManager {
   }
 
   async startQRPairingForUser(user, onQRReady) {
+    if (config.mockMode) {
+      if (user.terminalApproved === undefined) user.terminalApproved = true;
+      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    }
     logger.info(`[HUB-ACTIVATE] Starting QR worker activation for ${user.uid}`);
 
     const sessionKey = user.phoneJid || user.uid;
@@ -267,6 +295,10 @@ class SessionManager {
   }
 
   async requestPairingCodeForUser(user) {
+    if (config.mockMode) {
+      if (user.terminalApproved === undefined) user.terminalApproved = true;
+      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    }
     logger.info(`Requesting pairing code (via Worker) for ${user.uid}`);
 
     const sessionKey = user.phoneJid || user.uid;
@@ -299,6 +331,49 @@ class SessionManager {
       });
       setTimeout(() => reject(new Error("Timeout waiting for pairing code from worker")), 30000);
     });
+  }
+
+  updateWorkerUser(identifier, updates) {
+    if (!identifier || !updates) return false;
+    const cleanId = String(identifier).trim();
+    const cleanDigits = cleanId.replace(/[^0-9]/g, '');
+
+    // 1. Search in active worker sessions by sessionKey or telephone digits
+    let targetWorker = this.sessions.get(cleanId);
+    if (!targetWorker) {
+      for (const [key, worker] of this.sessions.entries()) {
+        const keyDigits = String(key).replace(/[^0-9]/g, '');
+        if (key === cleanId || (cleanDigits.length >= 10 && keyDigits.endsWith(cleanDigits.slice(-10)))) {
+          targetWorker = worker;
+          break;
+        }
+      }
+    }
+
+    if (targetWorker) {
+      try {
+        targetWorker.postMessage({ type: 'update_user', updates });
+        logger.info(`[IPC] Dispatched update_user to worker for ${identifier}: botMode=${updates.botMode}`);
+      } catch (err) {
+        logger.error(`[IPC] Error posting update_user to worker for ${identifier}:`, err.message);
+      }
+    } else {
+      logger.info(`[IPC] No active worker thread found for ${identifier} (will load on next worker start)`);
+    }
+
+    // 2. Synchronize in-memory fallback mockUserStore
+    if (mockUserStore) {
+      for (const [k, u] of mockUserStore.entries()) {
+        const kDigits = String(k).replace(/[^0-9]/g, '');
+        if (k === cleanId || (cleanDigits.length >= 10 && kDigits.endsWith(cleanDigits.slice(-10)))) {
+          Object.assign(u, updates);
+          mockUserStore.set(k, u);
+          logger.info(`[MOCK] Synchronized mockUserStore for ${k}: botMode=${u.botMode}`);
+        }
+      }
+    }
+
+    return !!targetWorker;
   }
 
   getContacts(userId) {

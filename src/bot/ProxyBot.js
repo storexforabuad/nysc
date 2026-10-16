@@ -1,4 +1,4 @@
-import { logger } from '../config/env.js';
+import { config, logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
 import payflex from '../services/payflex.js';
 import wallet, { SUBSCRIPTION_PLANS, BOT_MODES } from '../services/WalletService.js';
@@ -7,6 +7,9 @@ import broadcastQueue from '../services/BroadcastQueue.js';
 import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
 import { detectNetwork } from '../utils/networkUtils.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
+
+// ── In-memory tracking for introduced contacts (resilient offline/mock fallback) ──
+const introducedContacts = new Set();
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const messageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -87,12 +90,18 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     // Command regexes (used by first-touch gate and command routers)
-    const dataCommandRegex = /^\.?data(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
-    const isDataMatch = dataCommandRegex.test(command);
+    const isDataAndPriceLiteral = /^\.?data\s*(?:and|\+|&)?\s*(?:price|prices|pricing|plans)$/i.test(command);
+    const dataCommandRegex = /^\.?data(?:\s*\+?\s*(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
+    const dataPriceMatch = command.match(dataCommandRegex);
+    const isDataMatch = isDataAndPriceLiteral || !!dataPriceMatch;
     const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
 
     // Ensure in-memory user has latest approval/mode state if pending
+    if (config.mockMode) {
+      if (user.terminalApproved === undefined) user.terminalApproved = true;
+      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    }
     if (user.terminalApproved !== true || user.botMode !== BOT_MODES.AUTONOMOUS) {
       if (db.users && user?.uid) {
         try {
@@ -134,15 +143,20 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
     // ── First-Touch Reassurance Announcement (once per contact in Autonomous mode) ──
     if (!from.endsWith('@g.us') && !isOwner && user.botMode === BOT_MODES.AUTONOMOUS && user.announceNewContacts !== false) {
-      let isIntroduced = false;
-      if (db.users && actionableJid) {
+      const contactTrackingKey = `${user.uid}_${actionableJid}`;
+      let isIntroduced = introducedContacts.has(contactTrackingKey);
+      if (!isIntroduced && db.users && actionableJid) {
         try {
           const contactDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
-          isIntroduced = contactDoc.exists && contactDoc.data().introduced === true;
+          if (contactDoc.exists && contactDoc.data().introduced === true) {
+            isIntroduced = true;
+            introducedContacts.add(contactTrackingKey);
+          }
         } catch (e) {}
       }
 
       if (!isIntroduced) {
+        introducedContacts.add(contactTrackingKey);
         // Mark as introduced (idempotent, runs once per contact)
         if (db.users && actionableJid) {
           await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
@@ -604,7 +618,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     if (command === 'menu' || command === 'start' || command === 'catalog' || isDataMatch) {
-      const match = isDataMatch ? command.match(dataCommandRegex) : null;
+      const match = dataPriceMatch;
       const targetPrice = match && match[1] ? parseInt(match[1]) : null;
       const targetPhone = match && match[2] ? match[2] : null;
 

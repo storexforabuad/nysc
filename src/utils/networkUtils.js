@@ -24,17 +24,21 @@ export const detectNetwork = (from) => {
     return null;
 };
 
+export const FRANCHISE_EXCEPTIONS = ['JG/25C/1327'];
+
 export const parseNyscBatch = (stateCode) => {
     if (!stateCode) return { valid: false };
-    const clean = stateCode.trim().toUpperCase();
+    const clean = stateCode.trim().toUpperCase().replace(/\s+/g, '');
     const match = clean.match(/^[A-Z]{2}\/(\d{2})[A-C]\/\d{4}$/);
     if (!match) return { valid: false };
 
     const year = parseInt(match[1], 10);
+    const isExempted = FRANCHISE_EXCEPTIONS.includes(clean);
     return {
         valid: true,
         stateCode: clean,
         year,
-        isActiveCohort: year >= 26 // 2026+ is active serving corps members
+        isActiveCohort: year >= 26 || isExempted, // 2026+ or approved exceptions (e.g. JG/25C/1327)
+        isExempted
     };
 };

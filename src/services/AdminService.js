@@ -1,4 +1,6 @@
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
 import { db } from './firebase.js';
 import { logger } from '../config/env.js';
 import wallet, { getFreeGrantDays } from './WalletService.js';
@@ -408,13 +410,45 @@ class AdminService {
      * Approves a vendor's terminal license, dispatches their Franchise Card, and activates autonomous bot
      */
     async approveVendor(userId) {
-        if (!db.users) return { success: false, message: 'Database offline' };
         try {
-            const userRef = db.users.doc(userId);
-            const userDoc = await userRef.get();
-            if (!userDoc.exists) return { success: false, message: 'Vendor not found' };
+            let userRef = null;
+            let userData = null;
 
-            const userData = userDoc.data();
+            if (db.users) {
+                try {
+                    userRef = db.users.doc(userId);
+                    const userDoc = await userRef.get();
+                    if (userDoc.exists) {
+                        userData = userDoc.data();
+                    }
+                } catch (e) {
+                    logger.warn('Could not read from db.users, falling back to mockUserStore:', e.message);
+                }
+            }
+
+            if (!userData) {
+                // Check in-memory store in MotherBot
+                try {
+                    const { mockUserStore } = await import('../bot/MotherBot.js');
+                    if (mockUserStore) {
+                        userData = mockUserStore.get(userId);
+                        if (!userData) {
+                            const cleanDigits = userId.replace(/[^0-9]/g, '');
+                            for (const [k, u] of mockUserStore.entries()) {
+                                if (cleanDigits.length >= 10 && k.replace(/[^0-9]/g, '').endsWith(cleanDigits.slice(-10))) {
+                                    userData = u;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    logger.warn('Could not load mockUserStore:', e.message);
+                }
+            }
+
+            if (!userData) return { success: false, message: 'Vendor not found' };
+
             const tier = userData.partnershipTier || userData.donationTier || 'MEMBER';
             const grantDays = getFreeGrantDays(tier);
             const now = new Date();
@@ -439,10 +473,12 @@ class AdminService {
                 announceNewContacts: true
             };
 
-            await userRef.set(updates, { merge: true });
+            if (userRef) {
+                await userRef.set(updates, { merge: true }).catch(e => logger.warn('Firestore write failed in approveVendor:', e.message));
+            }
             Object.assign(userData, updates);
 
-            // Hot-reload running ProxyWorker thread immediately
+            // Hot-reload running ProxyWorker thread & sync mockUserStore immediately
             sessionManager.updateWorkerUser(userId, {
                 terminalApproved: true,
                 botMode: 'autonomous',
@@ -470,26 +506,129 @@ class AdminService {
      * Lists submitted startup & venture pitches
      */
     async listPitches() {
+        const pitchMap = new Map();
+
+        // 1. Load from Firestore if online
         if (db.pitches) {
             try {
                 const snap = await db.pitches.get();
-                return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                snap.docs.forEach(doc => pitchMap.set(doc.id, { id: doc.id, ...doc.data() }));
             } catch (e) {}
         }
-        return Array.from(mockPitches.values());
+
+        // 2. Load from in-memory mockPitches
+        for (const [id, pitch] of mockPitches.entries()) {
+            if (!pitchMap.has(id)) {
+                pitchMap.set(id, pitch);
+            }
+        }
+
+        // 3. Scan disk directory PITCHES_DIR for any uploaded deck files
+        const pitchesDir = path.join(process.cwd(), 'data', 'pitches');
+        if (fs.existsSync(pitchesDir)) {
+            try {
+                const files = fs.readdirSync(pitchesDir);
+                files.forEach(file => {
+                    const filePath = path.join(pitchesDir, file);
+                    const parts = file.split('_');
+                    const phone = parts[0] || 'Unknown Corper';
+                    const id = `FILE-PITCH-${file.split('.')[0]}`;
+                    
+                    const alreadyPresent = Array.from(pitchMap.values()).some(p => 
+                        (p.filePath && p.filePath.includes(file)) || 
+                        (p.files && p.files.some(f => f.includes(file)))
+                    );
+
+                    if (!alreadyPresent) {
+                        let submittedAt = new Date().toISOString();
+                        try {
+                            const stat = fs.statSync(filePath);
+                            if (stat.mtime) submittedAt = stat.mtime.toISOString();
+                        } catch (e) {}
+
+                        pitchMap.set(id, {
+                            id,
+                            pitchId: id,
+                            userId: phone,
+                            stateCode: 'NYSC',
+                            verifiedName: `Corps Member (+${phone})`,
+                            summary: `Deck document uploaded: ${file}`,
+                            files: [filePath],
+                            filePath,
+                            status: 'PENDING',
+                            submittedAt
+                        });
+                    }
+                });
+            } catch (fsErr) {
+                logger.warn('Could not scan pitchesDir:', fsErr.message);
+            }
+        }
+
+        return Array.from(pitchMap.values());
     }
 
     /**
      * Lists submitted S1 Merch collaboration designs
      */
     async listMerchDesigns() {
+        const designMap = new Map();
+
         if (db.merchDesigns) {
             try {
                 const snap = await db.merchDesigns.get();
-                return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                snap.docs.forEach(doc => designMap.set(doc.id, { id: doc.id, ...doc.data() }));
             } catch (e) {}
         }
-        return Array.from(mockDesigns.values());
+
+        for (const [id, design] of mockDesigns.entries()) {
+            if (!designMap.has(id)) {
+                designMap.set(id, design);
+            }
+        }
+
+        const designsDir = path.join(process.cwd(), 'data', 'designs');
+        if (fs.existsSync(designsDir)) {
+            try {
+                const files = fs.readdirSync(designsDir);
+                files.forEach(file => {
+                    const filePath = path.join(designsDir, file);
+                    const parts = file.split('_');
+                    const phone = parts[0] || 'Unknown Designer';
+                    const id = `FILE-DESIGN-${file.split('.')[0]}`;
+                    
+                    const alreadyPresent = Array.from(designMap.values()).some(d => 
+                        (d.filePath && d.filePath.includes(file)) || 
+                        (d.files && d.files.some(f => f.includes(file)))
+                    );
+
+                    if (!alreadyPresent) {
+                        let submittedAt = new Date().toISOString();
+                        try {
+                            const stat = fs.statSync(filePath);
+                            if (stat.mtime) submittedAt = stat.mtime.toISOString();
+                        } catch (e) {}
+
+                        designMap.set(id, {
+                            id,
+                            designId: id,
+                            userId: phone,
+                            stateCode: 'NYSC',
+                            verifiedName: `Designer (+${phone})`,
+                            title: `S1 Design Concept: ${file}`,
+                            files: [filePath],
+                            filePath,
+                            status: 'PENDING',
+                            submittedAt
+                        });
+                    }
+                });
+            } catch (fsErr) {
+                logger.warn('Could not scan designsDir:', fsErr.message);
+            }
+        }
+
+        return Array.from(designMap.values());
     }
 }
 
