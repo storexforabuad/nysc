@@ -40,6 +40,25 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Process-level safety guards to prevent transient socket resets (ECONNRESET)
+// and unhandled stream errors in Node 22 (undici/baileys/firebase) from crashing the server
+process.on('uncaughtException', (err) => {
+  const isNetworkReset = err?.code === 'ECONNRESET' ||
+    err?.message?.includes('ECONNRESET') ||
+    err?.message?.includes('terminated') ||
+    err?.cause?.code === 'ECONNRESET';
+
+  if (isNetworkReset) {
+    logger.warn({ err }, 'Transient network stream/socket reset (ECONNRESET) safely handled');
+    return;
+  }
+  logger.error({ err }, 'Uncaught Exception in server process');
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.warn({ err: reason }, 'Unhandled Promise Rejection safely handled');
+});
+
 async function startServer() {
   const app = express();
   app.use(express.json());
@@ -956,7 +975,11 @@ async function startServer() {
 
   // Boot logic
   try {
-    await payflex.getAvailablePlans();
+    try {
+      await payflex.getAvailablePlans();
+    } catch (payflexErr) {
+      logger.warn({ err: payflexErr }, 'Initial plans cache warmup failed, continuing boot...');
+    }
 
     if (config.mockMode) {
       try {
@@ -1026,7 +1049,7 @@ async function startServer() {
       })();
     });
   } catch (error) {
-    logger.error('Boot process failed:', error);
+    logger.error({ err: error }, `Boot process failed: ${error?.message || error}`);
   }
 }
 

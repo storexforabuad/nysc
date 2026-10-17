@@ -29,15 +29,17 @@ class RetryQueue {
         try {
             const snapshot = await db.ledger
                 .where('status', '==', 'FAILED_DISPENSE')
-                .where('retryCount', '<', this.maxRetries)
-                .limit(5)
+                .limit(10)
                 .get();
 
             if (snapshot.empty) return;
 
-            logger.info(`[RETRY-QUEUE] Found ${snapshot.size} failed order(s) to retry.`);
+            const eligibleDocs = snapshot.docs.filter(doc => (doc.data().retryCount || 0) < this.maxRetries);
+            if (eligibleDocs.length === 0) return;
 
-            for (const doc of snapshot.docs) {
+            logger.info(`[RETRY-QUEUE] Found ${eligibleDocs.length} failed order(s) to retry.`);
+
+            for (const doc of eligibleDocs) {
                 const order = doc.data();
                 const orderId = doc.id;
 
@@ -178,7 +180,7 @@ class RetryQueue {
                 }
             }
         } catch (err) {
-            logger.error('[RETRY-QUEUE] Processing error:', err);
+            logger.error({ err }, `[RETRY-QUEUE] Processing error: ${err?.message || err}`);
         }
     }
 }

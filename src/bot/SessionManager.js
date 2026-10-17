@@ -19,6 +19,13 @@ class SessionManager {
   }
 
   async initMotherBot() {
+    // Guard against multiple concurrent reconnections racing each other
+    if (this._motherReconnecting) {
+      logger.info('Mother Bot reconnection already in progress, skipping duplicate call.');
+      return;
+    }
+    this._motherReconnecting = true;
+
     try {
       logger.info('Initializing Clarion Hub...');
       const authPath = path.join(this.sessionsDir, 'mother_bot');
@@ -69,18 +76,34 @@ class SessionManager {
           logger.info('========================================');
         }
         if (connection === 'close') {
-          const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+          const statusCode = lastDisconnect?.error?.output?.statusCode;
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+          // Release the guard so the delayed reconnect can proceed
+          this._motherReconnecting = false;
+
           if (shouldReconnect) {
-            logger.info('Mother Bot disconnected. Reconnecting...');
-            this.initMotherBot();
+            // Exponential backoff: 3s, 6s, 12s, 24s... capped at 60s
+            this._motherReconnectAttempts = (this._motherReconnectAttempts || 0) + 1;
+            const delay = Math.min(3000 * Math.pow(2, this._motherReconnectAttempts - 1), 60000);
+            logger.info(`Mother Bot disconnected (status=${statusCode}). Reconnecting in ${delay / 1000}s (attempt ${this._motherReconnectAttempts})...`);
+            setTimeout(() => this.initMotherBot(), delay);
           } else {
-            logger.info('Mother Bot logged out.');
+            logger.info('Mother Bot logged out permanently.');
+            this._motherReconnectAttempts = 0;
           }
         } else if (connection === 'open') {
           logger.info('✅ Clarion Hub connected successfully!');
           this.motherSock = sock;
           this.baileysVersion = version;
-          this.initProxyBots();
+          this._motherReconnecting = false;
+          this._motherReconnectAttempts = 0; // Reset backoff on successful connection
+
+          // Only initialize proxy bots once (workers persist across MotherBot reconnects)
+          if (!this._proxyBotsInitialized) {
+            this._proxyBotsInitialized = true;
+            this.initProxyBots();
+          }
         }
       });
 
@@ -94,8 +117,13 @@ class SessionManager {
 
       return sock;
     } catch (err) {
+      this._motherReconnecting = false;
       logger.error({ err }, 'Error in initMotherBot');
-      throw err;
+      // Auto-retry on crash with backoff
+      this._motherReconnectAttempts = (this._motherReconnectAttempts || 0) + 1;
+      const delay = Math.min(3000 * Math.pow(2, this._motherReconnectAttempts - 1), 60000);
+      logger.info(`Retrying initMotherBot in ${delay / 1000}s...`);
+      setTimeout(() => this.initMotherBot(), delay);
     }
   }
 
