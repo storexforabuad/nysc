@@ -429,7 +429,10 @@ export const handleMotherMessage = async (sock, msg) => {
 
     // ── Handle confirmation of a pending prompt switch ──
     if (userData.pendingPromptSwitch) {
-      if (['yes', 'y', '1', 'confirm', 'proceed'].includes(cleanCommand) || cleanCommand.startsWith('yes')) {
+      // If pending switch was erroneously recorded as a number (e.g. from tier selection), clear it immediately
+      if (/^[0-9]+$/.test(userData.pendingPromptSwitch)) {
+        userData.pendingPromptSwitch = null;
+      } else if (['yes', 'y', '1', 'confirm', 'proceed'].includes(cleanCommand) || cleanCommand.startsWith('yes')) {
         const target = userData.pendingPromptSwitch;
         userData.pendingPromptSwitch = null;
         if (target === 'promo') {
@@ -476,6 +479,7 @@ export const handleMotherMessage = async (sock, msg) => {
     }
 
     // ── Universal Interceptor for Navigation Keywords in Prompt States ──
+    // Note: Numbers 1-6 are NOT included here so users can answer numeric prompts (tier, confirm, bank) without false triggers
     const navKeywords = {
       'promo': 'PROMO (Giveaways)',
       'learn': 'LEARN (Camp Survival & Skills)',
@@ -483,13 +487,7 @@ export const handleMotherMessage = async (sock, msg) => {
       'build': 'BUILD (Venture Grants & Production)',
       'merch': 'MERCH (Clarion Supply Co.)',
       'events': 'EVENTS (Camp Drops & Updates)',
-      'impact': 'IMPACT (CDS Fund)',
-      '1': 'LEARN Hub',
-      '2': 'EARN Hub',
-      '3': 'BUILD Hub',
-      '4': 'MERCH Store',
-      '5': 'EVENTS Hub',
-      '6': 'IMPACT Fund'
+      'impact': 'IMPACT (CDS Fund)'
     };
 
     const promptStates = [
@@ -1472,20 +1470,26 @@ export const handleMotherMessage = async (sock, msg) => {
       let selectedTier = 'MEMBER';
       let rankBadge = 'MEMBER';
 
-      if (command === '1' || command.toLowerCase().includes('member')) {
+      const opt = cleanCommand.replace(/[^a-z0-9]/g, '');
+
+      if (opt === '1' || cleanCommand.includes('member')) {
         selectedTier = 'MEMBER';
         rankBadge = 'MEMBER';
-      } else if (command === '2' || command.toLowerCase().includes('master')) {
+      } else if (opt === '2' || cleanCommand.includes('master')) {
         selectedTier = 'MASTER';
         rankBadge = 'MASTER';
-      } else if (command === '3' || command.toLowerCase().includes('lord')) {
+      } else if (opt === '3' || cleanCommand.includes('lord')) {
         selectedTier = 'LORD';
         rankBadge = 'LORD';
-      } else if (command === '4' || command.toLowerCase().includes('pioneer')) {
+      } else if (opt === '4' || cleanCommand.includes('pioneer')) {
         selectedTier = 'PIONEER';
         rankBadge = 'LORD';
+      } else if (opt === '0' || cleanCommand === 'earn' || cleanCommand === 'back') {
+        userData.state = STATES.AWAITING_EARN_CHOICE;
+        await saveUser(userData);
+        return sock.sendMessage(from, { text: getEarnMenuText() });
       } else {
-        return sock.sendMessage(from, { text: '❌ Invalid selection. Please reply *1*, *2*, *3*, or *4* to choose your tier:' });
+        return sock.sendMessage(from, { text: '❌ Invalid selection. Please reply *1*, *2*, *3*, or *4* to choose your tier:\n\n• Reply *0* to return to EARN menu' });
       }
 
       const tierInfo = PARTNERSHIP_TIERS[selectedTier];
