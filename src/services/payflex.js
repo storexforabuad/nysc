@@ -42,135 +42,462 @@ const analyzeDuration = (label) => {
   return { category, priority };
 };
 
-const CUSTOM_MTN_PLANS = {
-  // 7 Days
-  'mtn_data_share:M500MBS': { sellPrice: 590, officialPrice: 500 },
-  'mtn_data_share:M1GBS': { sellPrice: 790, officialPrice: 800 },
-  'mtn_data_share:M2GBS': { sellPrice: 990, officialPrice: null },
-  'mtn_data_share:M3GBS': { sellPrice: 1290, officialPrice: null },
-  // 30 Days
-  'mtn_data_share:M1GBS2': { sellPrice: 790, officialPrice: null },
-  'mtn_data_share:M2GBS2': { sellPrice: 1290, officialPrice: 1500 },
-  'mtn_data_share:M3GBS2': { sellPrice: 1950, officialPrice: null },
-  'mtn_data_share:M5GBS': { sellPrice: 2550, officialPrice: null },
-  // Gifting - 2 Day
-  'mtn_gifting_data:M1m2GB': { sellPrice: 650, officialPrice: 450 },
-  'mtn_gifting_data:M2m5GB': { sellPrice: 800, officialPrice: 750 },
-  'mtn_gifting_data:M2m5GBS': { sellPrice: 990, officialPrice: 900 },
-  'mtn_gifting_data:M2GBS': { sellPrice: 765, officialPrice: 750 },
-  'mtn_gifting_data:M3m2GBS': { sellPrice: 1090, officialPrice: 1000 },
-  // Monthly
-  'mtn_gifting_data:M3m5GBS': { sellPrice: 2495, officialPrice: 2500 },
-  'mtn_gifting_data:M6GBS': { sellPrice: 2550, officialPrice: 2500 },
-  'mtn_gifting_data:M7GBS': { sellPrice: 3550, officialPrice: 3500 },
-  'mtn_gifting_data:M12m5GBS': { sellPrice: 5490, officialPrice: 5500 },
-  'mtn_gifting_data:M14m5GBS': { sellPrice: 4995, officialPrice: 5000 },
-  'mtn_gifting_data:M20GBS': { sellPrice: 7490, officialPrice: 7500 },
-  'mtn_gifting_data:M25GBS': { sellPrice: 8990, officialPrice: 9000 },
-  'mtn_gifting_data:M36GBS': { sellPrice: 10990, officialPrice: 11000 },
-  'mtn_gifting_data:M65GBS': { sellPrice: 15980, officialPrice: 16000 },
-  'mtn_gifting_data:M75GBS': { sellPrice: 17980, officialPrice: 18000 },
-  // 2-Month
-  'mtn_gifting_data:M90GBS': { sellPrice: 24980, officialPrice: 25000 },
-  'mtn_gifting_data:M150GBS': { sellPrice: 39950, officialPrice: 40000 },
-  'mtn_gifting_data:M165GBS': { sellPrice: 34950, officialPrice: 35000 },
-  'mtn_gifting_data:M200GBS': { sellPrice: 49950, officialPrice: 50000 },
-  // Yearly
-  'mtn_gifting_data:M250GBS': { sellPrice: 54950, officialPrice: 55000 },
-  'mtn_gifting_data:M800GBS': { sellPrice: 124950, officialPrice: 125000 },
+export const calculatePaystackFee = (amount) => {
+  const num = Number(amount) || 0;
+  if (num < 2500) {
+    return Math.round(num * 0.015);
+  }
+  return Math.min(2000, Math.round(num * 0.015 + 100));
 };
-const OFFICIAL_PRICES_MAP = {
-  // MTN DATA SHARE
-  'mtn_data_share:M500MBS': 500,
-  'mtn_data_share:M1GBS': 800,
-  'mtn_data_share:M2GBS': 1000,
-  'mtn_data_share:M3GBS': 1500,
-  'mtn_data_share:M1GBS2': 1000,
-  'mtn_data_share:M2GBS2': 1500,
-  'mtn_data_share:M3GBS2': 2000,
-  'mtn_data_share:M5GBS': 3000,
-  // MTN GIFTING DATA
-  'mtn_gifting_data:M110MBS': 100,
-  'mtn_gifting_data:M1m2GB': 500,
-  'mtn_gifting_data:M2m5GB': 600,
-  'mtn_gifting_data:M2m5GBS': 900,
-  'mtn_gifting_data:M2GBS': 750,
-  'mtn_gifting_data:M3m2GBS': 1000,
-  'mtn_gifting_data:M1GBS': 800,
-  'mtn_gifting_data:M2GBS2': 1500,
-  'mtn_gifting_data:M2m5GBS1': 2500,
-  'mtn_gifting_data:M2m7GBS': 2000,
-  'mtn_gifting_data:M3m5GBS': 2500,
-  'mtn_gifting_data:M6GBS': 2500,
-  'mtn_gifting_data:M7GBS': 3500,
-  'mtn_gifting_data:M11GBS': 3500,
-  'mtn_gifting_data:M12m5GBS': 5500,
-  'mtn_gifting_data:M14m5GBS': 5000,
-  'mtn_gifting_data:M20GBS': 7500,
-  'mtn_gifting_data:M25GBS': 9000,
-  'mtn_gifting_data:M36GBS': 11000,
-  'mtn_gifting_data:M65GBS': 16000,
-  'mtn_gifting_data:M75GBS': 18000,
-  'mtn_gifting_data:M90GBS': 25000,
-  'mtn_gifting_data:M150GBS': 40000,
-  'mtn_gifting_data:M165GBS': 35000,
-  'mtn_gifting_data:M200GBS': 50000,
-  'mtn_gifting_data:M250GBS': 55000,
-  'mtn_gifting_data:M800GBS': 125000,
-  // AIRTEL DATA
-  'airtel_data:A200MB': 200,
-  'airtel_data:A300MB': 300,
-  'airtel_data:A1GBS': 350,
-  'airtel_data:A2GBS': 800,
-  'airtel_data:A3a2GB': 1000,
-  'airtel_data:A5GB': 1500,
-  'airtel_data:A1GB': 800,
-  'airtel_data:A1a5GB': 1000,
-  'airtel_data:A3a5GB': 1500,
-  'airtel_data:A6GB': 2500,
-  'airtel_data:A10GBS': 3000,
-  'airtel_data:A18GB': 5000,
-  'airtel_data:A35GB': 10000,
-  'airtel_data:A2GB2': 1500,
-  'airtel_data:A3GB': 2000,
-  'airtel_data:A4GB': 2500,
-  'airtel_data:A8GB': 3000,
-  'airtel_data:A10GB': 4000,
-  'airtel_data:A13GB': 5000,
-  'airtel_data:A18GB2': 6000,  // note: A18GB appears twice (7-day vs 30-day)
-  'airtel_data:A25GB': 8000,
-  'airtel_data:A60GB': 15000,
-  'airtel_data:A75GB': 15000,
-  'airtel_data:A100GB': 20000,
-  'airtel_data:A160GB': 30000,
-  // GLO DATA
-  'glo_data:G500MB': 250,
-  'glo_data:G1GB1': 300,
-  'glo_data:G3GB1': 800,
-  'glo_data:G5GB1': 1400,
-  'glo_data:G1GB2': 350,
-  'glo_data:G3GB2': 1000,
-  'glo_data:G5GB2': 1500,
-  'glo_data:G1GB3': null,
-  'glo_data:G3GB3': null,
-  'glo_data:G5GB3': null,
-  'glo_data:G10GB1': null,
-  'glo_data:G1GB4': 500,
-  'glo_data:G2GB4': 1000,
-  'glo_data:G3GB4': 1300,
-  'glo_data:G5GB4': 2200,
-  'glo_data:G10GB2': 4500,
-  // 9MOBILE DATA
-  '9mobile_data:E300MB': 200,
-  '9mobile_data:E500MB': 300,
-  '9mobile_data:E1GB': 500,
-  '9mobile_data:E2GB': 1000,
-  '9mobile_data:E3GB': 1500,
-  '9mobile_data:E5GB': 2500,
-  '9mobile_data:E10GB': 5000,
-  '9mobile_data:E15GB': 7000,
-  '9mobile_data:E20GB': 9500,
-  '9mobile_data:E40GB': 19000,
+
+export const ACTIVE_APPROVED_PLANS = {
+  // ──────────────────────────────────────────
+  // 🌐 MTN (SME / Data Share) - 8 plans
+  // ──────────────────────────────────────────
+  'mtn_data_share:M500MBS': {
+    name: '500MB',
+    sellPrice: 500,
+    officialPrice: 500,
+    basePrice: 350,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'mtn_data_share:M1GBS': {
+    name: '1GB',
+    sellPrice: 800,
+    officialPrice: 800,
+    basePrice: 450,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'mtn_data_share:M2GBS': {
+    name: '2GB',
+    sellPrice: 1200,
+    officialPrice: 1333,
+    basePrice: 850,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'mtn_data_share:M3GBS': {
+    name: '3GB',
+    sellPrice: 1400,
+    officialPrice: 1400,
+    basePrice: 1200,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'mtn_data_share:M1GBS2': {
+    name: '1GB',
+    sellPrice: 850,
+    officialPrice: 1000,
+    basePrice: 580,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_data_share:M2GBS2': {
+    name: '2GB',
+    sellPrice: 1700,
+    officialPrice: 1500,
+    basePrice: 950,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_data_share:M3GBS2': {
+    name: '3GB',
+    sellPrice: 2000,
+    officialPrice: 2000,
+    basePrice: 1250,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_data_share:M5GBS': {
+    name: '5GB',
+    sellPrice: 2500,
+    officialPrice: 3000,
+    basePrice: 1800,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+
+  // ──────────────────────────────────────────
+  // 🌐 MTN (Direct Gifting) - 15 plans
+  // ──────────────────────────────────────────
+  'mtn_gifting_data:M110MBS': {
+    name: '110MB',
+    sellPrice: 100,
+    officialPrice: 100,
+    basePrice: 99,
+    durationCategory: '⚡ *1-Day Plans:*',
+    durationPriority: 1
+  },
+  'mtn_gifting_data:M6GBS': {
+    name: '6GB',
+    sellPrice: 2500,
+    officialPrice: 2500,
+    basePrice: 2480,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'mtn_gifting_data:M7GBS': {
+    name: '7GB (+2GB All Night Streaming)',
+    sellPrice: 3500,
+    officialPrice: 3500,
+    basePrice: 3450,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M14m5GBS': {
+    name: '14.5GB',
+    sellPrice: 5000,
+    officialPrice: 5000,
+    basePrice: 4950,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M20GBS': {
+    name: '20GB (+4GB All Night Streaming)',
+    sellPrice: 7500,
+    officialPrice: 7500,
+    basePrice: 7380,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M25GBS': {
+    name: '25GB',
+    sellPrice: 9000,
+    officialPrice: 9000,
+    basePrice: 8850,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M36GBS': {
+    name: '36GB',
+    sellPrice: 11000,
+    officialPrice: 11000,
+    basePrice: 10850,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M65GBS': {
+    name: '65GB',
+    sellPrice: 16000,
+    officialPrice: 16000,
+    basePrice: 15800,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M75GBS': {
+    name: '75GB',
+    sellPrice: 18000,
+    officialPrice: 18000,
+    basePrice: 17800,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M90GBS': {
+    name: '90GB',
+    sellPrice: 25000,
+    officialPrice: 25000,
+    basePrice: 24650,
+    durationCategory: '🗓️ *2-Month Plans:*',
+    durationPriority: 60
+  },
+  'mtn_gifting_data:M150GBS': {
+    name: '150GB',
+    sellPrice: 40000,
+    officialPrice: 40000,
+    basePrice: 39500,
+    durationCategory: '🗓️ *2-Month Plans:*',
+    durationPriority: 60
+  },
+  'mtn_gifting_data:M165GBS': {
+    name: '165GB',
+    sellPrice: 35000,
+    officialPrice: 35000,
+    basePrice: 34500,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M200GBS': {
+    name: '200GB',
+    sellPrice: 50000,
+    officialPrice: 50000,
+    basePrice: 49200,
+    durationCategory: '🗓️ *2-Month Plans:*',
+    durationPriority: 60
+  },
+  'mtn_gifting_data:M250GBS': {
+    name: '250GB',
+    sellPrice: 55000,
+    officialPrice: 55000,
+    basePrice: 54500,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'mtn_gifting_data:M800GBS': {
+    name: '800GB',
+    sellPrice: 125000,
+    officialPrice: 125000,
+    basePrice: 123500,
+    durationCategory: '💎 *Yearly Plans:*',
+    durationPriority: 365
+  },
+
+  // ──────────────────────────────────────────
+  // 🌐 Airtel Data - 21 plans
+  // ──────────────────────────────────────────
+  'airtel_data:A4GBS': {
+    name: '4GB Binge Plan',
+    sellPrice: 1000,
+    officialPrice: 1000,
+    basePrice: 990,
+    durationCategory: '⚡ *2-Day Plans:*',
+    durationPriority: 2
+  },
+  'airtel_data:A6GBS': {
+    name: '6GB',
+    sellPrice: 1500,
+    officialPrice: 1500,
+    basePrice: 1485,
+    durationCategory: '⚡ *2-Day Plans:*',
+    durationPriority: 2
+  },
+  'airtel_data:A1GB': {
+    name: '1GB',
+    sellPrice: 800,
+    officialPrice: 800,
+    basePrice: 795,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A1a5GBS': {
+    name: '1.5GB',
+    sellPrice: 1000,
+    officialPrice: 1000,
+    basePrice: 995,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A6GB': {
+    name: '6GB',
+    sellPrice: 2000,
+    officialPrice: 2000,
+    basePrice: 1970,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A8GBS': {
+    name: '8GB',
+    sellPrice: 2500,
+    officialPrice: 2500,
+    basePrice: 2487,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A10GBS': {
+    name: '10GB',
+    sellPrice: 3000,
+    officialPrice: 3000,
+    basePrice: 2975,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A20GB': {
+    name: '20GB',
+    sellPrice: 5000,
+    officialPrice: 5000,
+    basePrice: 4950,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A35GB': {
+    name: '35GB Unlimited Ultra Router',
+    sellPrice: 10000,
+    officialPrice: 10000,
+    basePrice: 9900,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'airtel_data:A2GB2': {
+    name: '2GB',
+    sellPrice: 1500,
+    officialPrice: 1500,
+    basePrice: 1478,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A3GB': {
+    name: '3GB',
+    sellPrice: 2000,
+    officialPrice: 2000,
+    basePrice: 1980,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A4GB': {
+    name: '4GB',
+    sellPrice: 2500,
+    officialPrice: 2500,
+    basePrice: 2477,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A8GB': {
+    name: '8GB',
+    sellPrice: 3000,
+    officialPrice: 3000,
+    basePrice: 2975,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A10GB': {
+    name: '10GB',
+    sellPrice: 4000,
+    officialPrice: 4000,
+    basePrice: 3950,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A13GB': {
+    name: '13GB',
+    sellPrice: 5000,
+    officialPrice: 5000,
+    basePrice: 4955,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A18GB': {
+    name: '18GB',
+    sellPrice: 6000,
+    officialPrice: 6000,
+    basePrice: 5940,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A25GB': {
+    name: '25GB',
+    sellPrice: 8000,
+    officialPrice: 8000,
+    basePrice: 7900,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A60GB': {
+    name: '60GB',
+    sellPrice: 15000,
+    officialPrice: 15000,
+    basePrice: 14900,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A75GB': {
+    name: '75GB Router Plan',
+    sellPrice: 15000,
+    officialPrice: 15000,
+    basePrice: 14980,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A100GB': {
+    name: '100GB',
+    sellPrice: 20000,
+    officialPrice: 20000,
+    basePrice: 19800,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'airtel_data:A160GB': {
+    name: '160GB',
+    sellPrice: 30000,
+    officialPrice: 30000,
+    basePrice: 29750,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+
+  // ──────────────────────────────────────────
+  // 🌐 Glo Data - 10 plans
+  // ──────────────────────────────────────────
+  'glo_data:G1GB1': {
+    name: '1GB',
+    sellPrice: 400,
+    officialPrice: 400,
+    basePrice: 335,
+    durationCategory: '⚡ *3-Day Plans:*',
+    durationPriority: 3
+  },
+  'glo_data:G3GB1': {
+    name: '3GB',
+    sellPrice: 1200,
+    officialPrice: 1200,
+    basePrice: 850,
+    durationCategory: '⚡ *3-Day Plans:*',
+    durationPriority: 3
+  },
+  'glo_data:G5GB1': {
+    name: '5GB',
+    sellPrice: 2000,
+    officialPrice: 2000,
+    basePrice: 1380,
+    durationCategory: '⚡ *3-Day Plans:*',
+    durationPriority: 3
+  },
+  'glo_data:G1GB2': {
+    name: '1GB',
+    sellPrice: 400,
+    officialPrice: 400,
+    basePrice: 360,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'glo_data:G3GB2': {
+    name: '3GB',
+    sellPrice: 1200,
+    officialPrice: 1200,
+    basePrice: 990,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'glo_data:G5GB2': {
+    name: '5GB',
+    sellPrice: 2000,
+    officialPrice: 2000,
+    basePrice: 1580,
+    durationCategory: '📅 *7-Day Plans:*',
+    durationPriority: 7
+  },
+  'glo_data:G1GB4': {
+    name: '1GB',
+    sellPrice: 460,
+    officialPrice: 465,
+    basePrice: 450,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'glo_data:G2GB4': {
+    name: '2GB',
+    sellPrice: 900,
+    officialPrice: 900,
+    basePrice: 900,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'glo_data:G3GB4': {
+    name: '3GB',
+    sellPrice: 1500,
+    officialPrice: 1500,
+    basePrice: 1350,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  },
+  'glo_data:G5GB4': {
+    name: '5GB',
+    sellPrice: 2400,
+    officialPrice: 2400,
+    basePrice: 2200,
+    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
+    durationPriority: 30
+  }
 };
 
 class PayflexService {
@@ -210,28 +537,15 @@ class PayflexService {
   }
 
   async syncPlans() {
-    logger.info('Syncing real data plans from Peyflex...');
-    const networks = ['mtn_data_share', 'mtn_gifting_data', 'airtel_data', 'glo_data', '9mobile_data'];
+    logger.info('Syncing curated data plans from Peyflex...');
+    const networks = ['mtn_data_share', 'mtn_gifting_data', 'airtel_data', 'glo_data'];
     let allPlans = [];
 
     for (const net of networks) {
       try {
         const response = await this.getBreaker.fire(`/api/data/plans/?network=${net}`);
         if (response.data && response.data.plans) {
-          const plans = response.data.plans.map((p, index) => {
-            const markup = getTieredMarkup(p.amount);
-            return {
-              ...p,
-              id: `${net}_${p.plan_code}_${index}`,
-              network: net,
-              basePrice: p.amount,              // Wholesale price paid to Peyflex
-              markup,                           // Our profit on this plan (tiered)
-              proxyCost: p.amount + markup,     // ✅ Fixed: actual sell price (no hidden split yet)
-              sellPrice: p.amount + markup,     // What the end customer pays
-              name: p.label
-            };
-          });
-          allPlans = allPlans.concat(plans);
+          allPlans = allPlans.concat(response.data.plans.map(p => ({ ...p, network: net })));
         }
       } catch (err) {
         logger.error(`Failed to fetch ${net} plans:`, err.message);
@@ -239,102 +553,110 @@ class PayflexService {
     }
 
     if (allPlans.length > 0) {
-      // Step 1: Filter MTN down to the strict 29-plan whitelist
+      // Step 1: Strictly filter down to ONLY the approved 54 active plans
       allPlans = allPlans.filter(p => {
-        if (p.network.includes('mtn')) {
-          const mapKey = `${p.network}:${p.plan_code}`;
-          return !!CUSTOM_MTN_PLANS[mapKey];
-        }
-        return true;
+        const mapKey = `${p.network}:${p.plan_code}`;
+        return !!ACTIVE_APPROVED_PLANS[mapKey];
       });
 
-      // Step 2: Assign global serials, apply duration categories, and process pricing strategy
-      allPlans = allPlans.map((p, index) => {
+      // Step 2: Apply exact user prices, clean names, and duration categories
+      allPlans = allPlans.map(p => {
         const mapKey = `${p.network}:${p.plan_code}`;
-        const dur = analyzeDuration(p.name);
-
-        let newSellPrice = p.sellPrice;
-        let official = null;
-
-        if (p.network.includes('mtn')) {
-          // Absolute override for MTN
-          newSellPrice = CUSTOM_MTN_PLANS[mapKey].sellPrice;
-        } else {
-          official = OFFICIAL_PRICES_MAP[mapKey] ?? null;
-
-          if (official !== null && official !== undefined) {
-            if (p.sellPrice < official) {
-              newSellPrice = official;
-            } else if (p.sellPrice > official) {
-              newSellPrice = official - 5;
-            }
-          }
-
-          const grossMargin = newSellPrice - p.basePrice;
-          if (grossMargin >= 500) { newSellPrice -= 50; }
-          else if (grossMargin >= 200) { newSellPrice -= 20; }
-          else if (grossMargin >= 100) { newSellPrice -= 10; }
-          else if (grossMargin >= 50) { newSellPrice -= 5; }
-
-          if (newSellPrice <= p.basePrice) {
-            newSellPrice = p.basePrice + Math.max(5, p.markup);
-          }
-        }
-
-        let cleanName = p.name.replace(/\s*=\s*(?:N|NGN)\s*\d+(?:\.\d+)?/i, ' ');
-        cleanName = cleanName.replace(/\s*\(\s*\d*\s*(?:day|days|month|months|year|weekly|week)\s*\)/gi, ' ');
-        cleanName = cleanName.replace(/\s+/g, ' ').trim();
+        const cfg = ACTIVE_APPROVED_PLANS[mapKey];
 
         return {
-          ...p,
-          name: cleanName,
-          serial: index + 1,
-          officialPrice: official,
-          sellPrice: newSellPrice,
-          proxyCost: newSellPrice,
-          durationCategory: dur.category,
-          durationPriority: dur.priority
+          id: `${p.network}_${p.plan_code}`,
+          plan_code: p.plan_code,
+          network: p.network,
+          name: cfg.name,
+          basePrice: p.amount || cfg.basePrice,
+          markup: cfg.sellPrice - (p.amount || cfg.basePrice),
+          proxyCost: cfg.sellPrice,
+          sellPrice: cfg.sellPrice,
+          officialPrice: cfg.officialPrice,
+          durationCategory: cfg.durationCategory,
+          durationPriority: cfg.durationPriority
         };
       });
 
-      // Final sort for allPlans to group by duration
+      // Step 3: Sort by network order, duration priority, then sellPrice
+      const netPriority = { mtn_data_share: 1, mtn_gifting_data: 2, airtel_data: 3, glo_data: 4 };
       allPlans.sort((a, b) => {
-        if (a.durationPriority !== b.durationPriority) return a.durationPriority - b.durationPriority;
+        if (netPriority[a.network] !== netPriority[b.network]) {
+          return (netPriority[a.network] || 99) - (netPriority[b.network] || 99);
+        }
+        if (a.durationPriority !== b.durationPriority) {
+          return a.durationPriority - b.durationPriority;
+        }
         return a.sellPrice - b.sellPrice;
       });
 
+      // Step 4: Assign sequential 1-54 serial numbers
+      allPlans = allPlans.map((p, index) => ({
+        ...p,
+        serial: index + 1
+      }));
+
+      // Step 5: Flush stale Firestore cache & write fresh 54 plans
       if (db.plansCache) {
-        const batch = db.plansCache.firestore.batch();
-        for (const p of allPlans) {
-          const ref = db.plansCache.doc(p.id);
-          batch.set(ref, { ...p, updatedAt: new Date().toISOString() }, { merge: true });
+        try {
+          const oldSnap = await db.plansCache.get();
+          if (!oldSnap.empty) {
+            const deleteBatch = db.plansCache.firestore.batch();
+            oldSnap.docs.forEach(doc => deleteBatch.delete(doc.ref));
+            await deleteBatch.commit();
+            logger.info(`Cleared ${oldSnap.size} stale plans from Firestore cache.`);
+          }
+
+          const insertBatch = db.plansCache.firestore.batch();
+          for (const p of allPlans) {
+            const ref = db.plansCache.doc(p.id);
+            insertBatch.set(ref, { ...p, updatedAt: new Date().toISOString() });
+          }
+          await insertBatch.commit();
+          logger.info(`Wrote ${allPlans.length} active curated plans to Firestore cache.`);
+        } catch (dbErr) {
+          logger.warn(`Firestore plansCache sync warning: ${dbErr.message}`);
         }
-        await batch.commit();
       }
+
       this.cachedPlans = allPlans;
-      logger.info(`Synced ${allPlans.length} plans successfully!`);
+      logger.info(`Synced exactly ${allPlans.length} active plans successfully!`);
       return allPlans;
     }
     return [];
   }
 
   async getAvailablePlans() {
-    if (this.cachedPlans && this.cachedPlans.length > 0) {
+    if (this.cachedPlans && this.cachedPlans.length === 54) {
       return this.cachedPlans;
     }
 
-    // Try to load from Firestore
+    // Try to load from Firestore, but verify exact 54 active plan count
     if (db.plansCache) {
-      const snapshot = await db.plansCache.get();
-      if (!snapshot.empty) {
-        const plans = snapshot.docs.map(doc => doc.data());
-        // Sort by serial so the menu stays consistent
-        this.cachedPlans = plans.sort((a, b) => a.serial - b.serial);
-        return this.cachedPlans;
+      try {
+        const snapshot = await db.plansCache.get();
+        if (!snapshot.empty && snapshot.size === 54) {
+          const plans = snapshot.docs.map(doc => doc.data());
+          // Verify that the cached plans match the current ACTIVE_APPROVED_PLANS prices
+          const isValid = plans.every(p => {
+            const key = `${p.network}:${p.plan_code}`;
+            const expected = ACTIVE_APPROVED_PLANS[key];
+            return expected && p.sellPrice === expected.sellPrice;
+          });
+
+          if (isValid) {
+            this.cachedPlans = plans.sort((a, b) => a.serial - b.serial);
+            return this.cachedPlans;
+          }
+          logger.info('Firestore plansCache has outdated prices. Triggering re-sync...');
+        }
+      } catch (e) {
+        logger.warn('Error reading db.plansCache:', e.message);
       }
     }
 
-    // Force sync if no cache
+    // Force sync to purge stale entries and refresh exact 54 plans
     return await this.syncPlans();
   }
 

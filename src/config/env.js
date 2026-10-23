@@ -30,6 +30,11 @@ const config = {
     token: process.env.PAYFLEX_TOKEN,
     baseUrl: process.env.PAYFLEX_BASE_URL || 'https://client.peyflex.com.ng'
   },
+  paystack: {
+    secretKey: process.env.PAYSTACK_SECRET_KEY,
+    publicKey: process.env.PAYSTACK_PUBLIC_KEY,
+    baseUrl: process.env.PAYSTACK_BASE_URL || 'https://api.paystack.co'
+  },
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   firebaseCredentials: process.env.FIREBASE_CREDENTIALS_JSON
 };

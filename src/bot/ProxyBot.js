@@ -1,6 +1,7 @@
 import { config, logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
-import payflex from '../services/payflex.js';
+import payflex, { calculatePaystackFee } from '../services/payflex.js';
+import paystack from '../services/PaystackService.js';
 import wallet, { SUBSCRIPTION_PLANS, BOT_MODES } from '../services/WalletService.js';
 import sessionManager, { handleOnboardingWizardInput } from './SessionManager.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
@@ -10,6 +11,9 @@ import { RateLimiterMemory } from 'rate-limiter-flexible';
 
 // ── In-memory tracking for introduced contacts (resilient offline/mock fallback) ──
 const introducedContacts = new Set();
+
+// ── In-memory tracking for awaiting FUND amount (conversational wallet top-up) ──
+const awaitingFundMap = new Map();
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const messageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -26,6 +30,29 @@ export const handleProxyMessage = async (sock, msg, user) => {
     await messageLimiter.consume(from);
   } catch (rejRes) {
     logger.warn(`[RATE-LIMIT] Proxy message throttled for ${from}`);
+    return;
+  }
+
+  // 1. Owner self-chat check & outbound message filter
+  const partnerPhoneDigits = String(user.phoneNumber || user.phone || user.uid || '').replace(/[^0-9]/g, '').slice(-10);
+  const targetDigits = String(from || '').replace(/[^0-9]/g, '').slice(-10);
+  const isSelfChat = !!(partnerPhoneDigits && targetDigits && partnerPhoneDigits === targetDigits);
+
+  // If the message is outgoing from this device (fromMe):
+  // Never intercept or process messages sent to external contacts, customers, or Mother Bot!
+  // ONLY allow processing if the owner is messaging themselves in a self-chat note ("Message Yourself").
+  if (msg.key.fromMe && !isSelfChat) {
+    return;
+  }
+
+  // 2. Mother Bot isolation: ProxyBot must NEVER process or respond to Mother Bot!
+  const cleanFrom = String(from || '').replace(/[^0-9]/g, '');
+  const isMotherBot = (user.motherBotJid && from.includes(user.motherBotJid.split('@')[0])) ||
+    (user.motherBotLid && from.includes(user.motherBotLid.split('@')[0])) ||
+    cleanFrom.endsWith('8119772223') ||
+    cleanFrom.includes('161856060690464');
+
+  if (isMotherBot) {
     return;
   }
   const messageContent = msg.message?.ephemeralMessage?.message ||
@@ -45,6 +72,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
   if (!text && !msg.message?.contactMessage && !msg.message?.contactsArrayMessage) return;
 
   const command = text.toLowerCase().trim();
+  const cleanCommand = command.replace(/^\./, '');
 
   // Handle global opt-out
   if (command === 'stop') {
@@ -64,6 +92,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
       } catch (err) {
         logger.warn(`LID Resolution failed for ${from} in Clarion Hub`);
       }
+    }
+
+    const cleanActionable = String(actionableJid || '').replace(/[^0-9]/g, '');
+    if ((user.motherBotJid && actionableJid.includes(user.motherBotJid.split('@')[0])) ||
+        (user.motherBotLid && actionableJid.includes(user.motherBotLid.split('@')[0])) ||
+        cleanActionable.endsWith('8119772223') ||
+        cleanActionable.includes('161856060690464')) {
+      return;
     }
 
     // Handle universal CANCEL
@@ -96,12 +132,21 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const isDataMatch = isDataAndPriceLiteral || !!dataPriceMatch;
     const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
+    const fundCommandRegex = /^\.?fund(?:\s+(\d+))?$/i;
+    const isFundMatch = fundCommandRegex.test(command) || (awaitingFundMap.has(`${user.uid}_${actionableJid}`) && /^\d+$/.test(command));
 
-    // Ensure in-memory user has latest approval/mode state if pending
-    if (config.mockMode) {
-      if (user.terminalApproved === undefined) user.terminalApproved = true;
-      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    // Ensure in-memory user has latest approval/mode state
+    if (user.terminalApproved === undefined || user.terminalApproved === null) user.terminalApproved = true;
+    if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+
+    // If store is completed or paired, guarantee approved autonomous mode
+    if (user.state === 'COMPLETED' || user.pairedAt || user.virtualAccount) {
+      user.terminalApproved = true;
+      if (!user.botMode || user.botMode === 'manual') {
+        user.botMode = BOT_MODES.AUTONOMOUS;
+      }
     }
+
     if (user.terminalApproved !== true || user.botMode !== BOT_MODES.AUTONOMOUS) {
       if (db.users && user?.uid) {
         try {
@@ -117,14 +162,17 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
     }
 
-    // ── Onboarding Wizard Check (if partner is completing setup) ──
-    const partnerPhoneDigits = String(user.phoneNumber || user.phone || user.uid || '').replace(/[^0-9]/g, '').slice(-10);
+    // ── Onboarding Wizard Check (ONLY if partner is completing setup in self-chat) ──
     const senderDigits = String(actionableJid || from).replace(/[^0-9]/g, '').slice(-10);
-    const isOwner = msg.key.fromMe || (partnerPhoneDigits && senderDigits && partnerPhoneDigits === senderDigits);
+    const isOwner = isSelfChat || (partnerPhoneDigits && senderDigits && partnerPhoneDigits === senderDigits);
 
-    if (isOwner && user.onboardingStep !== null && user.onboardingStep !== undefined) {
-      const handled = await handleOnboardingWizardInput(sock, from, user, text);
-      if (handled) return;
+    const isWizardKeyword = ['ready', 'next', 'start', 'skip', 'approve'].includes(cleanCommand);
+    if (isSelfChat && ((user.onboardingStep !== null && user.onboardingStep !== undefined) || isWizardKeyword)) {
+      // If the owner is testing or vending (e.g. DATA, DATA 500, BUY, MENU, FUND), allow command through
+      if (!isDataMatch && !command.startsWith('buy ') && command !== 'menu' && !isFundMatch && command !== 'status' && !cardCommandRegex.test(command) && !pinCommandRegex.test(command)) {
+        const handled = await handleOnboardingWizardInput(sock, from, user, text);
+        if (handled) return;
+      }
     }
 
     // -- Capture/Update Customer Profile --
@@ -142,7 +190,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     // ── First-Touch Reassurance Announcement (once per contact in Autonomous mode) ──
-    if (!from.endsWith('@g.us') && !isOwner && user.botMode === BOT_MODES.AUTONOMOUS && user.announceNewContacts !== false) {
+    if (!from.endsWith('@g.us') && !isOwner && !isMotherBot && user.botMode === BOT_MODES.AUTONOMOUS && user.announceNewContacts !== false) {
       const contactTrackingKey = `${user.uid}_${actionableJid}`;
       let isIntroduced = introducedContacts.has(contactTrackingKey);
       if (!isIntroduced && db.users && actionableJid) {
@@ -184,7 +232,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         // If the original message was not a recognized command, return here so we don't double-reply
         if (!isDataMatch && !command.startsWith('buy ') && command !== 'menu'
-            && command !== 'start' && command !== 'balance'
+            && command !== 'start' && command !== 'balance' && !isFundMatch
             && !cardCommandRegex.test(command) && !pinCommandRegex.test(command)
             && command !== 'cds' && command !== 'community' && command !== 'info' && command !== 'donate') {
           return;
@@ -312,7 +360,111 @@ export const handleProxyMessage = async (sock, msg, user) => {
           logger.error('Error fetching balance:', e.message);
         }
       }
-      return sock.sendMessage(from, { text: `🛡️ *Clarion Wallet*\n\nYour current balance is: *₦${balance}*\n\nThis balance is automatically funded if your previous data orders could not be delivered due to network issues.\n\nReply *DATA* to use your balance.` });
+      return sock.sendMessage(from, {
+        text: `🛡️ *Clarion Wallet*\n\n` +
+          `Your available balance: *₦${balance.toLocaleString()}*\n\n` +
+          `✨ *Wallet Superpowers:*\n` +
+          `• 🔒 100% Secure Funds (never expires)\n` +
+          `• ⚡ Instant 3-second automatic vending\n` +
+          `• 🚫 *Zero Paystack Security Fees* on all data purchases!\n\n` +
+          `👉 Reply *FUND* anytime to top up your wallet.\n` +
+          `👉 Reply *DATA* to view data packages.`
+      });
+    }
+
+    // ── Handle FUND keyword (Conversational Clarion Wallet Top-Up) ──
+    const awaitingFundKey = `${user.uid}_${actionableJid}`;
+    const isAwaitingFund = awaitingFundMap.has(awaitingFundKey);
+    const fundMatch = command.match(fundCommandRegex);
+    const isNumericOnly = /^\d+$/.test(command);
+
+    if (fundMatch || (isAwaitingFund && isNumericOnly)) {
+      let fundAmount = null;
+      if (fundMatch && fundMatch[1]) {
+        fundAmount = parseInt(fundMatch[1], 10);
+      } else if (isAwaitingFund && isNumericOnly) {
+        fundAmount = parseInt(command, 10);
+      }
+
+      if (!fundAmount) {
+        // Step 1: Prompt for amount & record waiting state
+        awaitingFundMap.set(awaitingFundKey, Date.now());
+        return sock.sendMessage(from, {
+          text: `💳 *Clarion Secure Wallet Top-Up*\n\n` +
+            `How much would you like to add to your Clarion Wallet? *(Minimum: ₦500)*\n\n` +
+            `✨ *Why fund your wallet?*\n` +
+            `🔒 *100% Protected Funds* — Your balance never expires.\n` +
+            `⚡ *3-Second Vending* — Instant delivery without waiting for bank confirmations.\n` +
+            `🚫 *Zero Security Fees* — Never pay Paystack security fees on individual data purchases!\n\n` +
+            `👉 Reply with the amount (e.g. *1000*, *2000*, or *5000*)\n` +
+            `👉 Reply *CANCEL* to exit`
+        });
+      }
+
+      // Step 2: Amount provided
+      awaitingFundMap.delete(awaitingFundKey);
+
+      if (fundAmount < 500 || fundAmount > 200000) {
+        return sock.sendMessage(from, {
+          text: `❌ Top-up amount must be between ₦500 and ₦200,000.\n\nReply with a valid amount (e.g. *1000*) or reply *CANCEL*.`
+        });
+      }
+
+      const securityFee = calculatePaystackFee(fundAmount);
+      const totalToTransfer = fundAmount + securityFee;
+      const orderRef = `CLARION_FUND_${Date.now()}`;
+
+      if (db.ledger) {
+        await db.ledger.doc(orderRef).set({
+          type: 'PENDING_WALLET_FUND',
+          orderType: 'wallet_fund',
+          userId: user.uid,
+          buyerPhone: actionableJid,
+          fundAmount,
+          securityFee,
+          amount: totalToTransfer,
+          status: 'AWAITING_PAYMENT',
+          createdAt: new Date().toISOString()
+        }).catch(e => logger.warn('Ledger write failed for wallet fund order'));
+      }
+
+      const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
+      const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+
+      let onlinePaymentText = '';
+      try {
+        const checkout = await paystack.initializeTransaction({
+          email: `${actionableJid.split('@')[0]}@clarionhub.ng`,
+          amountNaira: totalToTransfer,
+          reference: orderRef,
+          metadata: {
+            userId: user.uid,
+            orderRef,
+            type: 'WALLET_FUND',
+            fundAmount,
+            securityFee
+          }
+        });
+        if (checkout.success && checkout.authorizationUrl) {
+          onlinePaymentText = `\n💳 *Or Pay with Card / USSD:*\n${checkout.authorizationUrl}\n`;
+        }
+      } catch (err) {}
+
+      return sock.sendMessage(from, {
+        text: `💳 *WALLET FUNDING INVOICE*\n` +
+          `──────────────\n` +
+          `💰 Top-Up Amount: ₦${fundAmount.toLocaleString()}\n` +
+          `🛡️ Paystack Security Fee: ₦${securityFee.toLocaleString()}\n` +
+          `💵 *Total to Transfer:* *₦${totalToTransfer.toLocaleString()}*\n\n` +
+          `🏦 *Bank:* ${bankInfo.bankName}\n` +
+          `🔢 *Account:* \`${bankInfo.accountNumber}\`\n` +
+          `👤 *Name:* ${accountName}\n` +
+          `${onlinePaymentText}` +
+          `──────────────\n` +
+          `⚡ *Your Clarion Wallet will be credited with ₦${fundAmount.toLocaleString()} the instant transfer is detected.*\n` +
+          `🛡️ _Your money is secured by Paystack and ready for fee-free purchases._\n` +
+          `· Reply *CANCEL* to exit`
+      });
     }
 
     // ── Handle Airtime (CARD) request ──
@@ -622,8 +774,24 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const targetPrice = match && match[1] ? parseInt(match[1]) : null;
       const targetPhone = match && match[2] ? match[2] : null;
 
-      const plans = await payflex.getAvailablePlans();
       const detectedNet = detectNetwork(targetPhone || actionableJid);
+
+      // ── T2 Mobile (formerly 9mobile) Rebranding Notice ──
+      const is9mobileNumber = targetPhone && (targetPhone.startsWith('0809') || targetPhone.startsWith('0817') || targetPhone.startsWith('0818') || targetPhone.startsWith('0909') || targetPhone.startsWith('0908'));
+      if (detectedNet === '9mobile' || detectedNet === 't2mobile' || is9mobileNumber) {
+        return sock.sendMessage(from, {
+          text: `ℹ️ *T2 Mobile (formerly 9mobile)* is currently undergoing network rebranding and infrastructure upgrades. Data gifting is temporarily paused, and their new packages will be listed here soon!\n\n👉 Reply *DATA* to view available plans on MTN, Airtel, or Glo.`
+        });
+      }
+
+      // ── Step 1: Immediate First Message (AI Scanning) ──
+      await sock.sendMessage(from, {
+        text: targetPrice
+          ? `🤖 *Clarion AI is scanning telecom servers for the best verified data packages around your ₦${targetPrice.toLocaleString()} budget...* ⏳`
+          : `🤖 *Clarion AI is scanning telecom servers for the best verified data packages...* ⏳`
+      });
+
+      const plans = await payflex.getAvailablePlans();
 
       let filteredPlans = plans;
       if (detectedNet) {
@@ -631,6 +799,41 @@ export const handleProxyMessage = async (sock, msg, user) => {
           if (detectedNet === 'mtn') return p.network.includes('mtn');
           return p.network.includes(detectedNet);
         });
+      }
+
+      const hasExactMatch = targetPrice ? filteredPlans.some(p => p.sellPrice === targetPrice) : true;
+
+      // ── Search & Demand Intelligence Logging ──
+      if (db.users) {
+        try {
+          const firestore = db.users.firestore;
+          await firestore.collection('searchAnalytics').add({
+            userId: user.uid,
+            buyerPhone: actionableJid,
+            customerPhone: targetPhone || actionableJid.split('@')[0],
+            detectedNetwork: detectedNet || 'all',
+            targetPrice: targetPrice || null,
+            hasExactMatch,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: new Date().toISOString()
+          });
+        } catch (err) {
+          logger.warn(`Search analytics logging error: ${err.message}`);
+        }
+      }
+
+      // Micro natural delay (1.4 seconds)
+      await new Promise(r => setTimeout(r, 1400));
+
+      // Check customer's previous purchase status to determine footer tip
+      let hasPurchased = false;
+      if (db.users && actionableJid) {
+        try {
+          const cDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
+          if (cDoc.exists && cDoc.data().hasPurchased) {
+            hasPurchased = true;
+          }
+        } catch (e) {}
       }
 
       if (targetPrice) {
@@ -650,14 +853,17 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       if (targetPrice) {
-        menuText += `💰 *Best plans near ₦${targetPrice} budget:*\n`;
+        if (!hasExactMatch) {
+          menuText += `🔍 *We don't have an exact ₦${targetPrice.toLocaleString()} plan, but here are the closest high-value plans for you:*\n`;
+        } else {
+          menuText += `💰 *Best verified plans near ₦${targetPrice.toLocaleString()} budget:*\n`;
+        }
       } else {
         menuText += `📶 *${networkStr} Data Plans:*\n`;
       }
 
-
       if (filteredPlans.length === 0) {
-        menuText += `\n❌ No plans found matching your criteria.`;
+        menuText += `\n❌ No plans found matching your criteria. Reply *DATA* to view all packages.`;
       } else {
         // Render dynamically grouped duration categories natively for all networks
         const durationGroups = {};
@@ -671,13 +877,17 @@ export const handleProxyMessage = async (sock, msg, user) => {
         for (const cat of Object.keys(durationGroups)) {
           menuText += `\n${cat}\n`;
           durationGroups[cat].forEach(plan => {
-            menuText += `· *${plan.name}* — *₦${plan.sellPrice}*\n`;
+            menuText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
             menuText += `  👉 Reply *BUY ${plan.serial}*\n`;
           });
         }
       }
 
-      menuText += '\n──────────────\n_Transfer exact amount upon prompt. Data dispenses instantly._\n· Reply *CANCEL* to exit';
+      if (hasPurchased) {
+        menuText += '\n──────────────\n💡 *Save on fees: Reply *FUND* to top up your Clarion Wallet & buy fee-free anytime!*\n· Reply *CANCEL* to exit';
+      } else {
+        menuText += '\n──────────────\n_Transfer exact amount upon prompt. Data dispenses instantly._\n· Reply *CANCEL* to exit';
+      }
       return sock.sendMessage(from, { text: menuText });
     }
 
@@ -701,10 +911,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       // 1. Fetch customer's wallet balance
       let walletBalance = 0;
+      let hasPurchasedBefore = false;
       if (db.users && actionableJid) {
         try {
           const customerDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
-          if (customerDoc.exists) walletBalance = customerDoc.data().walletBalance || 0;
+          if (customerDoc.exists) {
+            walletBalance = customerDoc.data().walletBalance || 0;
+            hasPurchasedBefore = !!customerDoc.data().hasPurchased;
+          }
         } catch (e) { }
       }
 
@@ -712,12 +926,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       // 2. Exact match or sufficient wallet balance? Buy instantly using Wallet
       if (walletBalance >= plan.sellPrice) {
-        await sock.sendMessage(from, { text: `💳 *Wallet Vending Proceeding*\n\nDeducting ₦${plan.sellPrice} from your Clarion Wallet. Dispensing data...` });
+        await sock.sendMessage(from, { text: `💳 *Wallet Vending Proceeding*\n\nDeducting ₦${plan.sellPrice.toLocaleString()} from your Clarion Wallet. Dispensing data...` });
 
         // Deduct from wallet immediately
         if (db.users) {
           await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
-            walletBalance: admin.firestore.FieldValue.increment(-plan.sellPrice)
+            walletBalance: admin.firestore.FieldValue.increment(-plan.sellPrice),
+            hasPurchased: true,
+            lastPurchaseAt: new Date().toISOString()
           }, { merge: true });
         }
 
@@ -763,7 +979,15 @@ export const handleProxyMessage = async (sock, msg, user) => {
             handleMilestoneCheck(user.uid, prevCds, newCds, user).catch(() => {});
           }
 
-          return sock.sendMessage(from, { text: `✅ *DATA DELIVERED!*\n──────────────\n\n📦 *Plan:* ${plan.name}\n💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\nThank you for choosing Clarion AI! 🎉\n· Reply *DATA* for your next order` });
+          let receiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n📦 *Plan:* ${plan.name}\n💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\n`;
+          if (!hasPurchasedBefore) {
+            receiptMsg += `🎉 *Congratulations on your first order!*\n` +
+              `💡 *Smart Tip:* You just completed this purchase with *ZERO security fees* using your Clarion Wallet!\n` +
+              `👉 Reply *FUND* anytime to keep your wallet loaded and buy fee-free 24/7.`;
+          } else {
+            receiptMsg += `Thank you for choosing Clarion AI! 🎉\n· Reply *DATA* for your next order`;
+          }
+          return sock.sendMessage(from, { text: receiptMsg });
         } catch (dispenseError) {
           // If Peyflex fails again during wallet buy, push it to FAILED_DISPENSE for RetryQueue to handle
           if (db.ledger) {
@@ -778,7 +1002,10 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
       }
 
-      // 3. Insufficient wallet balance? Proceed with Bank Transfer instructions
+      // 3. Insufficient wallet balance? Proceed with Bank Transfer instructions (Strategy 1: Transparent Line Item)
+      const securityFee = calculatePaystackFee(plan.sellPrice);
+      const totalToTransfer = plan.sellPrice + securityFee;
+
       if (db.ledger) {
         await db.ledger.doc(orderRef).set({
           type: 'PENDING_DATA',
@@ -786,7 +1013,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
           buyerPhone: actionableJid,
           planId: plan.id,
           serial: plan.serial,
-          amount: plan.sellPrice,
+          dataCost: plan.sellPrice,
+          securityFee,
+          amount: totalToTransfer,
           status: 'AWAITING_PAYMENT',
           createdAt: new Date().toISOString()
         }).catch(e => logger.warn('Ledger write failed, order processed in memory.'));
@@ -794,7 +1023,41 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
       const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
-      const paymentInstruction = `💳 *ORDER CONFIRMATION*\n_${plan.name}_\n──────────────\n\nTransfer exactly *₦${plan.sellPrice}* to complete your order:\n\n🏦 *Bank:* ${bankInfo.bankName}\n🔢 *Account:* \`${bankInfo.accountNumber}\`\n👤 *Name:* ${accountName}\n\n──────────────\n⚡ _Data vends automatically once transfer is detected._\n· Reply *CANCEL* to abort order`;
+
+      let onlinePaymentText = '';
+      try {
+        const checkout = await paystack.initializeTransaction({
+          email: `${actionableJid.split('@')[0]}@clarionhub.ng`,
+          amountNaira: totalToTransfer,
+          reference: orderRef,
+          metadata: {
+            userId: user.uid,
+            orderRef,
+            type: 'DATA_PURCHASE',
+            dataCost: plan.sellPrice,
+            securityFee
+          }
+        });
+        if (checkout.success && checkout.authorizationUrl) {
+          onlinePaymentText = `\n💳 *Or Pay with Card / USSD:*\n${checkout.authorizationUrl}\n`;
+        }
+      } catch (err) {
+        // Fallback seamlessly to native bank transfer
+      }
+
+      const paymentInstruction = `💳 *ORDER CONFIRMATION: ${plan.name}*\n` +
+        `──────────────\n` +
+        `📦 Data Cost: ₦${plan.sellPrice.toLocaleString()}\n` +
+        `🛡️ Paystack Security Fee: ₦${securityFee.toLocaleString()}\n` +
+        `💰 *Total to Transfer:* *₦${totalToTransfer.toLocaleString()}*\n\n` +
+        `🏦 *Bank:* ${bankInfo.bankName}\n` +
+        `🔢 *Account:* \`${bankInfo.accountNumber}\`\n` +
+        `👤 *Name:* ${accountName}\n` +
+        `${onlinePaymentText}` +
+        `──────────────\n` +
+        `⚡ _Data vends automatically once transfer or payment of *₦${totalToTransfer.toLocaleString()}* is detected._\n` +
+        `🛡️ _Your payment is 100% secured by Paystack._\n` +
+        `· Reply *CANCEL* to abort order`;
       return sock.sendMessage(from, { text: paymentInstruction });
     }
 

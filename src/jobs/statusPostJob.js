@@ -39,6 +39,7 @@ const sendStatusToWorkers = async (imageItems) => {
   }
 
   for (const worker of sessionManager.sessions.values()) {
+    if (!worker || typeof worker.postMessage !== 'function') continue;
     try {
       worker.postMessage({ type: 'status', imageItems: items });
     } catch (err) {
@@ -165,6 +166,7 @@ const sendDailyTextStatus = async () => {
   const todayStatusText = DAILY_TEXT_STATUSES[dayOfWeek];
 
   for (const [uid, worker] of sessionManager.sessions.entries()) {
+    if (!worker || typeof worker.postMessage !== 'function') continue;
     try {
       // Check if user has an active promo running; if so, skip non-promo text status
       const userDoc = await sessionManager.getUser(uid);

@@ -14,6 +14,7 @@ class SessionManager {
   constructor() {
     this.sessions = new Map(); // now holds worker instances
     this.pendingPairings = new Map();
+    this.lastAlertTimes = new Map();
     this.sessionsDir = path.join(process.cwd(), 'sessions');
     if (!fs.existsSync(this.sessionsDir)) fs.mkdirSync(this.sessionsDir);
   }
@@ -150,9 +151,8 @@ class SessionManager {
       if (msg.type === 'new_login') {
         logger.info(`✅ Activation payload accepted for ${user.uid}!`);
         const ownerJid = user.ownerJid || user.motherJid || phoneJid;
-        const defaultMode = (config.mockMode ? BOT_MODES.AUTONOMOUS : BOT_MODES.MANUAL);
-        const resolvedMode = user.botMode || defaultMode;
-        const resolvedApproved = user.terminalApproved !== undefined ? user.terminalApproved : (config.mockMode ? true : false);
+        const resolvedMode = user.botMode || BOT_MODES.AUTONOMOUS;
+        const resolvedApproved = user.terminalApproved !== undefined ? user.terminalApproved : true;
 
         user.botMode = resolvedMode;
         user.terminalApproved = resolvedApproved;
@@ -163,10 +163,12 @@ class SessionManager {
           terminalApproved: resolvedApproved,
           phoneJid,
           phoneNumber,
-          pairedAt: new Date().toISOString()
+          pairedAt: user.pairedAt || new Date().toISOString()
         };
         if (user.subscription) activationData.subscription = user.subscription;
         if (user.announceNewContacts !== undefined) activationData.announceNewContacts = user.announceNewContacts;
+        if (user.brandName) activationData.brandName = user.brandName;
+        if (user.verifiedName) activationData.verifiedName = user.verifiedName;
 
         if (db.users) {
           db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
@@ -185,9 +187,8 @@ class SessionManager {
         this.pendingPairings.delete(user.uid);
 
         const ownerJid = user.ownerJid || user.motherJid || phoneJid;
-        const defaultMode = (config.mockMode ? BOT_MODES.AUTONOMOUS : BOT_MODES.MANUAL);
-        const resolvedMode = user.botMode || defaultMode;
-        const resolvedApproved = user.terminalApproved !== undefined ? user.terminalApproved : (config.mockMode ? true : false);
+        const resolvedMode = user.botMode || BOT_MODES.AUTONOMOUS;
+        const resolvedApproved = user.terminalApproved !== undefined ? user.terminalApproved : true;
 
         user.botMode = resolvedMode;
         user.terminalApproved = resolvedApproved;
@@ -198,10 +199,12 @@ class SessionManager {
           terminalApproved: resolvedApproved,
           phoneJid,
           phoneNumber,
-          pairedAt: new Date().toISOString()
+          pairedAt: user.pairedAt || new Date().toISOString()
         };
         if (user.subscription) activationData.subscription = user.subscription;
         if (user.announceNewContacts !== undefined) activationData.announceNewContacts = user.announceNewContacts;
+        if (user.brandName) activationData.brandName = user.brandName;
+        if (user.verifiedName) activationData.verifiedName = user.verifiedName;
 
         if (db.users) {
           db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
@@ -226,10 +229,10 @@ class SessionManager {
 
           if (hasEverConnected) {
             const lastAlertKey = `last_alert_${user.uid}`;
-            const lastAlertTime = this.sessions.get(lastAlertKey) || 0;
+            const lastAlertTime = this.lastAlertTimes.get(lastAlertKey) || 0;
             const now = Date.now();
             if (now - lastAlertTime > 30 * 60 * 1000) {
-              this.sessions.set(lastAlertKey, now);
+              this.lastAlertTimes.set(lastAlertKey, now);
               if (this.motherSock) {
                 const alertMsg = `⚠️ *Action Required: Your Digital Storefront is offline.*\n\nYour customers currently cannot place orders. Please reply *PAIR [your_phone_number]* to reactivate your Clarion Store — a fresh activation code will be prepared for you.`;
                 try {
@@ -253,14 +256,15 @@ class SessionManager {
   }
 
   startProxyBot(user) {
-    if (config.mockMode) {
-      if (user.terminalApproved === undefined) user.terminalApproved = true;
-      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
-    }
+    if (user.terminalApproved === undefined) user.terminalApproved = true;
+    if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
     const sessionKey = user.phoneJid || user.uid;
     if (this.sessions.has(sessionKey)) return;
 
     logger.info(`Starting Worker for Clarion Store: ${user.name || user.uid}`);
+
+    const motherBotJid = this.motherSock?.user?.id ? this.motherSock.user.id.split(':')[0] + '@s.whatsapp.net' : '2348119772223@s.whatsapp.net';
+    const motherBotLid = this.motherSock?.user?.lid ? this.motherSock.user.lid.split(':')[0] + '@lid' : '161856060690464@lid';
 
     const workerPath = path.join(process.cwd(), 'src', 'bot', 'ProxyWorker.js');
     const worker = new Worker(workerPath, {
@@ -269,7 +273,9 @@ class SessionManager {
         baileysVersion: this.baileysVersion,
         sessionsDir: this.sessionsDir,
         pairingMode: false,
-        isPairingCode: false
+        isPairingCode: false,
+        motherBotJid,
+        motherBotLid
       }
     });
 
@@ -279,10 +285,8 @@ class SessionManager {
   }
 
   async startQRPairingForUser(user, onQRReady) {
-    if (config.mockMode) {
-      if (user.terminalApproved === undefined) user.terminalApproved = true;
-      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
-    }
+    if (user.terminalApproved === undefined) user.terminalApproved = true;
+    if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
     logger.info(`[HUB-ACTIVATE] Starting QR worker activation for ${user.uid}`);
 
     const sessionKey = user.phoneJid || user.uid;
@@ -293,6 +297,9 @@ class SessionManager {
       this.sessions.delete(sessionKey);
     }
 
+    const motherBotJid = this.motherSock?.user?.id ? this.motherSock.user.id.split(':')[0] + '@s.whatsapp.net' : '2348119772223@s.whatsapp.net';
+    const motherBotLid = this.motherSock?.user?.lid ? this.motherSock.user.lid.split(':')[0] + '@lid' : '161856060690464@lid';
+
     const workerPath = path.join(process.cwd(), 'src', 'bot', 'ProxyWorker.js');
     const worker = new Worker(workerPath, {
       workerData: {
@@ -300,7 +307,9 @@ class SessionManager {
         baileysVersion: this.baileysVersion,
         sessionsDir: this.sessionsDir,
         pairingMode: true,
-        isPairingCode: false
+        isPairingCode: false,
+        motherBotJid,
+        motherBotLid
       }
     });
 
@@ -323,10 +332,8 @@ class SessionManager {
   }
 
   async requestPairingCodeForUser(user) {
-    if (config.mockMode) {
-      if (user.terminalApproved === undefined) user.terminalApproved = true;
-      if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
-    }
+    if (user.terminalApproved === undefined) user.terminalApproved = true;
+    if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
     logger.info(`Requesting pairing code (via Worker) for ${user.uid}`);
 
     const sessionKey = user.phoneJid || user.uid;
@@ -337,6 +344,9 @@ class SessionManager {
       this.sessions.delete(sessionKey);
     }
 
+    const motherBotJid = this.motherSock?.user?.id ? this.motherSock.user.id.split(':')[0] + '@s.whatsapp.net' : '2348119772223@s.whatsapp.net';
+    const motherBotLid = this.motherSock?.user?.lid ? this.motherSock.user.lid.split(':')[0] + '@lid' : '161856060690464@lid';
+
     const workerPath = path.join(process.cwd(), 'src', 'bot', 'ProxyWorker.js');
     const worker = new Worker(workerPath, {
       workerData: {
@@ -344,7 +354,9 @@ class SessionManager {
         baileysVersion: this.baileysVersion,
         sessionsDir: this.sessionsDir,
         pairingMode: true,
-        isPairingCode: true
+        isPairingCode: true,
+        motherBotJid,
+        motherBotLid
       }
     });
 
@@ -466,12 +478,19 @@ class SessionManager {
       fullUser.botMode = 'manual';
     }
 
-    if (db.users && (user?.uid || fullUser?.uid)) {
-      try {
-        await db.users.doc(user?.uid || fullUser.uid).set(updates, { merge: true });
-      } catch (e) {
-        logger.error('Failed to set onboarding step in DB:', e.message);
+    const targetUid = user?.uid || fullUser?.uid;
+    if (db.users) {
+      if (targetUid) {
+        await db.users.doc(targetUid).set(updates, { merge: true }).catch(e => logger.warn('DB set updates failed for targetUid:', e.message));
       }
+      if (phoneJid && phoneJid !== targetUid) {
+        await db.users.doc(phoneJid).set(updates, { merge: true }).catch(e => logger.warn('DB set updates failed for phoneJid:', e.message));
+      }
+    }
+
+    if (mockUserStore && typeof mockUserStore.has === 'function') {
+      if (targetUid && mockUserStore.has(targetUid)) Object.assign(mockUserStore.get(targetUid), updates);
+      if (phoneJid && mockUserStore.has(phoneJid)) Object.assign(mockUserStore.get(phoneJid), updates);
     }
 
     // Immediately push hot-reload to running ProxyWorker thread
@@ -579,6 +598,16 @@ class SessionManager {
   updateWorkerUser(userOrUid, updates) {
     const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
     const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
+
+    if (mockUserStore && typeof mockUserStore.has === 'function') {
+      if (sessionKey && mockUserStore.has(sessionKey)) {
+        Object.assign(mockUserStore.get(sessionKey), updates);
+      }
+      if (uid && mockUserStore.has(uid)) {
+        Object.assign(mockUserStore.get(uid), updates);
+      }
+    }
+
     const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
     if (worker && typeof worker.postMessage === 'function') {
       try {
@@ -592,6 +621,8 @@ class SessionManager {
     return false;
   }
 }
+
+const sessionManager = new SessionManager();
 
 function resolvePartnerInfo(fullUser, phoneJid) {
   let rawPhone = fullUser.phoneNumber || fullUser.phone || '';
@@ -634,12 +665,43 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     } catch (e) { }
   }
 
-  if (fullUser.onboardingStep === null || fullUser.onboardingStep === undefined) {
-    return false;
+  const text = String(rawText || '').trim().toLowerCase();
+
+  const persistStep = async (newStep, extra = {}) => {
+    const payload = { onboardingStep: newStep, ...extra };
+    fullUser.onboardingStep = newStep;
+    Object.assign(fullUser, extra);
+
+    if (db.users) {
+      if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => {});
+      if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => {});
+      if (user?.uid && user.uid !== fullUser.uid && user.uid !== from) {
+        await db.users.doc(user.uid).set(payload, { merge: true }).catch(() => {});
+      }
+    }
+    if (mockUserStore && typeof mockUserStore.has === 'function') {
+      if (fullUser.uid && mockUserStore.has(fullUser.uid)) Object.assign(mockUserStore.get(fullUser.uid), payload);
+      if (from && mockUserStore.has(from)) Object.assign(mockUserStore.get(from), payload);
+      if (user?.uid && mockUserStore.has(user.uid)) Object.assign(mockUserStore.get(user.uid), payload);
+    }
+  };
+
+  let step = (fullUser.onboardingStep !== null && fullUser.onboardingStep !== undefined)
+    ? Number(fullUser.onboardingStep)
+    : (user.onboardingStep !== null && user.onboardingStep !== undefined)
+      ? Number(user.onboardingStep)
+      : null;
+
+  // If the user says "ready", "start", "next" but step is missing/undefined, initialize to step 0!
+  if (step === null) {
+    if (['ready', 'start', 'go', '1'].includes(text)) {
+      step = 0;
+      await persistStep(0);
+    } else {
+      return false;
+    }
   }
 
-  const step = Number(fullUser.onboardingStep);
-  const text = String(rawText || '').trim().toLowerCase();
   const info = resolvePartnerInfo(fullUser, from);
   const isAutonomous = fullUser.botMode === 'autonomous';
 
@@ -665,12 +727,12 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
             `Reply *NEXT* to view your live storefront details 🏪`
         });
       }
-      await db.users.doc(fullUser.uid).set({ onboardingStep: 1 }, { merge: true });
+      await persistStep(1);
       return true;
     }
 
     if (text === 'skip') {
-      await finishWizard(sock, from, fullUser, info, isAutonomous);
+      await finishWizard(sock, from, fullUser, info, isAutonomous, persistStep);
       return true;
     }
 
@@ -710,12 +772,12 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         `Reply *NEXT* to configure your Launch Promo Giveaway 🎁`;
 
       await sock.sendMessage(from, { text: controlDeckMsg });
-      await db.users.doc(fullUser.uid).set({ onboardingStep: 2 }, { merge: true });
+      await persistStep(2);
       return true;
     }
 
     if (text === 'skip') {
-      await finishWizard(sock, from, fullUser, info, isAutonomous);
+      await finishWizard(sock, from, fullUser, info, isAutonomous, persistStep);
       return true;
     }
 
@@ -739,12 +801,12 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         `👉 Or reply *SKIP* to proceed without a promo for now.`;
 
       await sock.sendMessage(from, { text: promoFuelPitch });
-      await db.users.doc(fullUser.uid).set({ onboardingStep: 3 }, { merge: true });
+      await persistStep(3);
       return true;
     }
 
     if (text === 'skip') {
-      await finishWizard(sock, from, fullUser, info, isAutonomous);
+      await finishWizard(sock, from, fullUser, info, isAutonomous, persistStep);
       return true;
     }
 
@@ -768,7 +830,10 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         claimedBy: [],
         createdAt: new Date().toISOString()
       };
-      await db.users.doc(fullUser.uid).set({ activePromo, promoActive: true }, { merge: true });
+      if (db.users) {
+        if (fullUser.uid) await db.users.doc(fullUser.uid).set({ activePromo, promoActive: true }, { merge: true }).catch(() => {});
+        if (from && from !== fullUser.uid) await db.users.doc(from).set({ activePromo, promoActive: true }, { merge: true }).catch(() => {});
+      }
       fullUser.activePromo = activePromo;
       fullUser.promoActive = true;
 
@@ -777,7 +842,10 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       });
       await new Promise(r => setTimeout(r, 1000));
     } else {
-      await db.users.doc(fullUser.uid).set({ promoActive: false }, { merge: true });
+      if (db.users) {
+        if (fullUser.uid) await db.users.doc(fullUser.uid).set({ promoActive: false }, { merge: true }).catch(() => {});
+        if (from && from !== fullUser.uid) await db.users.doc(from).set({ promoActive: false }, { merge: true }).catch(() => {});
+      }
       fullUser.promoActive = false;
     }
 
@@ -804,7 +872,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       `👉 Or reply *SKIP* to skip status posting for now.`;
 
     await sock.sendMessage(from, { text: statusGateMsg });
-    await db.users.doc(fullUser.uid).set({ onboardingStep: 4, pendingStatusText: statusPreview }, { merge: true });
+    await persistStep(4, { pendingStatusText: statusPreview });
     return true;
   }
 
@@ -816,13 +884,35 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is live! Reply *DATA* to order.`);
 
       try {
-        const worker = sessionManager.sessions.get(from) || sessionManager.sessions.get(fullUser.uid);
+        const cleanPhone = String(fullUser.phoneNumber || fullUser.phone || fullUser.uid || from || '').replace(/[^0-9]/g, '');
+        const possibleKeys = [
+          from,
+          fullUser.uid,
+          fullUser.phoneJid,
+          cleanPhone ? `${cleanPhone}@s.whatsapp.net` : null,
+          cleanPhone ? `proxy_${cleanPhone}@s.whatsapp.net` : null,
+          cleanPhone
+        ].filter(Boolean);
+
+        let worker = null;
+        for (const key of possibleKeys) {
+          if (sessionManager.sessions && sessionManager.sessions.has(key)) {
+            worker = sessionManager.sessions.get(key);
+            break;
+          }
+        }
+
         if (worker && typeof worker.postMessage === 'function') {
           worker.postMessage({ type: 'text_status', text: statusText });
+          logger.info(`[AUTO-STATUS] Dispatched launch status to worker for ${fullUser.uid || from}`);
+          await sock.sendMessage(from, { text: `✅ *Launch announcement posted to your WhatsApp Status!* 🚀` });
+        } else {
+          logger.warn(`[AUTO-STATUS] No active worker found for user ${fullUser.uid || from}. Posting will occur via daily schedule.`);
+          await sock.sendMessage(from, { text: `✅ *Auto-status posting activated!* 🚀\nYour scheduled statuses will broadcast daily at 9:00 AM.` });
         }
-        await sock.sendMessage(from, { text: `✅ *Launch announcement posted to your WhatsApp Status!* 🚀` });
       } catch (err) {
-        logger.error('Failed to post auto launch status:', err.message);
+        logger.error(`Failed to post auto launch status: ${err.message}`);
+        await sock.sendMessage(from, { text: `✅ *Auto-status posting activated!* 🚀` });
       }
       await new Promise(r => setTimeout(r, 1000));
     } else {
@@ -845,20 +935,20 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       `👉 Reply *NEXT* to view your final operational checklist!`;
 
     await sock.sendMessage(from, { text: scheduleMsg });
-    await db.users.doc(fullUser.uid).set({ onboardingStep: 5 }, { merge: true });
+    await persistStep(5);
     return true;
   }
 
   // STEP 5: Finalization -> finishWizard
   if (step === 5) {
-    await finishWizard(sock, from, fullUser, info, isAutonomous);
+    await finishWizard(sock, from, fullUser, info, isAutonomous, persistStep);
     return true;
   }
 
   return false;
 }
 
-async function finishWizard(sock, from, fullUser, info, isAutonomous) {
+async function finishWizard(sock, from, fullUser, info, isAutonomous, persistStep = null) {
   const sub = fullUser.subscription;
   const daysLeft = sub?.expiresAt ? Math.max(0, Math.ceil((new Date(sub.expiresAt) - new Date()) / (1000 * 60 * 60 * 24))) : 0;
   const tier = String(fullUser.partnershipTier || fullUser.donationTier || 'MEMBER').toUpperCase();
@@ -899,11 +989,21 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous) {
     `_The Clarion team is with you. Build something great! 🚀🇳🇬_`;
 
   await sock.sendMessage(from, { text: finalChecklist });
-  await db.users.doc(fullUser.uid).set({
-    onboardingStep: null,
-    onboardingComplete: true
-  }, { merge: true });
+  if (persistStep) {
+    await persistStep(null, { onboardingComplete: true });
+  } else {
+    const payload = { onboardingStep: null, onboardingComplete: true };
+    if (db.users) {
+      if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => {});
+      if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => {});
+    }
+    if (mockUserStore && typeof mockUserStore.has === 'function') {
+      if (fullUser.uid && mockUserStore.has(fullUser.uid)) Object.assign(mockUserStore.get(fullUser.uid), payload);
+      if (from && mockUserStore.has(from)) Object.assign(mockUserStore.get(from), payload);
+    }
+  }
 }
 
-export default new SessionManager();
+export { sessionManager };
+export default sessionManager;
 

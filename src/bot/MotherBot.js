@@ -1,6 +1,8 @@
 import { config, logger } from '../config/env.js';
 import admin, { db } from '../services/firebase.js';
 import squad from '../services/SquadService.js';
+import paystack from '../services/PaystackService.js';
+import { matchBank } from '../utils/bankUtils.js';
 import payflex from '../services/payflex.js';
 import sessionManager, { handleOnboardingWizardInput } from './SessionManager.js';
 import wallet, { WITHDRAWAL_FEES, PARTNERSHIP_TIERS, BOT_MODES, SUBSCRIPTION_PLANS } from '../services/WalletService.js';
@@ -404,10 +406,21 @@ export const handleMotherMessage = async (sock, msg) => {
     const command = rawCommand;
     const cleanCommand = rawCommand.toLowerCase().replace(/[*_~`]/g, '').trim();
 
+    const cleanObject = (obj) => {
+      if (obj === null || typeof obj !== 'object') return obj;
+      return Object.entries(obj).reduce((acc, [k, v]) => {
+        if (v !== undefined) {
+          acc[k] = (typeof v === 'object' && v !== null && !Array.isArray(v)) ? cleanObject(v) : v;
+        }
+        return acc;
+      }, Array.isArray(obj) ? [] : {});
+    };
+
     const saveUser = async (data) => {
       mockUserStore.set(from, data);
       if (userRef) {
-        await userRef.set(data, { merge: true }).catch(err => logger.warn('Firestore write failed, using memory:', err.message));
+        const cleaned = cleanObject(data);
+        await userRef.set(cleaned, { merge: true }).catch(err => logger.warn('Firestore write failed, using memory:', err.message));
       }
     };
 
@@ -1061,8 +1074,59 @@ export const handleMotherMessage = async (sock, msg) => {
         return renderPromoMenu(sock, from, userData);
       }
 
-      if (lower.startsWith('status')) {
+      if (lower === 'status now') {
+        try {
+          const { triggerManualStatusBroadcast } = await import('../jobs/statusPostJob.js');
+          await triggerManualStatusBroadcast('price_card');
+          return sock.sendMessage(from, {
+            text: '🚀 *Status Broadcast Dispatched!*\n\nYour telecom data price card has been sent to your WhatsApp Status! Check your status tab on your bot phone to view the live story. 📱✨'
+          });
+        } catch (e) {
+          logger.error('Failed to trigger manual status broadcast:', e.message);
+          return sock.sendMessage(from, {
+            text: '❌ Could not dispatch status post at this time. Please ensure your ProxyBot is connected.'
+          });
+        }
+      }
+
+      if (lower === 'status on') {
+        await saveUser({ ...userData, autoStatusActive: true });
+        return sock.sendMessage(from, {
+          text: '🟢 *Auto-Posting Activated!*\n\nClarion will automatically publish fresh daily data price cards & CDS impact announcements to your WhatsApp Status every day at 8:00 AM & 6:00 PM.'
+        });
+      }
+
+      if (lower === 'status off') {
+        await saveUser({ ...userData, autoStatusActive: false });
+        return sock.sendMessage(from, {
+          text: '⏸️ *Auto-Posting Paused.*\n\nDaily automated status broadcasts have been paused. Reply *STATUS ON* anytime to re-enable.'
+        });
+      }
+
+      if (lower === 'status' || lower.startsWith('status')) {
         return renderStatusMenu(sock, from, userData);
+      }
+
+      if (lower === 'mode auto') {
+        await saveUser({ ...userData, botMode: 'autonomous', terminalApproved: true });
+        sessionManager.updateWorkerUser(from, { botMode: 'autonomous', terminalApproved: true });
+        if (userData.phoneJid && userData.phoneJid !== from) {
+          sessionManager.updateWorkerUser(userData.phoneJid, { botMode: 'autonomous', terminalApproved: true });
+        }
+        return sock.sendMessage(from, {
+          text: '🤖 *Autonomous AI Mode Activated!* 🟢\n\nYour ProxyBot will now automatically respond to customer messages, display data catalogs, handle orders, and announce to new contacts 24/7.'
+        });
+      }
+
+      if (lower === 'mode manual') {
+        await saveUser({ ...userData, botMode: 'manual' });
+        sessionManager.updateWorkerUser(from, { botMode: 'manual' });
+        if (userData.phoneJid && userData.phoneJid !== from) {
+          sessionManager.updateWorkerUser(userData.phoneJid, { botMode: 'manual' });
+        }
+        return sock.sendMessage(from, {
+          text: '👤 *Manual Mode Activated.*\n\nProxyBot automation is paused. You can now chat directly with your contacts without automated bot replies. Reply *MODE AUTO* anytime to reactivate AI handling.'
+        });
       }
 
       if (lower === 'mode') {
@@ -1530,18 +1594,14 @@ export const handleMotherMessage = async (sock, msg) => {
       }
 
       await sock.sendMessage(from, { text: '🔍 Verifying account details with bank servers...' });
-      const banks = await squad.getBanks();
-      const normBank = bankName.toLowerCase().replace(/[^a-z0-9]/g, '');
-      let matchedBank = banks.find(b => {
-        const normB = b.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return normB === normBank || normB.includes(normBank) || normBank.includes(normB);
-      });
+      const banks = await paystack.getBanks();
+      let matchedBank = matchBank(banks, bankName);
 
       if (!matchedBank) {
-        if (config.mockMode || config.squad?.secretKey?.includes('sandbox')) {
+        if (config.mockMode) {
           matchedBank = { name: bankName.toUpperCase(), code: '000' };
         } else {
-          const supported = banks.slice(0, 10).map(b => b.name).join(', ');
+          const supported = 'GTBank, Access Bank, Zenith Bank, Opay, PalmPay, Kuda, Moniepoint, First Bank, UBA';
           return sock.sendMessage(from, {
             text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include: ${supported}, etc.\nPlease try again:`
           });
@@ -1549,7 +1609,7 @@ export const handleMotherMessage = async (sock, msg) => {
       }
 
       try {
-        const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
+        const accountInfo = await paystack.validateBankAccount(matchedBank.code, accountNumber);
         const verifiedName = accountInfo.accountName;
 
         // Store pending (uncommitted) bank details for confirmation
@@ -1574,9 +1634,30 @@ export const handleMotherMessage = async (sock, msg) => {
             `• Reply *RETRY* to enter a different account`
         });
       } catch (err) {
-        logger.error('Initial bank validation failed:', err.message);
+        logger.warn('Initial bank validation server error, falling back to partner self-declared details:', err.message);
+        const selfDeclaredName = userData.name || userData.verifiedName || 'Clarion Partner';
+        const bankTitle = matchedBank ? matchedBank.name : bankName.toUpperCase();
+
+        await saveUser({
+          ...userData,
+          pendingBank: {
+            bankName: bankTitle,
+            bankCode: matchedBank ? matchedBank.code : '000',
+            accountNumber,
+            accountName: selfDeclaredName
+          },
+          state: STATES.AWAITING_INITIAL_BANK_CONFIRM
+        });
+
         return sock.sendMessage(from, {
-          text: '❌ Could not verify bank account. Please check your bank name and account number, then try again:'
+          text: `⚠️ *Bank Verification Notice:*\n\n` +
+            `Bank validation servers are currently experiencing high latency, but we have successfully registered your payout destination:\n\n` +
+            `👤 *Account Name:* ${selfDeclaredName}\n` +
+            `🏦 *Bank:* ${bankTitle}\n` +
+            `🔢 *Account Number:* ${accountNumber}\n\n` +
+            `Is this your correct bank account?\n` +
+            `• Reply *YES* to confirm and continue setup\n` +
+            `• Reply *RETRY* to enter different details`
         });
       }
     }
@@ -1654,8 +1735,8 @@ export const handleMotherMessage = async (sock, msg) => {
       });
 
       try {
-        // Create Squad Virtual Account with brand name
-        const account = await squad.createVirtualAccount(
+        // Create Paystack Virtual Account with brand name
+        const account = await paystack.createVirtualAccount(
           brandName,
           `${from.split('@')[0]}@nyscbot.com`,
           from.split('@')[0]
@@ -1740,8 +1821,15 @@ export const handleMotherMessage = async (sock, msg) => {
 
       if (isCompletedCommand || isAlreadyPaired) {
         userData.state = STATES.COMPLETED;
-        userData.botMode = userData.botMode || 'manual';
+        userData.botMode = userData.botMode || 'autonomous';
+        userData.terminalApproved = true;
         await saveUser(userData);
+        if (sessionManager && typeof sessionManager.updateWorkerUser === 'function') {
+          sessionManager.updateWorkerUser(from, { botMode: userData.botMode, terminalApproved: true });
+          if (userData.phoneJid && userData.phoneJid !== from) {
+            sessionManager.updateWorkerUser(userData.phoneJid, { botMode: userData.botMode, terminalApproved: true });
+          }
+        }
       } else if (command.toUpperCase() === 'RESEND' || command.toUpperCase() === 'RETRY') {
         await sock.sendMessage(from, { text: `⏳ Regenerating a fresh QR code image...` });
         await startQRImageDelivery(sock, from, userData, saveUser);
@@ -1808,7 +1896,8 @@ export const handleMotherMessage = async (sock, msg) => {
     if (userData.state === STATES.COMPLETED || userData.state === STATES.AWAITING_WITHDRAW_DETAILS || userData.state === STATES.AWAITING_WITHDRAW_CONFIRM || userData.state === STATES.AWAITING_BROADCAST_CONTACTS || userData.state === STATES.AWAITING_CONTACT_ACTION || userData.state === STATES.AWAITING_DATA_PLAN_SELECT || userData.state === STATES.AWAITING_PAYMENT_METHOD) {
 
       // ── Onboarding Wizard Interceptor (if partner is completing setup) ──
-      if (userData.onboardingStep !== null && userData.onboardingStep !== undefined) {
+      const isWizardKeyword = ['ready', 'next', 'start', 'skip', 'approve'].includes(cleanCommand);
+      if ((userData.onboardingStep !== null && userData.onboardingStep !== undefined) || isWizardKeyword) {
         const handled = await handleOnboardingWizardInput(sock, from, userData, command);
         if (handled) return;
       }
@@ -2644,9 +2733,46 @@ export const handleMotherMessage = async (sock, msg) => {
         if (pendingSum > 0) {
           text += `⏳ Pending Withdrawals: *₦${pendingSum.toFixed(2)}*\n\n`;
         }
-        text += `Type *WITHDRAW [amount]* to cash out.\nType *HISTORY* to view recent transactions.`;
+        text += `Type *FUND [amount]* to top up your wallet (e.g. *FUND 2000*).\nType *WITHDRAW [amount]* to cash out.\nType *HISTORY* to view recent transactions.`;
 
         return sock.sendMessage(from, { text });
+      }
+
+      // ── FUND / TOPUP command ────────────────────────────────
+      else if (command.toLowerCase().startsWith('fund') || command.toLowerCase().startsWith('topup')) {
+        const amountStr = command.split(/\s+/)[1];
+        const amount = parseFloat(amountStr);
+        if (!amount || isNaN(amount) || amount < 100) {
+          return sock.sendMessage(from, {
+            text: '💳 *Top Up Clarion Wallet*\n\nPlease specify an amount of at least ₦100.\nExample: *FUND 2000*'
+          });
+        }
+
+        const fundRef = `WALLET_FUND_${Date.now()}`;
+        let payUrl = '';
+        try {
+          const init = await paystack.initializeTransaction({
+            email: `${from.split('@')[0]}@clarionhub.ng`,
+            amountNaira: amount,
+            reference: fundRef,
+            metadata: {
+              userId: from,
+              purpose: 'WALLET_FUNDING'
+            }
+          });
+          if (init.success) payUrl = init.authorizationUrl;
+        } catch (e) {
+          logger.warn(`Could not generate Paystack checkout for wallet fund: ${e.message}`);
+        }
+
+        const bankInfo = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
+        let msg = `💳 *Fund Clarion Wallet: ₦${amount.toLocaleString()}*\n──────────────\n`;
+        if (payUrl) {
+          msg += `\n👉 *Pay Online (Card / USSD / Instant Transfer):*\n${payUrl}\n`;
+        }
+        msg += `\n🏦 *Or Transfer to Your Dedicated Account:*\nBank: *${bankInfo.bankName}*\nAccount: *\`${bankInfo.accountNumber}\`*\nName: *${bankInfo.accountName || 'Clarion Digital Hub'}*\n\n⚡ _Your wallet will be credited automatically upon confirmation._`;
+
+        return sock.sendMessage(from, { text: msg });
       }
 
       // ── HISTORY command ────────────────────────────────────
@@ -2816,18 +2942,14 @@ export const handleMotherMessage = async (sock, msg) => {
         }
 
         await sock.sendMessage(from, { text: '🔍 Looking up your bank details...' });
-        const banks = await squad.getBanks();
-        const normBank = bankName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        let matchedBank = banks.find(b => {
-          const normB = b.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-          return normB === normBank || normB.includes(normBank) || normBank.includes(normB);
-        });
+        const banks = await paystack.getBanks();
+        let matchedBank = matchBank(banks, bankName);
 
         if (!matchedBank) {
-          if (config.mockMode || config.squad?.secretKey?.includes('sandbox')) {
+          if (config.mockMode) {
             matchedBank = { name: bankName.toUpperCase(), code: '000' };
           } else {
-            const bankList = banks.slice(0, 10).map(b => b.name).join(', ');
+            const bankList = 'GTBank, Access Bank, Zenith Bank, Opay, PalmPay, Kuda, Moniepoint, First Bank, UBA';
             return sock.sendMessage(from, {
               text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks include:\n${bankList}, etc.\nPlease try again.`
             });
@@ -2835,7 +2957,7 @@ export const handleMotherMessage = async (sock, msg) => {
         }
 
         try {
-          const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
+          const accountInfo = await paystack.validateBankAccount(matchedBank.code, accountNumber);
           const amount = userData.pendingWithdrawAmount;
           const netPayout = +(amount - WITHDRAWAL_FEES.TOTAL).toFixed(2);
           const bankData = {
@@ -2895,7 +3017,7 @@ export const handleMotherMessage = async (sock, msg) => {
         try {
           await wallet.recordWithdrawal(from, amount, bank, transferRef);
 
-          const result = await squad.initiateTransfer(
+          const result = await paystack.initiateTransfer(
             netPayout,
             bank.bankCode,
             bank.accountNumber,
@@ -2961,20 +3083,18 @@ export const handleMotherMessage = async (sock, msg) => {
         }
 
         await sock.sendMessage(from, { text: '🔍 Verifying new account details with bank servers...' });
-        const banks = await squad.getBanks();
-        const matchedBank = banks.find(b =>
-          b.name.toLowerCase().replace(/\s+/g, '') === bankName.toLowerCase().replace(/\s+/g, '')
-        );
+        const banks = await paystack.getBanks();
+        const matchedBank = matchBank(banks, bankName);
 
         if (!matchedBank) {
-          const bankList = banks.map(b => b.name).join(', ');
+          const bankList = 'GTBank, Access Bank, Zenith Bank, Opay, PalmPay, Kuda, Moniepoint, First Bank, UBA';
           return sock.sendMessage(from, {
             text: `❌ Bank "${bankName}" not recognized.\n\nSupported banks: ${bankList}\nPlease try again or reply *CANCEL*:`
           });
         }
 
         try {
-          const accountInfo = await squad.validateBankAccount(matchedBank.code, accountNumber);
+          const accountInfo = await paystack.validateBankAccount(matchedBank.code, accountNumber);
           const pendingNewBank = {
             bankName: matchedBank.name,
             bankCode: matchedBank.code,

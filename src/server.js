@@ -4,6 +4,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { config, logger } from './config/env.js';
 import squad from './services/SquadService.js';
+import paystack from './services/PaystackService.js';
 import payflex from './services/payflex.js';
 import admin, { db } from './services/firebase.js';
 import sessionManager from './bot/SessionManager.js';
@@ -111,6 +112,15 @@ async function startServer() {
       res.json({ ...metrics, activeBots });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch admin metrics' });
+    }
+  });
+
+  app.get('/api/admin/search-demand', verifyAdminToken, async (req, res) => {
+    try {
+      const demand = await adminService.getSearchDemandAnalytics();
+      res.json(demand);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch search demand analytics' });
     }
   });
 
@@ -511,11 +521,23 @@ async function startServer() {
       transaction_date: payload.Body?.transaction_date || payload.transaction_date
     };
 
+    await processPaymentEvent({
+      TransactionRef,
+      Event,
+      Body,
+      rawPayload: payload,
+      channel: payload.channel || 'virtual-account'
+    });
+    return res.sendStatus(200);
+  });
+
+  // ── Unified Payment Fulfillment Handler (Shared by Squad & Paystack) ──
+  async function processPaymentEvent({ TransactionRef, Event, Body, rawPayload, channel }) {
     // ── 2. Duplicate Transaction Checker (Idempotency) ──
     if (TransactionRef) {
       if (processedTxnRefs.has(TransactionRef)) {
         logger.warn(`[DUPLICATE-CHECKER] Memory suppression: transaction ${TransactionRef} already processed.`);
-        return res.status(200).json({ status: 'success', message: 'Duplicate transaction ignored (idempotent)' });
+        return { status: 'success', message: 'Duplicate transaction ignored (idempotent)' };
       }
 
       if (db.processedTransactions) {
@@ -524,7 +546,7 @@ async function startServer() {
           if (docSnap.exists) {
             processedTxnRefs.add(TransactionRef);
             logger.warn(`[DUPLICATE-CHECKER] Database suppression: transaction ${TransactionRef} already processed.`);
-            return res.status(200).json({ status: 'success', message: 'Duplicate transaction ignored (idempotent)' });
+            return { status: 'success', message: 'Duplicate transaction ignored (idempotent)' };
           }
         } catch (dbErr) {
           logger.warn(`[DUPLICATE-CHECKER] DB lookup error: ${dbErr.message}`);
@@ -763,7 +785,42 @@ async function startServer() {
           try {
             // 2. Attempt Delivery according to product type
             let fulfillmentResult;
-            if (order.type === 'PENDING_AIRTIME' || order.orderType === 'airtime') {
+            if (order.type === 'PENDING_WALLET_FUND' || order.orderType === 'wallet_fund') {
+              const fundAmount = Number(order.fundAmount || order.amount);
+              const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+              let newBalance = fundAmount;
+              if (db.users && order.userId) {
+                try {
+                  const contactRef = db.users.doc(order.userId).collection('contacts').doc(cleanCustomer);
+                  const cSnap = await contactRef.get();
+                  const prevBal = cSnap.exists ? (cSnap.data().walletBalance || 0) : 0;
+                  newBalance = prevBal + fundAmount;
+                  await contactRef.set({
+                    walletBalance: admin.firestore.FieldValue.increment(fundAmount)
+                  }, { merge: true });
+                } catch (wErr) {
+                  logger.error('Failed to credit customer wallet:', wErr.message);
+                }
+              }
+
+              await db.ledger.doc(orderId).update({
+                status: 'COMPLETED',
+                squadTransactionRef: TransactionRef,
+                updatedAt: new Date().toISOString()
+              });
+
+              const fundSuccessMsg = `💳 *WALLET FUNDED SUCCESSFULLY!* ⚡\n` +
+                `──────────────\n` +
+                `💰 *Amount Credited:* ₦${fundAmount.toLocaleString()}\n` +
+                `🛡️ *Paystack Security Fee:* ₦${(order.securityFee || 0).toLocaleString()}\n` +
+                `💵 *Current Wallet Balance:* ₦${newBalance.toLocaleString()}\n\n` +
+                `Your funds are 100% secured and ready! You can now purchase data with *ZERO security fees* anytime.\n\n` +
+                `👉 Reply *DATA* to view data packages.`;
+
+              await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, fundSuccessMsg);
+              logger.info(`Customer wallet funded for ${order.buyerPhone}: ₦${fundAmount}`);
+              return;
+            } else if (order.type === 'PENDING_AIRTIME' || order.orderType === 'airtime') {
               const target = order.targetPhone || order.buyerPhone.split('@')[0];
               fulfillmentResult = await payflex.purchaseAirtime(order.network, target, order.amount);
               if (sessionManager.motherSock) {
@@ -821,7 +878,27 @@ async function startServer() {
               handleMilestoneCheck(order.userId, prevCds, newCds, userData).catch(() => {});
             }
 
-            // Attempt to generate and send a receipt image to the buyer
+            // Check if this was customer's first purchase to include wallet educational tip
+            let isFirstPurchase = false;
+            if (db.users && order.userId && order.buyerPhone) {
+              try {
+                const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+                const contactDoc = await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).get();
+                if (contactDoc.exists && !contactDoc.data().hasPurchased) {
+                  isFirstPurchase = true;
+                }
+                await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).set({
+                  hasPurchased: true,
+                  lastPurchaseAt: new Date().toISOString(),
+                  totalSpent: admin.firestore.FieldValue.increment(order.amount),
+                  totalOrders: admin.firestore.FieldValue.increment(1)
+                }, { merge: true });
+              } catch (e) {
+                logger.warn(`Failed to increment contact ${order.buyerPhone} stats: ${e.message}`);
+              }
+            }
+
+            // Attempt to generate and send a receipt image or message to the buyer
             try {
               const storeName = userData?.brandName || (userData?.verifiedName ? `Clarion AI - ${userData.verifiedName}` : undefined);
               const receiptPath = await ReceiptGenerator.generate(order, storeName);
@@ -832,21 +909,19 @@ async function startServer() {
                 });
               }
             } catch (sendErr) {
-              logger.warn(`Receipt send failed for order ${orderId}: ${sendErr.message}`);
+              logger.warn(`Receipt image send failed for order ${orderId}: ${sendErr.message}`);
             }
 
-            // Add atomic increment for contacts collection
-            if (db.users && order.buyerPhone) {
-              try {
-                const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
-                await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).set({
-                  totalSpent: admin.firestore.FieldValue.increment(order.amount),
-                  totalOrders: admin.firestore.FieldValue.increment(1)
-                }, { merge: true });
-              } catch (e) {
-                logger.warn(`Failed to increment contact ${order.buyerPhone} stats: ${e.message}`);
-              }
-            }
+            const walletTip = isFirstPurchase
+              ? `\n\n💡 *Smart Tip:* You can avoid the ₦${(order.securityFee || 12).toLocaleString()} security fee next time!\n👉 Reply *FUND* anytime to top up your Clarion Wallet and enjoy fee-free instant data 24/7.`
+              : `\n\n· Reply *DATA* for your next order`;
+
+            const dataReceiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n` +
+              `📦 *Plan:* ${fulfillmentResult?.planDetails?.name || 'Data Package'}\n` +
+              `📱 *Recipient:* ${destinationJid.split('@')[0]}\n` +
+              `💰 *Total Paid:* ₦${order.amount.toLocaleString()}${walletTip}`;
+
+            await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, dataReceiptMsg);
             logger.info(`Order ${orderId} vended and settled successfully.`);
 
           } catch (dispenseError) {
@@ -955,8 +1030,49 @@ async function startServer() {
         logger.error('Error handling failed disbursement webhook', err);
       }
     }
-    res.sendStatus(200);
-  });
+  }
+
+  // Paystack Webhook (rate-limited: 30 req/min per IP)
+  const handlePaystackWebhook = async (req, res) => {
+    const signature = req.headers['x-paystack-signature'];
+    const payload = req.body || {};
+
+    if (!paystack.verifyWebhookSignature(signature, req.body)) {
+      logger.warn('Invalid signature received for Paystack Webhook');
+      return res.status(400).send('Invalid signature');
+    }
+
+    const event = payload.event;
+    const data = payload.data || {};
+    const TransactionRef = data.reference ? String(data.reference).trim() : null;
+
+    let Event = null;
+    if (event === 'charge.success') Event = 'charge_successful';
+    else if (event === 'transfer.success') Event = 'transfer_successful';
+    else if (event === 'transfer.failed' || event === 'transfer.reversed') Event = 'transfer_failed';
+
+    const Body = {
+      amount: data.amount ? data.amount / 100 : 0,
+      virtual_account_number: data.authorization?.receiver_bank_account_number || data.dedicated_account?.account_number || null,
+      account_number: data.authorization?.receiver_bank_account_number || data.dedicated_account?.account_number || null,
+      customer_identifier: data.metadata?.userId || data.customer?.phone || data.customer?.email,
+      transaction_reference: TransactionRef,
+      sender_name: data.authorization?.sender_name || (data.customer?.first_name ? `${data.customer.first_name} ${data.customer.last_name || ''}`.trim() : null),
+      transaction_date: data.paid_at || new Date().toISOString()
+    };
+
+    await processPaymentEvent({
+      TransactionRef,
+      Event,
+      Body,
+      rawPayload: payload,
+      channel: data.channel || 'paystack'
+    });
+    return res.sendStatus(200);
+  };
+
+  app.post('/webhook/paystack', webhookLimiter, handlePaystackWebhook);
+  app.post('/api/paystack/webhook', webhookLimiter, handlePaystackWebhook);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

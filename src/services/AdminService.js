@@ -278,30 +278,64 @@ class AdminService {
      * Fetches all partners and their current wallet balance
      */
     async listPartners() {
-        if (!db.users) return [];
-        try {
-            const snap = await db.users.get();
-            const partners = [];
-            for (const doc of snap.docs) {
-                const data = doc.data();
-                if (!data.virtualAccount) continue; // Filter out standard users/contacts
+        const partnerMap = new Map();
 
-                const balance = await wallet.getBalance(doc.id);
-                partners.push({
-                    id: doc.id,
-                    name: data.verifiedName || data.name || 'Unknown Partner',
-                    stateCode: data.stateCode || '',
-                    franchiseName: data.brandName || data.franchiseName || '',
-                    terminalApproved: data.terminalApproved === true,
-                    virtualAccount: data.virtualAccount || null,
-                    balance
-                });
+        // 1. Fetch from Firestore if available
+        if (db.users) {
+            try {
+                const snap = await db.users.get();
+                for (const doc of snap.docs) {
+                    const data = doc.data();
+                    if (!data.virtualAccount && data.state !== 'COMPLETED' && !data.pairedAt && !data.phoneNumber) continue;
+
+                    const balance = await wallet.getBalance(doc.id);
+                    partnerMap.set(doc.id, {
+                        id: doc.id,
+                        name: data.verifiedName || data.name || 'Unknown Partner',
+                        stateCode: data.stateCode || '',
+                        franchiseName: data.brandName || data.franchiseName || '',
+                        terminalApproved: data.terminalApproved === true || data.approvalStatus === 'APPROVED' || data.botMode === 'autonomous',
+                        virtualAccount: data.virtualAccount || null,
+                        balance
+                    });
+                }
+            } catch (error) {
+                logger.warn('Error reading db.users in listPartners:', error.message);
             }
-            return partners;
-        } catch (error) {
-            logger.error('Error listing partners:', error.message);
-            return [];
         }
+
+        // 2. Merge with mockUserStore (in-memory state)
+        try {
+            const { mockUserStore } = await import('../bot/MotherBot.js');
+            if (mockUserStore) {
+                for (const [id, data] of mockUserStore.entries()) {
+                    if (!data.virtualAccount && data.state !== 'COMPLETED' && !data.pairedAt && !data.phoneNumber) continue;
+
+                    const existing = partnerMap.get(id);
+                    const isApproved = data.terminalApproved === true || data.approvalStatus === 'APPROVED' || data.botMode === 'autonomous';
+
+                    if (existing) {
+                        if (isApproved) existing.terminalApproved = true;
+                        if (data.brandName || data.franchiseName) existing.franchiseName = data.brandName || data.franchiseName;
+                    } else {
+                        const balance = await wallet.getBalance(id);
+                        partnerMap.set(id, {
+                            id,
+                            name: data.verifiedName || data.name || 'Unknown Partner',
+                            stateCode: data.stateCode || '',
+                            franchiseName: data.brandName || data.franchiseName || '',
+                            terminalApproved: isApproved,
+                            virtualAccount: data.virtualAccount || null,
+                            balance
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            logger.warn('Could not read mockUserStore in listPartners:', e.message);
+        }
+
+        return Array.from(partnerMap.values());
     }
 
     /**
@@ -473,26 +507,32 @@ class AdminService {
                 announceNewContacts: true
             };
 
-            if (userRef) {
-                await userRef.set(updates, { merge: true }).catch(e => logger.warn('Firestore write failed in approveVendor:', e.message));
+            const phoneJid = userData.phoneJid || (userData.phoneNumber ? `${userData.phoneNumber}@s.whatsapp.net` : null);
+            const ownerJid = userData.ownerJid || userData.motherJid || (userId.includes('@') ? userId : `${userId}@s.whatsapp.net`);
+
+            if (db.users) {
+                if (userRef) {
+                    await userRef.set(updates, { merge: true }).catch(e => logger.warn('Firestore write failed in approveVendor:', e.message));
+                }
+                if (phoneJid && phoneJid !== userId) {
+                    await db.users.doc(phoneJid).set(updates, { merge: true }).catch(e => logger.warn('Firestore write failed for phoneJid in approveVendor:', e.message));
+                }
+                if (ownerJid && ownerJid !== userId && ownerJid !== phoneJid) {
+                    await db.users.doc(ownerJid).set(updates, { merge: true }).catch(e => logger.warn('Firestore write failed for ownerJid in approveVendor:', e.message));
+                }
             }
             Object.assign(userData, updates);
 
             // Hot-reload running ProxyWorker thread & sync mockUserStore immediately
-            sessionManager.updateWorkerUser(userId, {
-                terminalApproved: true,
-                botMode: 'autonomous',
-                subscription,
-                announceNewContacts: true
-            });
+            sessionManager.updateWorkerUser(userId, updates);
+            if (phoneJid && phoneJid !== userId) sessionManager.updateWorkerUser(phoneJid, updates);
+            if (ownerJid && ownerJid !== userId) sessionManager.updateWorkerUser(ownerJid, updates);
 
-            // Trigger official Franchise License Card and post-onboarding activation kit
-            try {
-                if (sessionManager._sendActivationSuccessMessages) {
-                    await sessionManager._sendActivationSuccessMessages(userId, userData);
-                }
-            } catch (cardErr) {
-                logger.error('Failed to dispatch approved card:', cardErr.message);
+            // Trigger official Franchise License Card and post-onboarding activation kit asynchronously (non-blocking)
+            if (sessionManager._sendActivationSuccessMessages) {
+                Promise.resolve(sessionManager._sendActivationSuccessMessages(ownerJid || userId, userData)).catch(cardErr => {
+                    logger.error('Failed to dispatch approved card:', cardErr.message);
+                });
             }
 
             return { success: true, message: `Vendor ${userId} approved & autonomous bot activated successfully` };
@@ -629,6 +669,75 @@ class AdminService {
         }
 
         return Array.from(designMap.values());
+    }
+
+    /**
+     * Search Demand Intelligence: Aggregates popular customer budgets and unmet demand queries.
+     */
+    async getSearchDemandAnalytics() {
+        if (!db.users) {
+            return {
+                popularBudgets: [],
+                unmetDemand: [],
+                networkDistribution: {},
+                totalSearches: 0
+            };
+        }
+
+        try {
+            const firestore = db.users.firestore;
+            const snap = await firestore.collection('searchAnalytics')
+                .orderBy('createdAt', 'desc')
+                .limit(500)
+                .get();
+
+            const budgetFrequency = {};
+            const unmetFrequency = {};
+            const networkCounts = { mtn: 0, airtel: 0, glo: 0, all: 0 };
+            let totalSearches = 0;
+
+            snap.forEach(doc => {
+                totalSearches++;
+                const data = doc.data();
+                const net = (data.detectedNetwork || 'all').toLowerCase();
+                if (networkCounts[net] !== undefined) networkCounts[net]++;
+                else networkCounts[net] = (networkCounts[net] || 0) + 1;
+
+                if (data.targetPrice) {
+                    const priceKey = `₦${Number(data.targetPrice).toLocaleString()}`;
+                    budgetFrequency[priceKey] = (budgetFrequency[priceKey] || 0) + 1;
+
+                    if (data.hasExactMatch === false) {
+                        unmetFrequency[priceKey] = (unmetFrequency[priceKey] || 0) + 1;
+                    }
+                }
+            });
+
+            const popularBudgets = Object.entries(budgetFrequency)
+                .map(([budget, count]) => ({ budget, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 10);
+
+            const unmetDemand = Object.entries(unmetFrequency)
+                .map(([budget, count]) => ({ budget, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 10);
+
+            return {
+                popularBudgets,
+                unmetDemand,
+                networkDistribution: networkCounts,
+                totalSearches
+            };
+        } catch (error) {
+            logger.error('Error fetching search demand analytics:', error.message);
+            return {
+                popularBudgets: [],
+                unmetDemand: [],
+                networkDistribution: {},
+                totalSearches: 0
+            };
+        }
     }
 }
 

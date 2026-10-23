@@ -7,7 +7,9 @@ import { logger } from '../config/env.js';
 import { db } from '../services/firebase.js';
 import { handleProxyMessage } from './ProxyBot.js';
 
-const { user, baileysVersion, sessionsDir, pairingMode, isPairingCode } = workerData;
+const { user, baileysVersion, sessionsDir, pairingMode, isPairingCode, motherBotJid, motherBotLid } = workerData;
+if (motherBotJid) user.motherBotJid = motherBotJid;
+if (motherBotLid) user.motherBotLid = motherBotLid;
 
 async function startWorker(isInitialBoot = true) {
     const sessionKey = user.phoneJid || user.uid;
@@ -106,6 +108,30 @@ async function startWorker(isInitialBoot = true) {
         }
     });
 
+    // Auto-sync contacts from WhatsApp into Firestore
+    sock.ev.on('contacts.upsert', async (contacts) => {
+        if (!contacts || !Array.isArray(contacts) || !db.users || !user.uid) return;
+        try {
+            const batch = db.users.firestore.batch();
+            let count = 0;
+            for (const c of contacts) {
+                const jid = c.id;
+                if (!jid || !jid.endsWith('@s.whatsapp.net')) continue;
+                const docRef = db.users.doc(user.uid).collection('contacts').doc(jid);
+                batch.set(docRef, {
+                    phone: jid.split('@')[0],
+                    pushName: c.notify || c.name || c.verifiedName || 'Customer',
+                    syncedFromWhatsApp: true
+                }, { merge: true });
+                count++;
+                if (count >= 150) break;
+            }
+            if (count > 0) await batch.commit();
+        } catch (e) {
+            logger.warn(`Failed to sync WhatsApp contacts for ${user.uid}: ${e.message}`);
+        }
+    });
+
     // Handle incoming IPC messages (like broadcast jobs)
     parentPort.on('message', async (msg) => {
         if (msg.type === 'broadcast') {
@@ -132,10 +158,17 @@ async function startWorker(isInitialBoot = true) {
                 logger.error(`[WORKER] Broadcast send failed:`, e.message);
             }
         } else if (msg.type === 'status') {
-            const { imageItems } = msg;
+            const { imageItems, statusJidList } = msg;
             const statusJid = 'status@broadcast';
             const randomDelay = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.floor(Math.random() * (maxMs - minMs))));
             try {
+                let resolvedJids = statusJidList;
+                if (!resolvedJids || resolvedJids.length === 0) {
+                    resolvedJids = await getStatusRecipients(user);
+                }
+                resolvedJids = (resolvedJids || []).filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'));
+                const sendOptions = resolvedJids && resolvedJids.length > 0 ? { statusJidList: resolvedJids } : {};
+
                 for (const item of imageItems) {
                     const imgPath = item.imagePath || item.path;
                     const caption = item.caption || 'Clarion status update.';
@@ -145,7 +178,7 @@ async function startWorker(isInitialBoot = true) {
                         await sock.sendMessage(statusJid, {
                             image: fs.readFileSync(imgPath),
                             caption
-                        });
+                        }, sendOptions);
                         await randomDelay(2000, 4000);
                     }
                 }
@@ -171,11 +204,18 @@ async function startWorker(isInitialBoot = true) {
                 logger.error(`[WORKER] Failed to send owner alert: ${e.message}`);
             }
         } else if (msg.type === 'text_status') {
-            const { text } = msg;
+            const { text, statusJidList } = msg;
             const statusJid = 'status@broadcast';
             try {
-                await sock.sendMessage(statusJid, { text });
-                logger.info(`[WORKER] Posted text status for ${user.uid}`);
+                let resolvedJids = statusJidList;
+                if (!resolvedJids || resolvedJids.length === 0) {
+                    resolvedJids = await getStatusRecipients(user);
+                }
+                resolvedJids = (resolvedJids || []).filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'));
+                const sendOptions = resolvedJids && resolvedJids.length > 0 ? { statusJidList: resolvedJids } : {};
+
+                await sock.sendMessage(statusJid, { text }, sendOptions);
+                logger.info(`[WORKER] Posted text status for ${user.uid} (${resolvedJids.length} recipients)`);
             } catch (e) {
                 logger.error(`[WORKER] Text status post failed for ${user.uid}: ${e.message}`);
             }
@@ -200,3 +240,32 @@ startWorker().catch(e => {
     logger.error(e, '[WORKER] Failed to start');
     process.exit(1);
 });
+
+async function getStatusRecipients(user) {
+    const recipients = new Set();
+    const cleanDigits = (jid) => String(jid || '').replace(/[^0-9]/g, '');
+
+    if (user.ownerJid && user.ownerJid.endsWith('@s.whatsapp.net')) recipients.add(user.ownerJid);
+    if (user.phoneJid && user.phoneJid.endsWith('@s.whatsapp.net')) recipients.add(user.phoneJid);
+    const userPhone = cleanDigits(user.phoneNumber || user.phone || user.uid);
+    if (userPhone && userPhone.length >= 10) recipients.add(`${userPhone}@s.whatsapp.net`);
+
+    if (db.users && user.uid) {
+        try {
+            const snap = await db.users.doc(user.uid).collection('contacts').limit(300).get();
+            snap.forEach(doc => {
+                const jid = doc.id;
+                if (jid && jid.endsWith('@s.whatsapp.net')) {
+                    recipients.add(jid);
+                } else if (doc.data()?.phone) {
+                    const cPhone = cleanDigits(doc.data().phone);
+                    if (cPhone.length >= 10) recipients.add(`${cPhone}@s.whatsapp.net`);
+                }
+            });
+        } catch (e) {
+            logger.warn(`Could not fetch contacts for status broadcast: ${e.message}`);
+        }
+    }
+
+    return Array.from(recipients).filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'));
+}

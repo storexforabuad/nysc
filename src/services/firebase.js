@@ -35,6 +35,7 @@ if (!admin.apps.length) {
 let firestore;
 try {
   firestore = admin.firestore();
+  firestore.settings({ ignoreUndefinedProperties: true });
 } catch (error) {
   logger.warn('Firestore service unavailable (API might be disabled):', error.message);
   firestore = null;

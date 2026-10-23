@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save } from 'lucide-react';
+import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import CdsProposals from './CdsProposals';
 import BroadcastPanel from './BroadcastPanel';
@@ -135,7 +135,8 @@ export default function ManagementViews() {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (!res.ok) throw new Error('Failed to approve vendor');
-            fetchData();
+            setPartners(prev => prev.map(p => p.id === id ? { ...p, terminalApproved: true } : p));
+            await fetchData();
         } catch (e: any) {
             alert(e.message || "Failed to approve partner terminal");
         } finally {
@@ -188,14 +189,28 @@ export default function ManagementViews() {
                                     <span className="text-accent font-display font-bold text-lg">₦{(p.balance || 0).toLocaleString()}</span>
                                 </div>
 
-                                {!p.terminalApproved && (
+                                {p.terminalApproved ? (
+                                    <div className="w-full mt-3 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono font-bold text-xs rounded flex items-center justify-center gap-1.5">
+                                        <CheckCircle2 size={13} />
+                                        <span>TERMINAL ACTIVATED</span>
+                                    </div>
+                                ) : (
                                     <button
                                         onClick={() => handleApproveVendor(p.id)}
                                         disabled={approvingVendorId === p.id}
                                         className="w-full mt-3 py-2 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-black font-mono font-bold text-xs rounded transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50"
                                     >
-                                        <CheckCircle2 size={13} />
-                                        {approvingVendorId === p.id ? 'ACTIVATING BOT...' : 'APPROVE & ACTIVATE BOT'}
+                                        {approvingVendorId === p.id ? (
+                                            <>
+                                                <Loader2 size={13} className="animate-spin" />
+                                                <span>ACTIVATING BOT...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CheckCircle2 size={13} />
+                                                <span>APPROVE & ACTIVATE BOT</span>
+                                            </>
+                                        )}
                                     </button>
                                 )}
                             </div>
