@@ -133,7 +133,10 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const isDataAndPriceLiteral = /^\.?data\s*(?:and|\+|&)?\s*(?:price|prices|pricing|plans)$/i.test(command);
     const dataCommandRegex = /^\.?data(?:\s*\+?\s*(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const dataPriceMatch = command.match(dataCommandRegex);
-    const isDataMatch = isDataAndPriceLiteral || !!dataPriceMatch;
+    // MTN and GLO keywords act as network-filtered DATA aliases
+    const isMtnAlias = /^\.?mtn$/i.test(command);
+    const isGloAlias = /^\.?glo$/i.test(command);
+    const isDataMatch = isDataAndPriceLiteral || !!dataPriceMatch || isMtnAlias || isGloAlias;
     const cardCommandRegex = /^\.?(?:card|airtime)(?:\s+(\d+))?(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}|\+?234\s?\d{10}))?$/i;
     const pinCommandRegex = /^\.?pin(?:\s+(waec|neco))?$/i;
     const fundCommandRegex = /^\.?fund(?:\s+(\d+))?$/i;
@@ -225,7 +228,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         await sock.sendMessage(from, {
           text: `👋 *Quick note!* My line is powered by *${storeName}*. ⚡\n\n` +
-            `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically.\n\n` +
+            `Get instant, affordable MTN & Glo data delivered automatically.\n\n` +
             `👉 Reply *DATA* or *DATA 500* to view plans for your budget!\n\n` +
             `💚 _A portion of every purchase funds NYSC Community Development projects._ 🇳🇬\n\n` +
             `_You can keep chatting with me normally — the bot only responds when you use keywords._\n` +
@@ -330,7 +333,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `──────────────\n` +
           `Want to make an even bigger impact? You can donate directly:\n\n` +
           `👉 Reply *DONATE* to contribute to the Clarion CDS Fund\n` +
-          `👉 Reply *DATA* to buy subsidized data (automatic CDS contribution included)\n\n` +
+          `👉 Reply *DATA* to buy affordable data (automatic CDS contribution included)\n\n` +
           `_Every naira counts. Thank you for building Nigeria! 🇳🇬_`
       });
     }
@@ -1160,11 +1163,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `📦 *Grant:* ${grantMb}MB Free Data\n` +
           `💰 *Price:* ₦0 (FREE GIFT)\n\n` +
           `──────────────────\n` +
-          `🔥 *Need more data? Check out our best daily plans:*\n\n` +
-          `1️⃣ *1GB Daily* — ₦280 (Reply *BUY 101*)\n` +
-          `2️⃣ *2GB Weekly* — ₦550 (Reply *BUY 102*)\n` +
-          `3️⃣ *5GB Monthly* — ₦1,350 (Reply *BUY 105*)\n\n` +
-          `👉 Reply *DATA* anytime to view all networks & packages!\n` +
+          `🔥 *Need more data? Check out our best packages:*\n\n` +
+          `👉 Reply *DATA* anytime to view all MTN & Glo packages!\n` +
           `💚 _Every purchase supports NYSC Community Development projects._`;
       } else {
         receiptText = `🎉 *PROMO DATA DELIVERED!* ⚡\n\n` +
@@ -1173,10 +1173,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `📦 *Grant:* ${grantMb}MB Free Data\n` +
           `💰 *Price:* ₦0 (FREE GIFT)\n\n` +
           `──────────────────\n` +
-          `🔥 *Top Plans for You:*\n\n` +
-          `1️⃣ *1GB Daily* — ₦280 (Reply *BUY 101*)\n` +
-          `2️⃣ *2GB Weekly* — ₦550 (Reply *BUY 102*)\n` +
-          `3️⃣ *5GB Monthly* — ₦1,350 (Reply *BUY 105*)\n\n` +
+          `🔥 *Top Packages Available:*\n\n` +
           `👉 Reply *DATA* to view all packages.`;
       }
 
@@ -1192,22 +1189,64 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const targetPrice = match && match[1] ? parseInt(match[1]) : null;
       const targetPhone = match && match[2] ? match[2] : null;
 
-      const detectedNet = detectNetwork(targetPhone || actionableJid);
+      // MTN / GLO keyword aliases — pre-set the detected network
+      let forceNetwork = null;
+      if (isMtnAlias) forceNetwork = 'mtn';
+      if (isGloAlias) forceNetwork = 'glo';
 
-      // ── T2 Mobile (formerly 9mobile) Rebranding Notice ──
-      const is9mobileNumber = targetPhone && (targetPhone.startsWith('0809') || targetPhone.startsWith('0817') || targetPhone.startsWith('0818') || targetPhone.startsWith('0909') || targetPhone.startsWith('0908'));
-      if (detectedNet === '9mobile' || detectedNet === 't2mobile' || is9mobileNumber) {
-        return sock.sendMessage(from, {
-          text: `ℹ️ *T2 Mobile (formerly 9mobile)* is currently undergoing network rebranding and infrastructure upgrades. Data gifting is temporarily paused, and their new packages will be listed here soon!\n\n👉 Reply *DATA* to view available plans on MTN, Airtel, or Glo.`
-        });
-      }
+      const detectedNet = forceNetwork || detectNetwork(targetPhone || actionableJid);
 
-      // ── Step 1: Immediate First Message (AI Scanning) ──
+      // ── Step 1: AI Scanning message — fires for ALL networks, always first ──
       await sock.sendMessage(from, {
         text: targetPrice
           ? `🤖 *Clarion AI is scanning telecom servers for the best verified data packages around your ₦${targetPrice.toLocaleString()} budget...* ⏳`
           : `🤖 *Clarion AI is scanning telecom servers for the best verified data packages...* ⏳`
       });
+
+      // ── Search & Demand Intelligence Logging ──
+      if (db.users) {
+        try {
+          const firestore = db.users.firestore;
+          await firestore.collection('searchAnalytics').add({
+            userId: user.uid,
+            buyerPhone: actionableJid,
+            customerPhone: targetPhone || actionableJid.split('@')[0],
+            detectedNetwork: detectedNet || 'all',
+            targetPrice: targetPrice || null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: new Date().toISOString()
+          });
+        } catch (err) {
+          logger.warn(`Search analytics logging error: ${err.message}`);
+        }
+      }
+
+      // Micro natural delay (1.4 seconds)
+      await new Promise(r => setTimeout(r, 1400));
+
+      // ── Step 2: Graceful notice for unsupported networks (Airtel / 9mobile / T2) ──
+      const isAirtelNumber = targetPhone && (targetPhone.startsWith('0802') || targetPhone.startsWith('0808') || targetPhone.startsWith('0812') || targetPhone.startsWith('0701') || targetPhone.startsWith('0708'));
+      const is9mobileNumber = targetPhone && (targetPhone.startsWith('0809') || targetPhone.startsWith('0817') || targetPhone.startsWith('0818') || targetPhone.startsWith('0909') || targetPhone.startsWith('0908'));
+
+      if (detectedNet === 'airtel' || isAirtelNumber) {
+        return sock.sendMessage(from, {
+          text: `⚡ Clarion AI checked all available servers and is currently optimizing the most affordable data packages for *Airtel*. 🔧\n\n` +
+            `Our team is actively working to bring you the best deals on this network.\n\n` +
+            `In the meantime, here's what's available right now:\n` +
+            `👉 Reply *DATA* to view affordable *MTN & Glo* packages\n` +
+            `👉 Reply *CANCEL* to exit`
+        });
+      }
+
+      if (detectedNet === '9mobile' || detectedNet === 't2mobile' || is9mobileNumber) {
+        return sock.sendMessage(from, {
+          text: `⚡ Clarion AI checked all available servers and is currently optimizing the most affordable data packages for *T2 Mobile* (formerly 9mobile). 🔧\n\n` +
+            `Our team is actively working to bring you the best deals on this network.\n\n` +
+            `In the meantime, here's what's available right now:\n` +
+            `👉 Reply *DATA* to view affordable *MTN & Glo* packages\n` +
+            `👉 Reply *CANCEL* to exit`
+        });
+      }
 
       const plans = await payflex.getAvailablePlans();
 
@@ -1220,28 +1259,6 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       const hasExactMatch = targetPrice ? filteredPlans.some(p => p.sellPrice === targetPrice) : true;
-
-      // ── Search & Demand Intelligence Logging ──
-      if (db.users) {
-        try {
-          const firestore = db.users.firestore;
-          await firestore.collection('searchAnalytics').add({
-            userId: user.uid,
-            buyerPhone: actionableJid,
-            customerPhone: targetPhone || actionableJid.split('@')[0],
-            detectedNetwork: detectedNet || 'all',
-            targetPrice: targetPrice || null,
-            hasExactMatch,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            timestamp: new Date().toISOString()
-          });
-        } catch (err) {
-          logger.warn(`Search analytics logging error: ${err.message}`);
-        }
-      }
-
-      // Micro natural delay (1.4 seconds)
-      await new Promise(r => setTimeout(r, 1400));
 
       // Check customer's previous purchase status to determine footer tip
       let hasPurchased = false;
@@ -1260,7 +1277,6 @@ export const handleProxyMessage = async (sock, msg, user) => {
         filteredPlans.sort((a, b) => a.sellPrice - b.sellPrice);
       }
 
-      const storeName = user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Telecom'));
       const networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
       let menuText = `⚡ *CLARION TELECOM CATALOG*\n_Affordable data · Instant delivery 24/7_\n──────────────\n\n`;
 

@@ -52,7 +52,7 @@ export const calculatePaystackFee = (amount) => {
 
 export const ACTIVE_APPROVED_PLANS = {
   // ──────────────────────────────────────────
-  // 🌐 MTN (SME / Data Share) - 8 plans
+  // 🌐 MTN - 8 plans
   // ──────────────────────────────────────────
   'mtn_data_share:M500MBS': {
     name: '500MB',
@@ -64,7 +64,7 @@ export const ACTIVE_APPROVED_PLANS = {
   },
   'mtn_data_share:M1GBS': {
     name: '1GB',
-    sellPrice: 800,
+    sellPrice: 600,
     officialPrice: 800,
     basePrice: 450,
     durationCategory: '📅 *7-Day Plans:*',
@@ -244,178 +244,6 @@ export const ACTIVE_APPROVED_PLANS = {
   },
 
   // ──────────────────────────────────────────
-  // 🌐 Airtel Data - 21 plans
-  // ──────────────────────────────────────────
-  'airtel_data:A4GBS': {
-    name: '4GB Binge Plan',
-    sellPrice: 1000,
-    officialPrice: 1000,
-    basePrice: 990,
-    durationCategory: '⚡ *2-Day Plans:*',
-    durationPriority: 2
-  },
-  'airtel_data:A6GBS': {
-    name: '6GB',
-    sellPrice: 1500,
-    officialPrice: 1500,
-    basePrice: 1485,
-    durationCategory: '⚡ *2-Day Plans:*',
-    durationPriority: 2
-  },
-  'airtel_data:A1GB': {
-    name: '1GB',
-    sellPrice: 800,
-    officialPrice: 800,
-    basePrice: 795,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A1a5GBS': {
-    name: '1.5GB',
-    sellPrice: 1000,
-    officialPrice: 1000,
-    basePrice: 995,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A6GB': {
-    name: '6GB',
-    sellPrice: 2000,
-    officialPrice: 2000,
-    basePrice: 1970,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A8GBS': {
-    name: '8GB',
-    sellPrice: 2500,
-    officialPrice: 2500,
-    basePrice: 2487,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A10GBS': {
-    name: '10GB',
-    sellPrice: 3000,
-    officialPrice: 3000,
-    basePrice: 2975,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A20GB': {
-    name: '20GB',
-    sellPrice: 5000,
-    officialPrice: 5000,
-    basePrice: 4950,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A35GB': {
-    name: '35GB Unlimited Ultra Router',
-    sellPrice: 10000,
-    officialPrice: 10000,
-    basePrice: 9900,
-    durationCategory: '📅 *7-Day Plans:*',
-    durationPriority: 7
-  },
-  'airtel_data:A2GB2': {
-    name: '2GB',
-    sellPrice: 1500,
-    officialPrice: 1500,
-    basePrice: 1478,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A3GB': {
-    name: '3GB',
-    sellPrice: 2000,
-    officialPrice: 2000,
-    basePrice: 1980,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A4GB': {
-    name: '4GB',
-    sellPrice: 2500,
-    officialPrice: 2500,
-    basePrice: 2477,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A8GB': {
-    name: '8GB',
-    sellPrice: 3000,
-    officialPrice: 3000,
-    basePrice: 2975,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A10GB': {
-    name: '10GB',
-    sellPrice: 4000,
-    officialPrice: 4000,
-    basePrice: 3950,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A13GB': {
-    name: '13GB',
-    sellPrice: 5000,
-    officialPrice: 5000,
-    basePrice: 4955,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A18GB': {
-    name: '18GB',
-    sellPrice: 6000,
-    officialPrice: 6000,
-    basePrice: 5940,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A25GB': {
-    name: '25GB',
-    sellPrice: 8000,
-    officialPrice: 8000,
-    basePrice: 7900,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A60GB': {
-    name: '60GB',
-    sellPrice: 15000,
-    officialPrice: 15000,
-    basePrice: 14900,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A75GB': {
-    name: '75GB Router Plan',
-    sellPrice: 15000,
-    officialPrice: 15000,
-    basePrice: 14980,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A100GB': {
-    name: '100GB',
-    sellPrice: 20000,
-    officialPrice: 20000,
-    basePrice: 19800,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-  'airtel_data:A160GB': {
-    name: '160GB',
-    sellPrice: 30000,
-    officialPrice: 30000,
-    basePrice: 29750,
-    durationCategory: '🗓️ *30-Day/Monthly Plans:*',
-    durationPriority: 30
-  },
-
-  // ──────────────────────────────────────────
   // 🌐 Glo Data - 10 plans
   // ──────────────────────────────────────────
   'glo_data:G1GB1': {
@@ -538,7 +366,8 @@ class PayflexService {
 
   async syncPlans() {
     logger.info('Syncing curated data plans from Peyflex...');
-    const networks = ['mtn_data_share', 'mtn_gifting_data', 'airtel_data', 'glo_data'];
+    // Only sync the networks we actively sell (MTN + Glo pilot)
+    const networks = ['mtn_data_share', 'glo_data'];
     let allPlans = [];
 
     for (const net of networks) {
@@ -580,7 +409,7 @@ class PayflexService {
       });
 
       // Step 3: Sort by network order, duration priority, then sellPrice
-      const netPriority = { mtn_data_share: 1, mtn_gifting_data: 2, airtel_data: 3, glo_data: 4 };
+      const netPriority = { mtn_data_share: 1, glo_data: 2 };
       allPlans.sort((a, b) => {
         if (netPriority[a.network] !== netPriority[b.network]) {
           return (netPriority[a.network] || 99) - (netPriority[b.network] || 99);
@@ -628,15 +457,16 @@ class PayflexService {
   }
 
   async getAvailablePlans() {
-    if (this.cachedPlans && this.cachedPlans.length === 54) {
+    const ACTIVE_PLAN_COUNT = Object.keys(ACTIVE_APPROVED_PLANS).length;
+    if (this.cachedPlans && this.cachedPlans.length === ACTIVE_PLAN_COUNT) {
       return this.cachedPlans;
     }
 
-    // Try to load from Firestore, but verify exact 54 active plan count
+    // Try to load from Firestore, but verify the active plan count matches current catalog
     if (db.plansCache) {
       try {
         const snapshot = await db.plansCache.get();
-        if (!snapshot.empty && snapshot.size === 54) {
+        if (!snapshot.empty && snapshot.size === ACTIVE_PLAN_COUNT) {
           const plans = snapshot.docs.map(doc => doc.data());
           // Verify that the cached plans match the current ACTIVE_APPROVED_PLANS prices
           const isValid = plans.every(p => {
