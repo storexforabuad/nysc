@@ -13,6 +13,7 @@ import wallet from './services/WalletService.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
 import { startStatusPostJob } from './jobs/statusPostJob.js';
 import { startSubscriptionReminderJob } from './jobs/SubscriptionReminderJob.js';
+import { startThursdayPromotionJob } from './jobs/thursdayPromotionJob.js';
 import ReceiptGenerator from './services/ReceiptGenerator.js';
 import PriceCardGenerator from './services/PriceCardGenerator.js';
 import CaptionService from './services/CaptionService.js';
@@ -663,8 +664,17 @@ async function startServer() {
             await payflex.dispenseData(manualOrder.targetPhone, manualOrder.planSerial);
 
             const netProfit = +(manualOrder.amount - manualOrder.baseCost).toFixed(2);
-            const userTier = matchedPartner?.donationTier || 'MEMBER';
-            const settlement = wallet.calculateSettlement(netProfit, userTier);
+            const settlement = await wallet.settleCompletedOrder({
+              orderId: manualOrder.orderId,
+              userId: matchedPartnerId,
+              amount: manualOrder.amount,
+              netProfit,
+              userDoc: matchedPartner,
+              buyerPhone: manualOrder.targetPhone,
+              planName: manualOrder.planName,
+              transactionRef: TransactionRef,
+              source: 'MANUAL_ORDER'
+            });
 
             if (manualOrderDocRef) {
               await manualOrderDocRef.update({
@@ -686,18 +696,17 @@ async function startServer() {
                 settlement,
                 status: 'COMPLETED',
                 source: 'MANUAL_ORDER',
+                paystackTransactionRef: TransactionRef,
                 squadTransactionRef: TransactionRef,
                 createdAt: new Date().toISOString()
               }).catch(() => {});
             }
 
             if (db.users && matchedPartnerId && settlement.cdsShare > 0) {
+              const targetCdsUser = matchedPartner?.parentId || matchedPartnerId;
               let prevCds = Number(matchedPartner?.totalCdsDonated) || 0;
               const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
-              await db.users.doc(matchedPartnerId).set({
-                totalCdsDonated: admin.firestore.FieldValue.increment(settlement.cdsShare)
-              }, { merge: true }).catch(() => {});
-              handleMilestoneCheck(matchedPartnerId, prevCds, newCds, matchedPartner).catch(() => {});
+              handleMilestoneCheck(targetCdsUser, prevCds, newCds, matchedPartner).catch(() => {});
             }
 
             if (sessionManager.motherSock) {
@@ -842,40 +851,39 @@ async function startServer() {
 
             // 3. COMPLETE
             const netProfit = order.markup ?? +(Body.amount - (order.baseCost || Body.amount * 0.9)).toFixed(2);
-            let userTier = order.donationTier;
-            if (order.userId === 'HUB') {
-              userTier = 'HUB';
-            } else if (!userTier && db.users && order.userId) {
+            let userData = null;
+            if (db.users && order.userId && order.userId !== 'HUB') {
               try {
-                const userDoc = await db.users.doc(order.userId).get();
-                if (userDoc.exists) userTier = userDoc.data().donationTier;
+                const uDoc = await db.users.doc(order.userId).get();
+                if (uDoc.exists) userData = uDoc.data();
               } catch (e) {}
             }
-            const settlement = wallet.calculateSettlement(netProfit, userTier || 'MEMBER');
+
+            const settlement = await wallet.settleCompletedOrder({
+              orderId,
+              userId: order.userId,
+              amount: Body.amount,
+              netProfit,
+              userDoc: userData,
+              buyerPhone: order.buyerPhone,
+              planName: order.planName,
+              transactionRef: TransactionRef,
+              source: 'AUTOMATED_STORE'
+            });
 
             await db.ledger.doc(orderId).update({
               status: 'COMPLETED',
               settlement,
+              paystackTransactionRef: TransactionRef,
               squadTransactionRef: TransactionRef,
               updatedAt: new Date().toISOString()
             });
 
-            // Atomically increment CDS pool on user doc
             if (db.users && order.userId && order.userId !== 'HUB' && settlement.cdsShare > 0) {
-              let prevCds = 0;
-              let userData = null;
-              try {
-                const uDoc = await db.users.doc(order.userId).get();
-                if (uDoc.exists) {
-                  userData = uDoc.data();
-                  prevCds = Number(userData.totalCdsDonated) || 0;
-                }
-              } catch (e) {}
+              const targetCdsUser = userData?.parentId || order.userId;
+              let prevCds = Number(userData?.totalCdsDonated) || 0;
               const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
-              await db.users.doc(order.userId).set({
-                totalCdsDonated: admin.firestore.FieldValue.increment(settlement.cdsShare)
-              }, { merge: true }).catch(() => {});
-              handleMilestoneCheck(order.userId, prevCds, newCds, userData).catch(() => {});
+              handleMilestoneCheck(targetCdsUser, prevCds, newCds, userData).catch(() => {});
             }
 
             // Check if this was customer's first purchase to include wallet educational tip
@@ -1132,6 +1140,7 @@ async function startServer() {
           startWeeklyReportJob();
           startStatusPostJob();
           startSubscriptionReminderJob();
+          startThursdayPromotionJob();
           broadcastQueue.start();
 
           // Wire up RetryQueue customer notification callback to Proxy Workers

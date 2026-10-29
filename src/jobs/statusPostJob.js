@@ -150,13 +150,13 @@ const sendPromoStatus = async () => {
 };
 
 const DAILY_TEXT_STATUSES = [
-  "⚡ Cheap MTN, Airtel & Glo data available 24/7!\n\n👉 Reply *DATA* to order instantly.",
-  "📱 Running low on data?\n\n👉 Reply *DATA 500* or *DATA 1000* for instant automated top-up!",
-  "🇳🇬 Did you know? Every data purchase here funds local NYSC CDS projects!\n\n👉 Reply *DATA* to support & save.",
-  "🎓 Need WAEC or NECO result checking PINs?\n\n👉 Reply *PIN WAEC* or *PIN NECO* to buy instantly!",
-  "💳 Buy Airtime for any network in seconds!\n\n👉 Reply *CARD 500* to try now.",
-  "⚡ Need high-speed data right now?\n\n👉 Reply *DATA* to view our instant delivery catalog!",
-  "🎉 Cheap data deals available for the weekend!\n\n👉 Reply *DATA* to order now."
+  "⚡ Cheap MTN, Airtel, Glo & 9mobile data available 24/7!\n\n👉 Reply *DATA* to order instantly.",
+  "📱 Running low on data for the new week?\n\n👉 Reply *DATA 500* or *DATA 1000* for instant automated top-up!",
+  "🇳🇬 Did you know? Every data purchase here funds local community & NYSC projects!\n\n👉 Reply *DATA* to support & save.",
+  "⚡ Midweek data refill! Don't let your browsing or downloads slow down.\n\n👉 Reply *DATA* or *DATA 500* for instant gigabytes!",
+  "🔋 CDS Special: Affordable data bundles for everyone today!\n\n👉 Reply *DATA* to view all network discounts!",
+  "⚡ Need high-speed data for the weekend?\n\n👉 Reply *DATA* to view our instant delivery catalog!",
+  "🎉 Cheap data deals available all weekend long!\n\n👉 Reply *DATA* to order now."
 ];
 
 const sendDailyTextStatus = async () => {
@@ -168,12 +168,19 @@ const sendDailyTextStatus = async () => {
   for (const [uid, worker] of sessionManager.sessions.entries()) {
     if (!worker || typeof worker.postMessage !== 'function') continue;
     try {
-      // Check if user has an active promo running; if so, skip non-promo text status
       const userDoc = await sessionManager.getUser(uid);
+      // Skip if user has an active promo running
       if (userDoc?.activePromo?.status === 'ACTIVE' && userDoc?.activePromo?.claimsRemaining > 0) {
         continue;
       }
+      // Skip on Day 0: launch status remains exclusive for the first 24 hours
+      if (userDoc?.pairedAt && new Date(userDoc.pairedAt).toDateString() === new Date().toDateString()) {
+        logger.info(`[STATUS] Skipping 9:00 AM daily status for ${uid} — Day 0 launch status is active.`);
+        continue;
+      }
+
       worker.postMessage({ type: 'text_status', text: todayStatusText });
+      logger.info(`[STATUS] Dispatched 9:00 AM data text status to ${uid}`);
     } catch (err) {
       logger.error(`Failed to send daily text status to worker for user ${uid}:`, err.message);
     }
@@ -183,42 +190,23 @@ const sendDailyTextStatus = async () => {
 export function startStatusPostJob() {
   ensureMediaDirs();
 
-  cron.schedule('0 0 * * 0', async () => {
-    logger.info('Running weekly price card generation job.');
-    await sendWeeklyPriceCards();
-  }, { timezone: 'Africa/Lagos' });
-
-  cron.schedule('0 7 * * *', async () => {
-    logger.info('Posting daily price card status.');
-    await sendPriceCardStatus();
-  }, { timezone: 'Africa/Lagos' });
-
+  // Active: Daily 9:00 AM Lagos Time pure-data text status
   cron.schedule('0 9 * * *', async () => {
-    logger.info('Posting daily non-promo text status.');
+    logger.info('Posting daily 9:00 AM data text status.');
     await sendDailyTextStatus();
   }, { timezone: 'Africa/Lagos' });
 
-  cron.schedule('30 12 * * *', async () => {
-    logger.info('Posting midday receipt status.');
-    await sendReceiptStatus();
-  }, { timezone: 'Africa/Lagos' });
+  /*
+   * ── Non-Text Status Schedulers (Temporarily disabled to focus 100% on data text statuses) ──
+   * cron.schedule('0 0 * * 0', async () => { await sendWeeklyPriceCards(); }, { timezone: 'Africa/Lagos' });
+   * cron.schedule('0 7 * * *', async () => { await sendPriceCardStatus(); }, { timezone: 'Africa/Lagos' });
+   * cron.schedule('30 12 * * *', async () => { await sendReceiptStatus(); }, { timezone: 'Africa/Lagos' });
+   * cron.schedule('0 18 * * *', async () => { await sendPromoStatus(); }, { timezone: 'Africa/Lagos' });
+   * cron.schedule('0 21 * * *', async () => { await sendReceiptStatus(); }, { timezone: 'Africa/Lagos' });
+   * cron.schedule('0 2 * * *', async () => { cleanupOldReceipts(); }, { timezone: 'Africa/Lagos' });
+   */
 
-  cron.schedule('0 18 * * *', async () => {
-    logger.info('Posting evening promo status.');
-    await sendPromoStatus();
-  }, { timezone: 'Africa/Lagos' });
-
-  cron.schedule('0 21 * * *', async () => {
-    logger.info('Posting night receipt status.');
-    await sendReceiptStatus();
-  }, { timezone: 'Africa/Lagos' });
-
-  cron.schedule('0 2 * * *', async () => {
-    logger.info('Running receipt cleanup job.');
-    cleanupOldReceipts();
-  }, { timezone: 'Africa/Lagos' });
-
-  logger.info(`Status post CRON jobs scheduled (mockMode=${!!config.mockMode}).`);
+  logger.info(`Status post CRON jobs scheduled (Daily 9:00 AM Data Text Status Active).`);
 }
 
 export async function triggerManualStatusBroadcast(type = 'price_card') {

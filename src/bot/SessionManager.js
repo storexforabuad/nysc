@@ -212,6 +212,58 @@ class SessionManager {
             db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
           }
         }
+
+        // ── Day 0 Launch Status: Trigger 60s after first connection ──
+        if (!user.hasPostedLaunchStatus) {
+          setTimeout(async () => {
+            try {
+              let latestUser = user;
+              if (db.users) {
+                try {
+                  const freshSnap = await db.users.doc(user.uid).get();
+                  if (freshSnap.exists) latestUser = { ...user, ...freshSnap.data() };
+                } catch (e) {}
+              }
+
+              if (latestUser.hasPostedLaunchStatus) return;
+
+              let launchStatusText = '';
+              const isReferral = latestUser.role === 'REFERRAL' || Boolean(latestUser.parentId);
+
+              if (isReferral) {
+                let parentStoreName = 'Store';
+                if (db.users && latestUser.parentId) {
+                  try {
+                    const parentDoc = await db.users.doc(latestUser.parentId).get();
+                    if (parentDoc.exists) {
+                      const pData = parentDoc.data();
+                      parentStoreName = pData.brandName || pData.franchiseName || pData.verifiedName || 'Store';
+                    }
+                  } catch (e) {}
+                }
+
+                launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion A.I - ${parentStoreName} ⚡\n\n` +
+                  `Enjoy instant, heavily subsidized MTN, Airtel, Glo & 9mobile data delivered automatically 24/7!\n\n` +
+                  `💚 Every purchase supports community development projects. 🇳🇬\n\n` +
+                  `👉 Try it out now — reply DATA to this status to view our special rates!`;
+              } else {
+                launchStatusText = `🚀 Exciting news! My line is now officially powered by Clarion A.I. ⚡\n\n` +
+                  `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically in 3 seconds!\n\n` +
+                  `💚 Every purchase funds Community Development projects. 🇳🇬\n\n` +
+                  `👉 Try it out now — just reply DATA to this status to see all plans!`;
+              }
+
+              worker.postMessage({ type: 'text_status', text: launchStatusText });
+              user.hasPostedLaunchStatus = true;
+              if (db.users) {
+                await db.users.doc(user.uid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => {});
+              }
+              logger.info(`[LAUNCH-STATUS] Successfully posted Day 0 launch status for ${user.uid}`);
+            } catch (statusErr) {
+              logger.warn(`Failed to post Day 0 launch status for ${user.uid}:`, statusErr.message);
+            }
+          }, 60000);
+        }
       }
 
       if (msg.type === 'close') {
@@ -500,6 +552,52 @@ class SessionManager {
       subscription: updates.subscription,
       announceNewContacts: true
     });
+
+    // ── Specialized Welcome Guide for Referral Partners ──
+    if (fullUser.role === 'REFERRAL' || fullUser.parentId) {
+      const cleanPhone = phoneJid.split('@')[0];
+      const partnerName = fullUser.name || info.partnerName || 'Partner';
+
+      const referralGuide = `🎉 *WELCOME TO THE CLARION PARTNER NETWORK!* 🇳🇬\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Congratulations *${partnerName}*! Your WhatsApp line is now powered by Clarion A.I. ⚡\n\n` +
+        `🚀 *How Your Automated Store Works:*\n` +
+        `1. *Auto-Vending:* When your contacts text you *DATA*, *DATA 500*, or *BUY*, your bot automatically answers, takes payment, and delivers data in 3 seconds!\n` +
+        `2. *Status Promotions:* Your bot automatically posts attractive data discount flyers to your WhatsApp Status.\n` +
+        `3. *Earn Free Data:* You receive *35% commission* on every sale, credited directly to your *Data Fuel Balance*!\n\n` +
+        `🔑 *Your Key Commands (Text in this chat):*\n` +
+        `• *REDEEM* — Instantly redeem your earned Data Fuel for free data to your line!\n` +
+        `• *RANK* or *STATS* — Check your total sales, Data Fuel balance, and leaderboard standing.\n` +
+        `• *STATECODE [YourCode]* — Submit your NYSC State Code to qualify for graduation to a Full Store on Thursday CDS!\n` +
+        `• *SUGGEST [Phone] [Name]* — Invite a fellow Corps Member to earn +25 CDS promotion points.\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `_You can continue using your WhatsApp normally with friends. The bot only responds when keywords are sent._ Have a profitable day! 🚀`;
+
+      try {
+        await this.motherSock.sendMessage(phoneJid, { text: referralGuide });
+      } catch (err) {
+        logger.error('Failed to send Referral Partner Guide:', err.message);
+      }
+
+      // Notify the Parent Proxy
+      if (fullUser.parentId) {
+        const parentJid = fullUser.parentId.includes('@') ? fullUser.parentId : `${fullUser.parentId}@s.whatsapp.net`;
+        const parentAlert = `🎉 *PARTNER ACTIVATION CONFIRMED!*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `Partner *${partnerName}* (+${cleanPhone}) has successfully scanned and is now *ONLINE* under your Store! ⚡\n\n` +
+          `• *Your Share:* 65% Cash (credited to your withdrawable wallet on every sale)\n` +
+          `• *Partner Share:* 35% Data Fuel (free data redemption)\n` +
+          `• *Management:* Reply *MYREFS* anytime to view all partners' live sales, or reply *SETSPLIT ${cleanPhone} [Percent]* to customize their share.`;
+
+        try {
+          await this.motherSock.sendMessage(parentJid, { text: parentAlert });
+        } catch (pErr) {
+          logger.warn('Failed to send parent activation alert:', pErr.message);
+        }
+      }
+
+      return;
+    }
 
     // 3. Stage 0 — Tier-Aware Welcome Briefing
     let tierHeader = '';

@@ -8,12 +8,16 @@ import broadcastQueue from '../services/BroadcastQueue.js';
 import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
 import { detectNetwork } from '../utils/networkUtils.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
+import QRCode from 'qrcode';
 
 // ── In-memory tracking for introduced contacts (resilient offline/mock fallback) ──
 const introducedContacts = new Set();
 
 // ── In-memory tracking for awaiting FUND amount (conversational wallet top-up) ──
 const awaitingFundMap = new Map();
+
+// ── In-memory tracking for awaiting REDEEM selection (Data Fuel redemption) ──
+const awaitingRedeemMap = new Map();
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const messageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -370,6 +374,420 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `👉 Reply *FUND* anytime to top up your wallet.\n` +
           `👉 Reply *DATA* to view data packages.`
       });
+    }
+
+    // ── Handle REDEEM keyword (Exclusively for Data Fuel redemptions) ──
+    const awaitingRedeemKey = `${user.uid}_${actionableJid}`;
+    const pendingRedeemState = awaitingRedeemMap.get(awaitingRedeemKey);
+    const isRedeemCommand = cleanCommand === 'redeem' || cleanCommand.startsWith('redeem ') || (pendingRedeemState && /^[1-4]$/.test(cleanCommand));
+
+    if (isRedeemCommand) {
+      const partnerUid = (isOwner ? user.uid : actionableJid);
+      const dataFuelBalance = await wallet.getDataFuelBalance(partnerUid);
+
+      if (dataFuelBalance < 200) {
+        return sock.sendMessage(from, {
+          text: `⛽ *Clarion Data Fuel*\n\n` +
+            `Your available Data Fuel: *₦${dataFuelBalance.toLocaleString()}*\n\n` +
+            `You need at least ₦250 to redeem a free data bundle.\n\n` +
+            `💡 *How to earn free Data Fuel:*\n` +
+            `Share your data store flyers on your WhatsApp Status! Every time someone orders from your store, 35% commission is added directly to your Data Fuel balance automatically. 🚀`
+        });
+      }
+
+      // Check if user selected an option (e.g. "1" or "REDEEM 1")
+      let selectedIndex = null;
+      if (pendingRedeemState && /^[1-4]$/.test(cleanCommand)) {
+        selectedIndex = parseInt(cleanCommand, 10) - 1;
+      } else if (cleanCommand.startsWith('redeem ')) {
+        const parts = cleanCommand.split(/\s+/);
+        if (/^[1-4]$/.test(parts[1])) {
+          selectedIndex = parseInt(parts[1], 10) - 1;
+        }
+      }
+
+      const allPlans = await payflex.getAvailablePlans();
+      const targetPhone = pendingRedeemState?.targetPhone || (isOwner ? (user.phoneNumber || user.uid.split('@')[0]) : actionableJid.split('@')[0]);
+      const network = detectNetwork(targetPhone) || 'mtn';
+
+      const affordablePlans = allPlans
+        .filter(p => p.network?.toLowerCase().includes(network.toLowerCase()) && p.sellPrice <= dataFuelBalance)
+        .sort((a, b) => a.sellPrice - b.sellPrice)
+        .slice(0, 4);
+
+      if (affordablePlans.length === 0) {
+        return sock.sendMessage(from, {
+          text: `⛽ *Data Fuel Balance: ₦${dataFuelBalance.toLocaleString()}*\n\nNo available ${network.toUpperCase()} plans found within your current balance. Please accumulate more earnings or check back shortly.`
+        });
+      }
+
+      if (selectedIndex === null || !affordablePlans[selectedIndex]) {
+        awaitingRedeemMap.set(awaitingRedeemKey, {
+          plans: affordablePlans,
+          targetPhone,
+          timestamp: Date.now()
+        });
+
+        let menuText = `⚡ *Clarion Data Fuel Dispenser*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `💰 Your Earned Data Fuel: *₦${dataFuelBalance.toLocaleString()}*\n` +
+          `📱 Destination: *${targetPhone} (${network.toUpperCase()})*\n\n` +
+          `Reply with a number to redeem your earned data:\n`;
+
+        affordablePlans.forEach((p, idx) => {
+          menuText += `${idx + 1}️⃣ *${p.name}* — ₦${p.sellPrice.toLocaleString()}\n`;
+        });
+
+        menuText += `\n👉 Reply with *1*, *2*, etc. to redeem instantly from your earnings.\n` +
+          `👉 Reply *CANCEL* to exit.`;
+
+        return sock.sendMessage(from, { text: menuText });
+      }
+
+      // Execute Redemption
+      const chosenPlan = affordablePlans[selectedIndex];
+      awaitingRedeemMap.delete(awaitingRedeemKey);
+
+      await sock.sendMessage(from, {
+        text: `⏳ Dispensing *${chosenPlan.name}* to *+${targetPhone}* from your Data Fuel balance...`
+      });
+
+      try {
+        await wallet.recordDataFuelDebit(
+          partnerUid,
+          chosenPlan.sellPrice,
+          `Redeemed ${chosenPlan.name}`,
+          { serial: chosenPlan.serial, targetPhone }
+        );
+
+        await payflex.dispenseData(targetPhone, chosenPlan.serial);
+        const remainingFuel = +(dataFuelBalance - chosenPlan.sellPrice).toFixed(2);
+
+        return sock.sendMessage(from, {
+          text: `🎉 *Data Fuel Dispensed Successfully!*\n\n` +
+            `📱 *Recipient:* +${targetPhone} (${network.toUpperCase()})\n` +
+            `📦 *Plan:* ${chosenPlan.name}\n` +
+            `💰 *Cost:* ₦${chosenPlan.sellPrice.toLocaleString()} (Free via Data Fuel)\n` +
+            `⛽ *Remaining Data Fuel:* *₦${remainingFuel.toLocaleString()}*\n\n` +
+            `_Powered by Clarion A.I. Micro-Franchise Network._ 🚀`
+        });
+      } catch (err) {
+        logger.error(`Error dispensing redeemed data for ${partnerUid}:`, err.message);
+        return sock.sendMessage(from, {
+          text: `❌ Delivery failed at network gateway. Your Data Fuel has been preserved. Please try again in a few minutes.`
+        });
+      }
+    }
+
+    // ── Handle SUGGEST keyword (Referral partner recommends new lead) ──
+    const suggestRegex = /^\.?suggest\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})\s+(.+)$/i;
+    const suggestMatch = command.match(suggestRegex);
+
+    if (suggestMatch) {
+      let rawNum = suggestMatch[1].replace(/\D/g, '');
+      if (rawNum.startsWith('0') && rawNum.length === 11) {
+        rawNum = '234' + rawNum.substring(1);
+      }
+      const candidatePhone = rawNum;
+      const candidateJid = `${candidatePhone}@s.whatsapp.net`;
+      const candidateName = suggestMatch[2].trim();
+      const parentJid = user.parentId || user.uid;
+
+      if (db.users) {
+        await db.users.doc(candidateJid).set({
+          uid: candidateJid,
+          phoneNumber: candidatePhone,
+          phoneJid: candidateJid,
+          name: candidateName,
+          role: 'REFERRAL',
+          parentId: parentJid,
+          recruitedBy: actionableJid,
+          state: 'AWAITING_QR_SCAN',
+          profitSharePercent: 35,
+          dataFuelBalance: 0,
+          metrics: {
+            totalOrders: 0,
+            totalRevenueNaira: 0,
+            totalProfitNaira: 0,
+            recruitedPartnersCount: 0
+          },
+          suggestedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      await sock.sendMessage(from, {
+        text: `⏳ *Generating Activation QR Code for ${candidateName} (+${candidatePhone})...*\n\n` +
+          `Please stand by — the QR code image will be sent right here for you to display to ${candidateName}!`
+      });
+
+      try {
+        await sessionManager.startQRPairingForUser(
+          {
+            uid: candidateJid,
+            phoneNumber: candidatePhone,
+            phoneJid: candidateJid,
+            name: candidateName,
+            ownerJid: from,
+            motherJid: from,
+            parentId: parentJid,
+            recruitedBy: actionableJid
+          },
+          async (rawQR) => {
+            try {
+              const qrBuffer = await QRCode.toBuffer(rawQR, { width: 600, margin: 2 });
+              await sock.sendMessage(from, {
+                image: qrBuffer,
+                caption: `📸 *Scan this Activation QR Code with ${candidateName}'s Bot Phone (+${candidatePhone})!*\n\n` +
+                  `1. Open WhatsApp on *+${candidatePhone}*\n` +
+                  `2. Go to *Settings > Linked Devices > Link a Device*\n` +
+                  `3. Point camera at this QR image on this screen!\n\n` +
+                  `⏱️ *Expires in 60 seconds.*\n` +
+                  `🎖️ *You will earn +25 CDS Promotion Points once ${candidateName} is online!*`
+              });
+            } catch (err) {
+              logger.error('Error generating referral QR buffer:', err);
+            }
+          }
+        );
+      } catch (pairErr) {
+        logger.error('Failed to start suggested pairing:', pairErr.message);
+        return sock.sendMessage(from, {
+          text: `❌ Could not generate QR code for ${candidateName}. Please verify the phone number and try again.`
+        });
+      }
+      return;
+    }
+
+    // ── Handle RANK / MYSTATS keyword (View Leaderboard & CDS Standing) ──
+    if (cleanCommand === 'rank' || cleanCommand === 'mystats') {
+      let myRank = 1;
+      let totalPartners = 1;
+      let myScore = 0;
+      const targetParent = user.parentId || user.uid;
+      const userMetrics = user.metrics || { totalOrders: 0, totalRevenueNaira: 0, recruitedPartnersCount: 0 };
+
+      if (db.users) {
+        try {
+          const refsSnap = await db.users.where('parentId', '==', targetParent).get();
+          const scores = [];
+          refsSnap.forEach(doc => {
+            const d = doc.data();
+            const m = d.metrics || {};
+            const score = ((m.totalOrders || 0) * 10) + (Math.floor((m.totalRevenueNaira || 0) / 1000) * 5) + ((m.recruitedPartnersCount || 0) * 25);
+            scores.push({ uid: doc.id, score });
+            if (doc.id === user.uid) myScore = score;
+          });
+          scores.sort((a, b) => b.score - a.score);
+          totalPartners = Math.max(1, scores.length);
+          const idx = scores.findIndex(s => s.uid === user.uid);
+          if (idx !== -1) myRank = idx + 1;
+        } catch (e) {}
+      }
+
+      const currentFuel = await wallet.getDataFuelBalance(user.uid);
+      const rankEmoji = myRank === 1 ? '🥇' : myRank === 2 ? '🥈' : myRank === 3 ? '🥉' : '🎖️';
+      const stateCodeStatus = user.isStateCodeVerified
+        ? `✅ Verified (${user.stateCode})`
+        : `⚠️ Missing (Reply *STATECODE [YourCode]* to qualify for Thursday CDS Promotion!)`;
+
+      return sock.sendMessage(from, {
+        text: `📊 *Your Partner Performance & Rank*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `${rankEmoji} *Store Rank:* *#${myRank} of ${totalPartners} Partners*\n` +
+          `⭐ *Promotion Score:* *${myScore.toLocaleString()} pts*\n\n` +
+          `📦 *Completed Orders:* ${userMetrics.totalOrders || 0}\n` +
+          `💰 *Total Sales Volume:* ₦${(userMetrics.totalRevenueNaira || 0).toLocaleString()}\n` +
+          `👥 *Recruited Partners:* ${userMetrics.recruitedPartnersCount || 0}\n` +
+          `⛽ *Available Data Fuel:* ₦${currentFuel.toLocaleString()}\n\n` +
+          `🎓 *NYSC State Code:* ${stateCodeStatus}\n\n` +
+          (myRank === 1 && user.isStateCodeVerified
+            ? `👑 *You are currently Ranked #1! You are eligible for graduation to Full Parent Store on Thursday CDS!*`
+            : `🚀 *Keep selling and recruiting partners with SUGGEST to climb to #1 before Thursday CDS!*`)
+      });
+    }
+
+    // ── Handle STATECODE keyword (Corps Member Verification) ──
+    const stateCodeRegex = /^\.?statecode\s+([A-Za-z]{2}\/\d{2}[A-Za-z]\/\d{4,5})$/i;
+    const stateCodeMatch = command.match(stateCodeRegex);
+
+    if (stateCodeMatch) {
+      const verifiedCode = stateCodeMatch[1].toUpperCase().trim();
+      if (db.users) {
+        await db.users.doc(user.uid).set({
+          stateCode: verifiedCode,
+          isStateCodeVerified: true
+        }, { merge: true });
+      }
+      user.stateCode = verifiedCode;
+      user.isStateCodeVerified = true;
+
+      return sock.sendMessage(from, {
+        text: `✅ *NYSC State Code Verified!* (${verifiedCode})\n\n` +
+          `Your profile is now verified as an active Corps Member. You are officially eligible for graduation to a Full Parent Store on Thursday CDS when you reach Rank #1! 🇳🇬`
+      });
+    }
+
+    // ── Handle MYREFS / PARTNERS keyword (For Parent Stores) ──
+    if (cleanCommand === 'myrefs' || cleanCommand === 'partners') {
+      if (db.users) {
+        const refsSnap = await db.users.where('parentId', '==', user.uid).get();
+        if (refsSnap.empty) {
+          return sock.sendMessage(from, {
+            text: `👥 *Your Referral Network*\n\nYou currently have no active referral bots.\n\nReply *SUGGEST [Phone] [Name]* to onboard your first partner!`
+          });
+        }
+
+        let msgText = `👥 *Your Referral Network (${refsSnap.size} Partners)*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        let pIdx = 1;
+        refsSnap.forEach(doc => {
+          const d = doc.data();
+          const phone = d.phoneNumber || doc.id.split('@')[0];
+          const pName = d.name || d.franchiseName || 'Partner';
+          const m = d.metrics || {};
+          const split = d.profitSharePercent || 35;
+          const state = d.isStateCodeVerified ? `✅ ${d.stateCode}` : '⚠️ No Code';
+
+          msgText += `${pIdx}. *${pName}* (+${phone})\n` +
+            `   • Orders: ${m.totalOrders || 0} (₦${(m.totalRevenueNaira || 0).toLocaleString()})\n` +
+            `   • Recruits: ${m.recruitedPartnersCount || 0} | Split: ${split}% Data Fuel\n` +
+            `   • State Code: ${state}\n\n`;
+          pIdx++;
+        });
+
+        msgText += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💡 *To change a partner's profit share:*\n` +
+          `Reply *SETSPLIT [Phone] [Percent]* (e.g. *SETSPLIT 08012345678 40*)`;
+
+        return sock.sendMessage(from, { text: msgText });
+      }
+    }
+
+    // ── Handle SETSPLIT keyword (Parent configures child share %) ──
+    const setSplitRegex = /^\.?setsplit\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})\s+(\d{1,2}|100)$/i;
+    const setSplitMatch = command.match(setSplitRegex);
+
+    if (setSplitMatch) {
+      let cleanPhone = setSplitMatch[1].replace(/\D/g, '');
+      if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+        cleanPhone = '234' + cleanPhone.substring(1);
+      }
+      const targetChildJid = `${cleanPhone}@s.whatsapp.net`;
+      const newSplit = parseInt(setSplitMatch[2], 10);
+
+      if (db.users) {
+        await db.users.doc(targetChildJid).set({
+          profitSharePercent: newSplit
+        }, { merge: true });
+      }
+
+      return sock.sendMessage(from, {
+        text: `✅ *Profit Split Updated!*\n\n` +
+          `Partner +${cleanPhone} will now receive *${newSplit}%* of distributable profit (in Data Fuel).\n` +
+          `Your store receives *${100 - newSplit}%* (in Withdrawable Cash).`
+      });
+    }
+
+    // ── Handle APPROVE_UPGRADE keyword (Thursday CDS Graduation) ──
+    const upgradeRegex = /^\.?approve_upgrade\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})$/i;
+    const upgradeMatch = command.match(upgradeRegex);
+
+    if (upgradeMatch) {
+      let cleanPhone = upgradeMatch[1].replace(/\D/g, '');
+      if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+        cleanPhone = '234' + cleanPhone.substring(1);
+      }
+      const childJid = `${cleanPhone}@s.whatsapp.net`;
+
+      if (!db.users) {
+        return sock.sendMessage(from, { text: '❌ Database unavailable. Please try again later.' });
+      }
+
+      const childDoc = await db.users.doc(childJid).get();
+      if (!childDoc.exists) {
+        return sock.sendMessage(from, { text: `❌ Partner +${cleanPhone} not found.` });
+      }
+
+      const childData = childDoc.data();
+      if (childData.parentId !== user.uid && !config.isSuperParent(user.uid)) {
+        return sock.sendMessage(from, { text: `❌ +${cleanPhone} is not registered under your store.` });
+      }
+
+      if (!childData.isStateCodeVerified) {
+        return sock.sendMessage(from, {
+          text: `⚠️ Cannot promote +${cleanPhone}: Their NYSC State Code has not been verified yet.`
+        });
+      }
+
+      await sock.sendMessage(from, {
+        text: `⏳ *Graduating +${cleanPhone} to Full Store Ownership...*\n\nProvisioning Paystack Dedicated Virtual Account and setting up their sovereign node...`
+      });
+
+      let virtualAccount = null;
+      try {
+        const dva = await paystack.createDedicatedAccount({
+          email: `${cleanPhone}@clarionhub.ng`,
+          first_name: childData.name || 'Clarion',
+          last_name: 'Store',
+          phone: cleanPhone
+        });
+
+        if (dva && dva.account_number) {
+          virtualAccount = {
+            bankName: dva.bank?.name || 'Wema Bank',
+            accountNumber: dva.account_number,
+            accountName: dva.account_name
+          };
+        }
+      } catch (dvaErr) {
+        logger.warn('Paystack DVA generation for promoted child:', dvaErr.message);
+      }
+
+      const graduationUpdates = {
+        role: 'PARENT',
+        isGraduatedFromReferral: true,
+        graduatedAt: new Date().toISOString(),
+        parentId: null,
+        previousParentId: user.uid
+      };
+      if (virtualAccount) graduationUpdates.virtualAccount = virtualAccount;
+
+      await db.users.doc(childJid).set(graduationUpdates, { merge: true });
+
+      // Notify the proud Parent
+      await sock.sendMessage(from, {
+        text: `🎓 *Graduation Complete!*\n\n` +
+          `Partner *${childData.name || cleanPhone}* (+${cleanPhone}) has successfully graduated to a Full Sovereign Clarion Store!\n\n` +
+          `Thank you for mentoring a fellow Corps Member through NYSC SAED & Clarion. 🇳🇬`
+      });
+
+      // Notify the promoted Partner
+      try {
+        const promotedSock = sessionManager.sessions.get(childJid) || sessionManager.motherSock;
+        if (promotedSock) {
+          let dvaMsg = virtualAccount
+            ? `🏦 *Bank:* ${virtualAccount.bankName}\n🔢 *Account:* \`${virtualAccount.accountNumber}\`\n👤 *Name:* ${virtualAccount.accountName}\n\n`
+            : '';
+
+          await promotedSock.sendMessage(childJid, {
+            text: `🎓 *CONGRATULATIONS CORPS MEMBER!* 🇳🇬\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+              `You have officially graduated to a *Full Clarion Parent Store*!\n\n` +
+              `✨ *Your Upgraded Privileges:*\n` +
+              `• 💰 *100% Cash Earnings* — No longer limited to Data Fuel!\n` +
+              `• 👥 *Franchise Referral Slots* — You can now onboard your own referral partners with *SUGGEST*!\n` +
+              `${dvaMsg}` +
+              `👉 Reply *BANK* to connect your personal bank account for instant cash withdrawals.\n` +
+              `👉 Reply *MYREFS* to check your new referral slots.\n\n` +
+              `_Welcome to sovereign digital entrepreneurship!_ 🚀`
+          });
+        }
+      } catch (notifyErr) {
+        logger.warn('Failed to deliver graduation notification to child:', notifyErr.message);
+      }
+
+      return;
     }
 
     // ── Handle FUND keyword (Conversational Clarion Wallet Top-Up) ──

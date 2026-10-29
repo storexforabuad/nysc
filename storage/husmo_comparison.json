@@ -1,0 +1,694 @@
+[
+  {
+    "key": "mtn_data_share:M500MBS",
+    "network": "mtn_data_share",
+    "code": "M500MBS",
+    "name": "500MB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 350,
+    "ourSellPrice": 500,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_data_share:M1GBS",
+    "network": "mtn_data_share",
+    "code": "M1GBS",
+    "name": "1GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 450,
+    "ourSellPrice": 800,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_data_share:M2GBS",
+    "network": "mtn_data_share",
+    "code": "M2GBS",
+    "name": "2GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 850,
+    "ourSellPrice": 1200,
+    "husmoMatches": [
+      {
+        "id": "377",
+        "network": "mtn",
+        "planType": "gifting",
+        "amount": 728,
+        "size": "1.2 GB",
+        "validity": "--- 7 days"
+      }
+    ]
+  },
+  {
+    "key": "mtn_data_share:M3GBS",
+    "network": "mtn_data_share",
+    "code": "M3GBS",
+    "name": "3GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 1200,
+    "ourSellPrice": 1400,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_data_share:M1GBS2",
+    "network": "mtn_data_share",
+    "code": "M1GBS2",
+    "name": "1GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 580,
+    "ourSellPrice": 850,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_data_share:M2GBS2",
+    "network": "mtn_data_share",
+    "code": "M2GBS2",
+    "name": "2GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 950,
+    "ourSellPrice": 1700,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_data_share:M3GBS2",
+    "network": "mtn_data_share",
+    "code": "M3GBS2",
+    "name": "3GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 1250,
+    "ourSellPrice": 2000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_data_share:M5GBS",
+    "network": "mtn_data_share",
+    "code": "M5GBS",
+    "name": "5GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 1800,
+    "ourSellPrice": 2500,
+    "husmoMatches": [
+      {
+        "id": "385",
+        "network": "mtn",
+        "planType": "gifting",
+        "amount": 6305,
+        "size": "16.5 GB",
+        "validity": "--- 30 days"
+      },
+      {
+        "id": "398",
+        "network": "mtn",
+        "planType": "gifting",
+        "amount": 5335,
+        "size": "12.5 GB",
+        "validity": "--- 30 days"
+      },
+      {
+        "id": "312",
+        "network": "mtn",
+        "planType": "awoof gifting",
+        "amount": 2910,
+        "size": "6.75 GB",
+        "validity": "---30days"
+      },
+      {
+        "id": "396",
+        "network": "mtn",
+        "planType": "gifting",
+        "amount": 2428,
+        "size": "3.5 GB",
+        "validity": "--- 30 days"
+      },
+      {
+        "id": "399",
+        "network": "mtn",
+        "planType": "awoof gifting",
+        "amount": 4850,
+        "size": "14.5 GB",
+        "validity": "--- 30days Xtra Special Tariff"
+      }
+    ]
+  },
+  {
+    "key": "mtn_gifting_data:M110MBS",
+    "network": "mtn_gifting_data",
+    "code": "M110MBS",
+    "name": "110MB",
+    "durationCategory": "⚡ *1-Day Plans:*",
+    "ourWholesale": 99,
+    "ourSellPrice": 100,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M6GBS",
+    "network": "mtn_gifting_data",
+    "code": "M6GBS",
+    "name": "6GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 2480,
+    "ourSellPrice": 2500,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M7GBS",
+    "network": "mtn_gifting_data",
+    "code": "M7GBS",
+    "name": "7GB (+2GB All Night Streaming)",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 3450,
+    "ourSellPrice": 3500,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M14m5GBS",
+    "network": "mtn_gifting_data",
+    "code": "M14m5GBS",
+    "name": "14.5GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 4950,
+    "ourSellPrice": 5000,
+    "husmoMatches": [
+      {
+        "id": "399",
+        "network": "mtn",
+        "planType": "awoof gifting",
+        "amount": 4850,
+        "size": "14.5 GB",
+        "validity": "--- 30days Xtra Special Tariff"
+      }
+    ]
+  },
+  {
+    "key": "mtn_gifting_data:M20GBS",
+    "network": "mtn_gifting_data",
+    "code": "M20GBS",
+    "name": "20GB (+4GB All Night Streaming)",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 7380,
+    "ourSellPrice": 7500,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M25GBS",
+    "network": "mtn_gifting_data",
+    "code": "M25GBS",
+    "name": "25GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 8850,
+    "ourSellPrice": 9000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M36GBS",
+    "network": "mtn_gifting_data",
+    "code": "M36GBS",
+    "name": "36GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 10850,
+    "ourSellPrice": 11000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M65GBS",
+    "network": "mtn_gifting_data",
+    "code": "M65GBS",
+    "name": "65GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 15800,
+    "ourSellPrice": 16000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M75GBS",
+    "network": "mtn_gifting_data",
+    "code": "M75GBS",
+    "name": "75GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 17800,
+    "ourSellPrice": 18000,
+    "husmoMatches": [
+      {
+        "id": "312",
+        "network": "mtn",
+        "planType": "awoof gifting",
+        "amount": 2910,
+        "size": "6.75 GB",
+        "validity": "---30days"
+      }
+    ]
+  },
+  {
+    "key": "mtn_gifting_data:M90GBS",
+    "network": "mtn_gifting_data",
+    "code": "M90GBS",
+    "name": "90GB",
+    "durationCategory": "🗓️ *2-Month Plans:*",
+    "ourWholesale": 24650,
+    "ourSellPrice": 25000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M150GBS",
+    "network": "mtn_gifting_data",
+    "code": "M150GBS",
+    "name": "150GB",
+    "durationCategory": "🗓️ *2-Month Plans:*",
+    "ourWholesale": 39500,
+    "ourSellPrice": 40000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M165GBS",
+    "network": "mtn_gifting_data",
+    "code": "M165GBS",
+    "name": "165GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 34500,
+    "ourSellPrice": 35000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M200GBS",
+    "network": "mtn_gifting_data",
+    "code": "M200GBS",
+    "name": "200GB",
+    "durationCategory": "🗓️ *2-Month Plans:*",
+    "ourWholesale": 49200,
+    "ourSellPrice": 50000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M250GBS",
+    "network": "mtn_gifting_data",
+    "code": "M250GBS",
+    "name": "250GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 54500,
+    "ourSellPrice": 55000,
+    "husmoMatches": []
+  },
+  {
+    "key": "mtn_gifting_data:M800GBS",
+    "network": "mtn_gifting_data",
+    "code": "M800GBS",
+    "name": "800GB",
+    "durationCategory": "💎 *Yearly Plans:*",
+    "ourWholesale": 123500,
+    "ourSellPrice": 125000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A4GBS",
+    "network": "airtel_data",
+    "code": "A4GBS",
+    "name": "4GB Binge Plan",
+    "durationCategory": "⚡ *2-Day Plans:*",
+    "ourWholesale": 990,
+    "ourSellPrice": 1000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A6GBS",
+    "network": "airtel_data",
+    "code": "A6GBS",
+    "name": "6GB",
+    "durationCategory": "⚡ *2-Day Plans:*",
+    "ourWholesale": 1485,
+    "ourSellPrice": 1500,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A1GB",
+    "network": "airtel_data",
+    "code": "A1GB",
+    "name": "1GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 795,
+    "ourSellPrice": 800,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A1a5GBS",
+    "network": "airtel_data",
+    "code": "A1a5GBS",
+    "name": "1.5GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 995,
+    "ourSellPrice": 1000,
+    "husmoMatches": [
+      {
+        "id": "131",
+        "network": "airtel",
+        "planType": "gifting",
+        "amount": 980,
+        "size": "1.5 GB",
+        "validity": "--- 7 days"
+      },
+      {
+        "id": "434",
+        "network": "airtel",
+        "planType": "awoof gifting",
+        "amount": 970,
+        "size": "1.5 GB",
+        "validity": "--7days (Weekly plan)"
+      }
+    ]
+  },
+  {
+    "key": "airtel_data:A6GB",
+    "network": "airtel_data",
+    "code": "A6GB",
+    "name": "6GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 1970,
+    "ourSellPrice": 2000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A8GBS",
+    "network": "airtel_data",
+    "code": "A8GBS",
+    "name": "8GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 2487,
+    "ourSellPrice": 2500,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A10GBS",
+    "network": "airtel_data",
+    "code": "A10GBS",
+    "name": "10GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 2975,
+    "ourSellPrice": 3000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A20GB",
+    "network": "airtel_data",
+    "code": "A20GB",
+    "name": "20GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 4950,
+    "ourSellPrice": 5000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A35GB",
+    "network": "airtel_data",
+    "code": "A35GB",
+    "name": "35GB Unlimited Ultra Router",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 9900,
+    "ourSellPrice": 10000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A2GB2",
+    "network": "airtel_data",
+    "code": "A2GB2",
+    "name": "2GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 1478,
+    "ourSellPrice": 1500,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A3GB",
+    "network": "airtel_data",
+    "code": "A3GB",
+    "name": "3GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 1980,
+    "ourSellPrice": 2000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A4GB",
+    "network": "airtel_data",
+    "code": "A4GB",
+    "name": "4GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 2477,
+    "ourSellPrice": 2500,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A8GB",
+    "network": "airtel_data",
+    "code": "A8GB",
+    "name": "8GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 2975,
+    "ourSellPrice": 3000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A10GB",
+    "network": "airtel_data",
+    "code": "A10GB",
+    "name": "10GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 3950,
+    "ourSellPrice": 4000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A13GB",
+    "network": "airtel_data",
+    "code": "A13GB",
+    "name": "13GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 4955,
+    "ourSellPrice": 5000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A18GB",
+    "network": "airtel_data",
+    "code": "A18GB",
+    "name": "18GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 5940,
+    "ourSellPrice": 6000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A25GB",
+    "network": "airtel_data",
+    "code": "A25GB",
+    "name": "25GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 7900,
+    "ourSellPrice": 8000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A60GB",
+    "network": "airtel_data",
+    "code": "A60GB",
+    "name": "60GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 14900,
+    "ourSellPrice": 15000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A75GB",
+    "network": "airtel_data",
+    "code": "A75GB",
+    "name": "75GB Router Plan",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 14980,
+    "ourSellPrice": 15000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A100GB",
+    "network": "airtel_data",
+    "code": "A100GB",
+    "name": "100GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 19800,
+    "ourSellPrice": 20000,
+    "husmoMatches": []
+  },
+  {
+    "key": "airtel_data:A160GB",
+    "network": "airtel_data",
+    "code": "A160GB",
+    "name": "160GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 29750,
+    "ourSellPrice": 30000,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G1GB1",
+    "network": "glo_data",
+    "code": "G1GB1",
+    "name": "1GB",
+    "durationCategory": "⚡ *3-Day Plans:*",
+    "ourWholesale": 335,
+    "ourSellPrice": 400,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G3GB1",
+    "network": "glo_data",
+    "code": "G3GB1",
+    "name": "3GB",
+    "durationCategory": "⚡ *3-Day Plans:*",
+    "ourWholesale": 850,
+    "ourSellPrice": 1200,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G5GB1",
+    "network": "glo_data",
+    "code": "G5GB1",
+    "name": "5GB",
+    "durationCategory": "⚡ *3-Day Plans:*",
+    "ourWholesale": 1380,
+    "ourSellPrice": 2000,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G1GB2",
+    "network": "glo_data",
+    "code": "G1GB2",
+    "name": "1GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 360,
+    "ourSellPrice": 400,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G3GB2",
+    "network": "glo_data",
+    "code": "G3GB2",
+    "name": "3GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 990,
+    "ourSellPrice": 1200,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G5GB2",
+    "network": "glo_data",
+    "code": "G5GB2",
+    "name": "5GB",
+    "durationCategory": "📅 *7-Day Plans:*",
+    "ourWholesale": 1580,
+    "ourSellPrice": 2000,
+    "husmoMatches": [
+      {
+        "id": "37",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 465,
+        "size": "1.5 GB",
+        "validity": "- 7days 500mbday +1gb nite"
+      },
+      {
+        "id": "426",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 4650,
+        "size": "20.5 GB",
+        "validity": "--- 7 days"
+      }
+    ]
+  },
+  {
+    "key": "glo_data:G1GB4",
+    "network": "glo_data",
+    "code": "G1GB4",
+    "name": "1GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 450,
+    "ourSellPrice": 460,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G2GB4",
+    "network": "glo_data",
+    "code": "G2GB4",
+    "name": "2GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 900,
+    "ourSellPrice": 900,
+    "husmoMatches": [
+      {
+        "id": "31",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 1395,
+        "size": "5.2 GB",
+        "validity": "30days. 2gbday + 3gbnite=5gb"
+      }
+    ]
+  },
+  {
+    "key": "glo_data:G3GB4",
+    "network": "glo_data",
+    "code": "G3GB4",
+    "name": "3GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 1350,
+    "ourSellPrice": 1500,
+    "husmoMatches": []
+  },
+  {
+    "key": "glo_data:G5GB4",
+    "network": "glo_data",
+    "code": "G5GB4",
+    "name": "5GB",
+    "durationCategory": "🗓️ *30-Day/Monthly Plans:*",
+    "ourWholesale": 2200,
+    "ourSellPrice": 2400,
+    "husmoMatches": [
+      {
+        "id": "27",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 3720,
+        "size": "12.5 GB",
+        "validity": "- 30days 12gbday + 2gbnite=12g"
+      },
+      {
+        "id": "29",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 2325,
+        "size": "7.25 GB",
+        "validity": "30days 4.5gbday + 3gb =7.5gb"
+      },
+      {
+        "id": "30",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 1860,
+        "size": "6.25 GB",
+        "validity": "30days 3.15gbday+3gbnite=6.25g"
+      },
+      {
+        "id": "73",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 5580,
+        "size": "20.5 GB",
+        "validity": "-30 days 18gbday + 2gbnite"
+      },
+      {
+        "id": "75",
+        "network": "glo",
+        "planType": "gifting",
+        "amount": 4650,
+        "size": "16.5 GB",
+        "validity": "--- 30 days"
+      }
+    ]
+  }
+]

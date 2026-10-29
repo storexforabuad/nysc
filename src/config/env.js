@@ -36,7 +36,14 @@ const config = {
     baseUrl: process.env.PAYSTACK_BASE_URL || 'https://api.paystack.co'
   },
   appUrl: process.env.APP_URL || 'http://localhost:3000',
-  firebaseCredentials: process.env.FIREBASE_CREDENTIALS_JSON
+  firebaseCredentials: process.env.FIREBASE_CREDENTIALS_JSON,
+  superParentNumber: process.env.SUPER_PARENT_NUMBER || '07032905036',
+  superParentJid: '2347032905036@s.whatsapp.net',
+  isSuperParent: (phoneOrJid) => {
+    if (!phoneOrJid) return false;
+    const clean = String(phoneOrJid).replace(/\D/g, '');
+    return clean === '07032905036' || clean === '2347032905036' || clean.endsWith('7032905036');
+  }
 };
 
 if (!config.mockMode) {
