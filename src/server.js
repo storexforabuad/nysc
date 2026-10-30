@@ -998,13 +998,13 @@ async function startServer() {
                 }, Body.amount);
 
                 const giveawayStatusText = isSame
-                  ? `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
+                  ? `🎉 *MY 24/7 DATA AI BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
+                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated AI bot right now!\n\n` +
                     `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
-                    `Watch the bot reply and vend your data in 20 seconds! ⚡`
-                  : `🎉 *MY 24/7 DATA BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated bot right now!\n\n` +
-                    `👉 *To claim: Tap this link to message my bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
+                    `Watch the AI bot reply and vend your data in 20 seconds! ⚡`
+                  : `🎉 *MY 24/7 DATA AI BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
+                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated AI bot right now!\n\n` +
+                    `👉 *To claim: Tap this link to message my AI bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
                     `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
 
                 await sessionManager.motherSock.sendMessage(userJid, {

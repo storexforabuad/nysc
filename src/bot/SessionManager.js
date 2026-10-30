@@ -243,12 +243,12 @@ class SessionManager {
                 }
 
                 launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion A.I - ${parentStoreName} ⚡\n\n` +
-                  `Enjoy instant, heavily subsidized MTN, Airtel, Glo & 9mobile data delivered automatically 24/7!\n\n` +
+                  `Enjoy instant, affordable MTN & Glo data delivered automatically 24/7 — starting at just ₦400 per GIG!\n\n` +
                   `💚 Every purchase supports community development projects. 🇳🇬\n\n` +
                   `👉 Try it out now — reply DATA to this status to view our special rates!`;
               } else {
                 launchStatusText = `🚀 Exciting news! My line is now officially powered by Clarion A.I. ⚡\n\n` +
-                  `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically in 3 seconds!\n\n` +
+                  `Get instant, affordable MTN & Glo data delivered automatically in seconds — starting at just ₦400 per GIG!\n\n` +
                   `💚 Every purchase funds Community Development projects. 🇳🇬\n\n` +
                   `👉 Try it out now — just reply DATA to this status to see all plans!`;
               }
@@ -562,8 +562,8 @@ class SessionManager {
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `Congratulations *${partnerName}*! Your WhatsApp line is now powered by Clarion A.I. ⚡\n\n` +
         `🚀 *How Your Automated Store Works:*\n` +
-        `1. *Auto-Vending:* When your contacts text you *DATA*, *DATA 500*, or *BUY*, your bot automatically answers, takes payment, and delivers data in 3 seconds!\n` +
-        `2. *Status Promotions:* Your bot automatically posts attractive data discount flyers to your WhatsApp Status.\n` +
+        `1. *Auto-Vending:* When your contacts text you *DATA*, *DATA 500*, or *BUY*, your AI bot automatically answers, takes payment, and delivers MTN & Glo data (starting at just ₦400/GB) in seconds!\n` +
+        `2. *Status Promotions:* Your AI bot automatically posts attractive data discount updates to your WhatsApp Status.\n` +
         `3. *Earn Free Data:* You receive *35% commission* on every sale, credited directly to your *Data Fuel Balance*!\n\n` +
         `🔑 *Your Key Commands (Text in this chat):*\n` +
         `• *REDEEM* — Instantly redeem your earned Data Fuel for free data to your line!\n` +
@@ -571,7 +571,7 @@ class SessionManager {
         `• *STATECODE [YourCode]* — Submit your NYSC State Code to qualify for graduation to a Full Store on Thursday CDS!\n` +
         `• *SUGGEST [Phone] [Name]* — Invite a fellow Corps Member to earn +25 CDS promotion points.\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `_You can continue using your WhatsApp normally with friends. The bot only responds when keywords are sent._ Have a profitable day! 🚀`;
+        `_You can continue using your WhatsApp normally with friends. The AI bot only responds when keywords are sent._ Have a profitable day! 🚀`;
 
       try {
         await this.motherSock.sendMessage(phoneJid, { text: referralGuide });
@@ -680,7 +680,7 @@ class SessionManager {
     } else if (remainingClaims === 1) {
       text = `⚡ *LAST FREE DATA GRANT!* 🏃‍♂️\n──────────────\n\nOnly *1 FREE GRANT LEFT* for *${sizeMb}MB Data* on *${brandName}*!\n\n👉 Message right now & reply *PROMO* to grab the final slot!`;
     } else {
-      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7.\n👉 Reply *DATA 1000* to view ₦1,000 budget plans.`;
+      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN & Glo data delivered automatically 24/7 — starting at just ₦400 per GIG.\n👉 Reply *DATA 500* or *DATA 1000* to view budget plans.`;
     }
 
     try {

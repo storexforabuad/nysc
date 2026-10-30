@@ -150,13 +150,13 @@ const sendPromoStatus = async () => {
 };
 
 const DAILY_TEXT_STATUSES = [
-  "⚡ Cheap MTN, Airtel, Glo & 9mobile data available 24/7!\n\n👉 Reply *DATA* to order instantly.",
-  "📱 Running low on data for the new week?\n\n👉 Reply *DATA 500* or *DATA 1000* for instant automated top-up!",
-  "🇳🇬 Did you know? Every data purchase here funds local community & NYSC projects!\n\n👉 Reply *DATA* to support & save.",
-  "⚡ Midweek data refill! Don't let your browsing or downloads slow down.\n\n👉 Reply *DATA* or *DATA 500* for instant gigabytes!",
-  "🔋 CDS Special: Affordable data bundles for everyone today!\n\n👉 Reply *DATA* to view all network discounts!",
-  "⚡ Need high-speed data for the weekend?\n\n👉 Reply *DATA* to view our instant delivery catalog!",
-  "🎉 Cheap data deals available all weekend long!\n\n👉 Reply *DATA* to order now."
+  "⚡ Affordable MTN & Glo data available 24/7 — starting at just ₦400 per GIG!\n\n👉 Reply *DATA* to order instantly.",
+  "📱 Running low on data for the new week? Instant MTN & Glo top-ups from ₦400/GB!\n\n👉 Reply *DATA 500* or *DATA 1000* for instant delivery!",
+  "🇳🇬 Did you know? Every MTN & Glo data purchase here funds community development projects!\n\n👉 Reply *DATA* to support & get gigabytes from ₦400.",
+  "⚡ Midweek data refill! Never run out of gigabytes — MTN & Glo starting at just ₦400/GB.\n\n👉 Reply *DATA* or *DATA 500* for instant delivery in seconds!",
+  "🔋 CDS Special: Affordable MTN & Glo data bundles starting at just ₦400 per GIG!\n\n👉 Reply *DATA* to view our special rates!",
+  "⚡ Need high-speed data for the weekend? Instant MTN & Glo from just ₦400 per GIG!\n\n👉 Reply *DATA* to browse and stream without breaking the bank.",
+  "🎉 Weekend data deals! Fast MTN & Glo data delivered automatically in seconds — from ₦400/GB.\n\n👉 Reply *DATA* to grab yours now."
 ];
 
 const sendDailyTextStatus = async () => {

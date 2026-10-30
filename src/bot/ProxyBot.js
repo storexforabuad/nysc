@@ -228,10 +228,10 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         await sock.sendMessage(from, {
           text: `👋 *Quick note!* My line is powered by *${storeName}*. ⚡\n\n` +
-            `Get instant, affordable MTN & Glo data delivered automatically.\n\n` +
+            `Get instant, affordable MTN & Glo data delivered automatically 24/7 — starting at just *₦400 per GIG*!\n\n` +
             `👉 Reply *DATA* or *DATA 500* to view plans for your budget!\n\n` +
-            `💚 _A portion of every purchase funds NYSC Community Development projects._ 🇳🇬\n\n` +
-            `_You can keep chatting with me normally — the bot only responds when you use keywords._\n` +
+            `💚 _A portion of every purchase funds Community Development projects._ 🇳🇬\n\n` +
+            `_You can keep chatting with me normally — the AI bot only responds when you use keywords._\n` +
             `_Have a great day! 😊_`
         });
 
@@ -1233,7 +1233,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           text: `⚡ Clarion AI checked all available servers and is currently optimizing the most affordable data packages for *Airtel*. 🔧\n\n` +
             `Our team is actively working to bring you the best deals on this network.\n\n` +
             `In the meantime, here's what's available right now:\n` +
-            `👉 Reply *DATA* to view affordable *MTN & Glo* packages\n` +
+            `👉 Reply *DATA* to view affordable *MTN & Glo* packages starting at just *₦400 per GIG*\n` +
             `👉 Reply *CANCEL* to exit`
         });
       }
@@ -1243,7 +1243,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           text: `⚡ Clarion AI checked all available servers and is currently optimizing the most affordable data packages for *T2 Mobile* (formerly 9mobile). 🔧\n\n` +
             `Our team is actively working to bring you the best deals on this network.\n\n` +
             `In the meantime, here's what's available right now:\n` +
-            `👉 Reply *DATA* to view affordable *MTN & Glo* packages\n` +
+            `👉 Reply *DATA* to view affordable *MTN & Glo* packages starting at just *₦400 per GIG*\n` +
             `👉 Reply *CANCEL* to exit`
         });
       }

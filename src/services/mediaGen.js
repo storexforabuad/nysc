@@ -719,7 +719,7 @@ class MediaGenerator {
 
         ctx.fillStyle = '#81C784';
         ctx.font = 'bold 22px Arial';
-        ctx.fillText('Or DM me "DATA" — my bot will vend it to you in 20 seconds! ⚡', width / 2, 920);
+        ctx.fillText('Or DM me "DATA" — my AI bot will vend it to you in 20 seconds! ⚡', width / 2, 920);
       } else {
         ctx.fillStyle = '#FFFFFF';
         ctx.font = 'bold 44px Arial';
@@ -727,7 +727,7 @@ class MediaGenerator {
 
         ctx.fillStyle = '#81C784';
         ctx.font = 'bold 22px Arial';
-        ctx.fillText('Send "DATA" to my automated bot to receive your free top-up! ⚡', width / 2, 920);
+        ctx.fillText('Send "DATA" to my automated AI bot to receive your free top-up! ⚡', width / 2, 920);
       }
 
       // Bottom Footer
