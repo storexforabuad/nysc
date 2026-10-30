@@ -561,8 +561,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
       return;
     }
 
-    // ── Handle RANK / MYSTATS keyword (View Leaderboard & CDS Standing) ──
-    if (cleanCommand === 'rank' || cleanCommand === 'mystats') {
+    // ── Handle STATS / RANK keyword (View Leaderboard & Store Standing) ──
+    if (cleanCommand === 'stats' || cleanCommand === 'rank' || cleanCommand === 'mystats') {
       let myRank = 1;
       let totalPartners = 1;
       let myScore = 0;
@@ -589,9 +589,13 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const currentFuel = await wallet.getDataFuelBalance(user.uid);
       const rankEmoji = myRank === 1 ? '🥇' : myRank === 2 ? '🥈' : myRank === 3 ? '🥉' : '🎖️';
+      const now = new Date();
+      const isThursday = now.getDay() === 4;
+      const thursdayRef = isThursday ? 'next Thursday' : 'on Thursday';
+
       const stateCodeStatus = user.isStateCodeVerified
         ? `✅ Verified (${user.stateCode})`
-        : `⚠️ Missing (Reply *STATECODE [YourCode]* to qualify for Thursday CDS Promotion!)`;
+        : `⚠️ Missing (Reply *STATECODE [YourCode]* to qualify for promotion ${thursdayRef}!)`;
 
       return sock.sendMessage(from, {
         text: `📊 *Your Partner Performance & Rank*\n` +
@@ -604,8 +608,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
           `⛽ *Available Data Fuel:* ₦${currentFuel.toLocaleString()}\n\n` +
           `🎓 *NYSC State Code:* ${stateCodeStatus}\n\n` +
           (myRank === 1 && user.isStateCodeVerified
-            ? `👑 *You are currently Ranked #1! You are eligible for graduation to Full Parent Store on Thursday CDS!*`
-            : `🚀 *Keep selling and recruiting partners with SUGGEST to climb to #1 before Thursday CDS!*`)
+            ? `👑 *You are currently Ranked #1! You are eligible for promotion to a Full Parent Store ${thursdayRef}!*`
+            : `🚀 *Keep selling and recruiting partners with SUGGEST to climb to #1 before ${thursdayRef}!*`)
       });
     }
 
@@ -624,23 +628,27 @@ export const handleProxyMessage = async (sock, msg, user) => {
       user.stateCode = verifiedCode;
       user.isStateCodeVerified = true;
 
+      const now = new Date();
+      const isThursday = now.getDay() === 4;
+      const thursdayRef = isThursday ? 'next Thursday' : 'on Thursday';
+
       return sock.sendMessage(from, {
         text: `✅ *NYSC State Code Verified!* (${verifiedCode})\n\n` +
-          `Your profile is now verified as an active Corps Member. You are officially eligible for graduation to a Full Parent Store on Thursday CDS when you reach Rank #1! 🇳🇬`
+          `Your profile is now verified as an active Corps Member. You are officially eligible for promotion to a Full Parent Store ${thursdayRef} when you reach Rank #1! 🇳🇬`
       });
     }
 
-    // ── Handle MYREFS / PARTNERS keyword (For Parent Stores) ──
-    if (cleanCommand === 'myrefs' || cleanCommand === 'partners') {
+    // ── Handle SQUAD / MYREFS / PARTNERS keyword (For Parent Stores) ──
+    if (cleanCommand === 'squad' || cleanCommand === 'myrefs' || cleanCommand === 'partners') {
       if (db.users) {
         const refsSnap = await db.users.where('parentId', '==', user.uid).get();
         if (refsSnap.empty) {
           return sock.sendMessage(from, {
-            text: `👥 *Your Referral Network*\n\nYou currently have no active referral bots.\n\nReply *SUGGEST [Phone] [Name]* to onboard your first partner!`
+            text: `👥 *Your Squad*\n\nYou currently have no active partners.\n\nReply *SUGGEST [Phone] [Name]* to onboard your first partner!`
           });
         }
 
-        let msgText = `👥 *Your Referral Network (${refsSnap.size} Partners)*\n` +
+        let msgText = `👥 *Your Squad (${refsSnap.size} Active Partners)*\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
         let pIdx = 1;
@@ -782,7 +790,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               `• 👥 *Franchise Referral Slots* — You can now onboard your own referral partners with *SUGGEST*!\n` +
               `${dvaMsg}` +
               `👉 Reply *BANK* to connect your personal bank account for instant cash withdrawals.\n` +
-              `👉 Reply *MYREFS* to check your new referral slots.\n\n` +
+              `👉 Reply *SQUAD* to see your new partner slots and get started!\n\n` +
               `_Welcome to sovereign digital entrepreneurship!_ 🚀`
           });
         }
@@ -1195,6 +1203,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       if (isGloAlias) forceNetwork = 'glo';
 
       const detectedNet = forceNetwork || detectNetwork(targetPhone || actionableJid);
+      const hasExplicitNetwork = !!forceNetwork || !!targetPhone;
 
       // ── Step 1: AI Scanning message — fires for ALL networks, always first ──
       await sock.sendMessage(from, {
@@ -1228,7 +1237,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const isAirtelNumber = targetPhone && (targetPhone.startsWith('0802') || targetPhone.startsWith('0808') || targetPhone.startsWith('0812') || targetPhone.startsWith('0701') || targetPhone.startsWith('0708'));
       const is9mobileNumber = targetPhone && (targetPhone.startsWith('0809') || targetPhone.startsWith('0817') || targetPhone.startsWith('0818') || targetPhone.startsWith('0909') || targetPhone.startsWith('0908'));
 
-      if (detectedNet === 'airtel' || isAirtelNumber) {
+      if (hasExplicitNetwork && (detectedNet === 'airtel' || isAirtelNumber)) {
         return sock.sendMessage(from, {
           text: `⚡ Clarion AI checked all available servers and is currently optimizing the most affordable data packages for *Airtel*. 🔧\n\n` +
             `Our team is actively working to bring you the best deals on this network.\n\n` +
@@ -1238,7 +1247,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         });
       }
 
-      if (detectedNet === '9mobile' || detectedNet === 't2mobile' || is9mobileNumber) {
+      if (hasExplicitNetwork && (detectedNet === '9mobile' || detectedNet === 't2mobile' || is9mobileNumber)) {
         return sock.sendMessage(from, {
           text: `⚡ Clarion AI checked all available servers and is currently optimizing the most affordable data packages for *T2 Mobile* (formerly 9mobile). 🔧\n\n` +
             `Our team is actively working to bring you the best deals on this network.\n\n` +
@@ -1251,7 +1260,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const plans = await payflex.getAvailablePlans();
 
       let filteredPlans = plans;
-      if (detectedNet) {
+      if (hasExplicitNetwork && detectedNet) {
         filteredPlans = plans.filter(p => {
           if (detectedNet === 'mtn') return p.network.includes('mtn');
           return p.network.includes(detectedNet);
@@ -1280,9 +1289,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
       let menuText = `⚡ *CLARION TELECOM CATALOG*\n_Affordable data · Instant delivery 24/7_\n──────────────\n\n`;
 
-      if (detectedNet && targetPhone) {
+      if (hasExplicitNetwork && detectedNet && targetPhone) {
         menuText += `📶 *${networkStr}* detected for ${targetPhone}\n\n`;
-      } else if (detectedNet) {
+      } else if (hasExplicitNetwork && detectedNet) {
         menuText += `📶 *${networkStr}* detected\n\n`;
       }
 
@@ -1292,22 +1301,27 @@ export const handleProxyMessage = async (sock, msg, user) => {
         } else {
           menuText += `💰 *Best verified plans near ₦${targetPrice.toLocaleString()} budget:*\n`;
         }
-      } else {
+      } else if (hasExplicitNetwork) {
         menuText += `📶 *${networkStr} Data Plans:*\n`;
       }
 
       if (filteredPlans.length === 0) {
         menuText += `\n❌ No plans found matching your criteria. Reply *DATA* to view all packages.`;
-      } else {
-        // Render dynamically grouped duration categories natively for all networks
+      } else if (targetPrice) {
+        // Budget view: show nearest 4 plans across networks with network prefix
+        filteredPlans.forEach(plan => {
+          const networkLabel = plan.network.includes('mtn') ? 'MTN' : 'Glo';
+          menuText += `· *${networkLabel} ${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
+          menuText += `  👉 Reply *BUY ${plan.serial}*\n`;
+        });
+      } else if (hasExplicitNetwork) {
+        // Single network requested (e.g. GLO or MTN keyword)
         const durationGroups = {};
         for (const plan of filteredPlans) {
           const cat = plan.durationCategory || '🗓️ Other Plans';
           if (!durationGroups[cat]) durationGroups[cat] = [];
           durationGroups[cat].push(plan);
         }
-
-        // Output each grouped category in sorted order
         for (const cat of Object.keys(durationGroups)) {
           menuText += `\n${cat}\n`;
           durationGroups[cat].forEach(plan => {
@@ -1315,10 +1329,36 @@ export const handleProxyMessage = async (sock, msg, user) => {
             menuText += `  👉 Reply *BUY ${plan.serial}*\n`;
           });
         }
+      } else {
+        // Bare DATA: show both MTN and Glo sections cleanly separated
+        const mtnPlans = filteredPlans.filter(p => p.network.includes('mtn'));
+        const gloPlans = filteredPlans.filter(p => p.network.includes('glo'));
+
+        const renderSection = (title, secPlans) => {
+          let secText = `📶 *${title}*\n`;
+          const groups = {};
+          for (const plan of secPlans) {
+            const cat = plan.durationCategory || '🗓️ Other Plans';
+            if (!groups[cat]) groups[cat] = [];
+            groups[cat].push(plan);
+          }
+          for (const cat of Object.keys(groups)) {
+            secText += `\n${cat}\n`;
+            groups[cat].forEach(plan => {
+              secText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
+              secText += `  👉 Reply *BUY ${plan.serial}*\n`;
+            });
+          }
+          return secText;
+        };
+
+        menuText += renderSection('MTN Data Plans:', mtnPlans);
+        menuText += `\n──────────────\n`;
+        menuText += renderSection('GLO Data Plans:', gloPlans);
       }
 
       if (hasPurchased) {
-        menuText += '\n──────────────\n💡 *Save on fees: Reply *FUND* to top up your Clarion Wallet & buy fee-free anytime!*\n· Reply *CANCEL* to exit';
+        menuText += '\n──────────────\n💡 *Save time: Reply *FUND* to top up your Clarion Wallet & buy in 1-click anytime!*\n· Reply *CANCEL* to exit';
       } else {
         menuText += '\n──────────────\n_Transfer exact amount upon prompt. Data dispenses instantly._\n· Reply *CANCEL* to exit';
       }
@@ -1416,8 +1456,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
           let receiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n📦 *Plan:* ${plan.name}\n💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\n`;
           if (!hasPurchasedBefore) {
             receiptMsg += `🎉 *Congratulations on your first order!*\n` +
-              `💡 *Smart Tip:* You just completed this purchase with *ZERO security fees* using your Clarion Wallet!\n` +
-              `👉 Reply *FUND* anytime to keep your wallet loaded and buy fee-free 24/7.`;
+              `💡 *Smart Tip:* You just completed this purchase instantly with 1-click using your Clarion Wallet!\n` +
+              `👉 Reply *FUND* anytime to keep your wallet loaded and buy instantly 24/7.`;
           } else {
             receiptMsg += `Thank you for choosing Clarion AI! 🎉\n· Reply *DATA* for your next order`;
           }
@@ -1436,9 +1476,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
       }
 
-      // 3. Insufficient wallet balance? Proceed with Bank Transfer instructions (Strategy 1: Transparent Line Item)
+      // 3. Insufficient wallet balance? Proceed with Bank Transfer instructions
       const securityFee = calculatePaystackFee(plan.sellPrice);
-      const totalToTransfer = plan.sellPrice + securityFee;
+      const totalToTransfer = plan.sellPrice; // Customer pays exact face price; fee absorbed
 
       if (db.ledger) {
         await db.ledger.doc(orderRef).set({
@@ -1457,40 +1497,19 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
       const accountName = bankInfo.accountName || user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+      const networkLabel = plan.network.includes('mtn') ? 'MTN' : 'Glo';
+      const planDisplayName = plan.name.toLowerCase().includes('mtn') || plan.name.toLowerCase().includes('glo')
+        ? plan.name
+        : `${networkLabel} ${plan.name}`;
 
-      let onlinePaymentText = '';
-      try {
-        const checkout = await paystack.initializeTransaction({
-          email: `${actionableJid.split('@')[0]}@clarionhub.ng`,
-          amountNaira: totalToTransfer,
-          reference: orderRef,
-          metadata: {
-            userId: user.uid,
-            orderRef,
-            type: 'DATA_PURCHASE',
-            dataCost: plan.sellPrice,
-            securityFee
-          }
-        });
-        if (checkout.success && checkout.authorizationUrl) {
-          onlinePaymentText = `\n💳 *Or Pay with Card / USSD:*\n${checkout.authorizationUrl}\n`;
-        }
-      } catch (err) {
-        // Fallback seamlessly to native bank transfer
-      }
-
-      const paymentInstruction = `💳 *ORDER CONFIRMATION: ${plan.name}*\n` +
+      const paymentInstruction = `💳 *ORDER CONFIRMATION: ${planDisplayName}*\n` +
         `──────────────\n` +
-        `📦 Data Cost: ₦${plan.sellPrice.toLocaleString()}\n` +
-        `🛡️ Paystack Security Fee: ₦${securityFee.toLocaleString()}\n` +
-        `💰 *Total to Transfer:* *₦${totalToTransfer.toLocaleString()}*\n\n` +
+        `💰 *Amount to Transfer:* *₦${totalToTransfer.toLocaleString()}*\n\n` +
         `🏦 *Bank:* ${bankInfo.bankName}\n` +
-        `🔢 *Account:* \`${bankInfo.accountNumber}\`\n` +
-        `👤 *Name:* ${accountName}\n` +
-        `${onlinePaymentText}` +
+        `🔢 *Account Number:* \`${bankInfo.accountNumber}\`\n` +
+        `👤 *Account Name:* ${accountName}\n` +
         `──────────────\n` +
-        `⚡ _Data vends automatically once transfer or payment of *₦${totalToTransfer.toLocaleString()}* is detected._\n` +
-        `🛡️ _Your payment is 100% secured by Paystack._\n` +
+        `⚡ _Transfer exactly *₦${totalToTransfer.toLocaleString()}*. Your data dispenses automatically in seconds._\n` +
         `· Reply *CANCEL* to abort order`;
       return sock.sendMessage(from, { text: paymentInstruction });
     }

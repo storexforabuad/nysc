@@ -222,7 +222,7 @@ class SessionManager {
                 try {
                   const freshSnap = await db.users.doc(user.uid).get();
                   if (freshSnap.exists) latestUser = { ...user, ...freshSnap.data() };
-                } catch (e) {}
+                } catch (e) { }
               }
 
               if (latestUser.hasPostedLaunchStatus) return;
@@ -239,7 +239,7 @@ class SessionManager {
                       const pData = parentDoc.data();
                       parentStoreName = pData.brandName || pData.franchiseName || pData.verifiedName || 'Store';
                     }
-                  } catch (e) {}
+                  } catch (e) { }
                 }
 
                 launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion A.I - ${parentStoreName} ⚡\n\n` +
@@ -256,7 +256,7 @@ class SessionManager {
               worker.postMessage({ type: 'text_status', text: launchStatusText });
               user.hasPostedLaunchStatus = true;
               if (db.users) {
-                await db.users.doc(user.uid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => {});
+                await db.users.doc(user.uid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
               }
               logger.info(`[LAUNCH-STATUS] Successfully posted Day 0 launch status for ${user.uid}`);
             } catch (statusErr) {
@@ -557,6 +557,9 @@ class SessionManager {
     if (fullUser.role === 'REFERRAL' || fullUser.parentId) {
       const cleanPhone = phoneJid.split('@')[0];
       const partnerName = fullUser.name || info.partnerName || 'Partner';
+      const now = new Date();
+      const isThursday = now.getDay() === 4;
+      const thursdayRef = isThursday ? 'next Thursday' : 'on Thursday';
 
       const referralGuide = `🎉 *WELCOME TO THE CLARION PARTNER NETWORK!* 🇳🇬\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
@@ -564,12 +567,12 @@ class SessionManager {
         `🚀 *How Your Automated Store Works:*\n` +
         `1. *Auto-Vending:* When your contacts text you *DATA*, *DATA 500*, or *BUY*, your AI bot automatically answers, takes payment, and delivers MTN & Glo data (starting at just ₦400/GB) in seconds!\n` +
         `2. *Status Promotions:* Your AI bot automatically posts attractive data discount updates to your WhatsApp Status.\n` +
-        `3. *Earn Free Data:* You receive *35% commission* on every sale, credited directly to your *Data Fuel Balance*!\n\n` +
+        `3. *Earn Free Data:* You receive a commission on every sale, credited directly to your *Data Fuel Balance*!\n\n` +
         `🔑 *Your Key Commands (Text in this chat):*\n` +
         `• *REDEEM* — Instantly redeem your earned Data Fuel for free data to your line!\n` +
-        `• *RANK* or *STATS* — Check your total sales, Data Fuel balance, and leaderboard standing.\n` +
-        `• *STATECODE [YourCode]* — Submit your NYSC State Code to qualify for graduation to a Full Store on Thursday CDS!\n` +
-        `• *SUGGEST [Phone] [Name]* — Invite a fellow Corps Member to earn +25 CDS promotion points.\n\n` +
+        `• *STATS* — Check your total sales, Data Fuel balance, and leaderboard standing.\n` +
+        `• *STATECODE [YourCode]* — Submit your NYSC State Code to qualify for promotion to a Full Store ${thursdayRef}! _(e.g. STATECODE JG/26A/2535)_\n` +
+        `• *SUGGEST [Phone] [Name]* — Invite a fellow Corps Member to earn +25 promotion points.\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `_You can continue using your WhatsApp normally with friends. The AI bot only responds when keywords are sent._ Have a profitable day! 🚀`;
 
@@ -587,7 +590,7 @@ class SessionManager {
           `Partner *${partnerName}* (+${cleanPhone}) has successfully scanned and is now *ONLINE* under your Store! ⚡\n\n` +
           `• *Your Share:* 65% Cash (credited to your withdrawable wallet on every sale)\n` +
           `• *Partner Share:* 35% Data Fuel (free data redemption)\n` +
-          `• *Management:* Reply *MYREFS* anytime to view all partners' live sales, or reply *SETSPLIT ${cleanPhone} [Percent]* to customize their share.`;
+          `• *Management:* Reply *SQUAD* anytime to view all your active partners and live sales, or reply *SETSPLIT ${cleanPhone} [Percent]* to customize their share.`;
 
         try {
           await this.motherSock.sendMessage(parentJid, { text: parentAlert });
@@ -771,10 +774,10 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     Object.assign(fullUser, extra);
 
     if (db.users) {
-      if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => {});
-      if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => {});
+      if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => { });
+      if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => { });
       if (user?.uid && user.uid !== fullUser.uid && user.uid !== from) {
-        await db.users.doc(user.uid).set(payload, { merge: true }).catch(() => {});
+        await db.users.doc(user.uid).set(payload, { merge: true }).catch(() => { });
       }
     }
     if (mockUserStore && typeof mockUserStore.has === 'function') {
@@ -929,8 +932,8 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         createdAt: new Date().toISOString()
       };
       if (db.users) {
-        if (fullUser.uid) await db.users.doc(fullUser.uid).set({ activePromo, promoActive: true }, { merge: true }).catch(() => {});
-        if (from && from !== fullUser.uid) await db.users.doc(from).set({ activePromo, promoActive: true }, { merge: true }).catch(() => {});
+        if (fullUser.uid) await db.users.doc(fullUser.uid).set({ activePromo, promoActive: true }, { merge: true }).catch(() => { });
+        if (from && from !== fullUser.uid) await db.users.doc(from).set({ activePromo, promoActive: true }, { merge: true }).catch(() => { });
       }
       fullUser.activePromo = activePromo;
       fullUser.promoActive = true;
@@ -941,8 +944,8 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       await new Promise(r => setTimeout(r, 1000));
     } else {
       if (db.users) {
-        if (fullUser.uid) await db.users.doc(fullUser.uid).set({ promoActive: false }, { merge: true }).catch(() => {});
-        if (from && from !== fullUser.uid) await db.users.doc(from).set({ promoActive: false }, { merge: true }).catch(() => {});
+        if (fullUser.uid) await db.users.doc(fullUser.uid).set({ promoActive: false }, { merge: true }).catch(() => { });
+        if (from && from !== fullUser.uid) await db.users.doc(from).set({ promoActive: false }, { merge: true }).catch(() => { });
       }
       fullUser.promoActive = false;
     }
@@ -950,16 +953,16 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     // Step 4: Show context-aware status preview
     const statusPreview = promoActivated
       ? `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\n──────────────\n\n` +
-        `My 24/7 automated data storefront (*${info.storeName}*) is officially live!\n\n` +
-        `🎁 I'm gifting *500MB FREE DATA* to the first *3 people* who test my store right now!\n\n` +
-        `👉 *How to claim:*\n` +
-        `Message this number & reply *PROMO* to claim your free data instantly!\n\n` +
-        `──────────────\n` +
-        `_⚡ 3 of 3 free grants remaining_`
+      `My 24/7 automated data storefront (*${info.storeName}*) is officially live!\n\n` +
+      `🎁 I'm gifting *500MB FREE DATA* to the first *3 people* who test my store right now!\n\n` +
+      `👉 *How to claim:*\n` +
+      `Message this number & reply *PROMO* to claim your free data instantly!\n\n` +
+      `──────────────\n` +
+      `_⚡ 3 of 3 free grants remaining_`
       : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is officially live!\n\n` +
-        `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7. ⚡\n\n` +
-        `👉 Just reply *DATA* or *DATA 1000* to this chat to view all available packages!\n\n` +
-        `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`;
+      `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7. ⚡\n\n` +
+      `👉 Just reply *DATA* or *DATA 1000* to this chat to view all available packages!\n\n` +
+      `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`;
 
     const statusGateMsg = `📢 *STEP 4 OF 5 — AUTO LAUNCH STATUS PREVIEW*\n\n` +
       `We are ready to automatically broadcast this announcement to your WhatsApp Status:\n` +
@@ -1057,11 +1060,11 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, persistSte
 
   const autoPledge = isAutonomous
     ? `⚡ *100% ₦0 CAPITAL COMMITMENT*\n` +
-      `Your Autonomous AI Mode is active & running 100% free for *${daysLeft} days* (${tierBadge} Privilege).\n` +
-      `AI answers your customers, calculates prices, and delivers data automatically 24/7 while you sleep or attend CDS.\n` +
-      `Complimentary trial active until: *${expiryFormatted}*.`
+    `Your Autonomous AI Mode is active & running 100% free for *${daysLeft} days* (${tierBadge} Privilege).\n` +
+    `AI answers your customers, calculates prices, and delivers data automatically 24/7 while you sleep or attend CDS.\n` +
+    `Complimentary trial active until: *${expiryFormatted}*.`
     : `📱 *STORE MODE: MANUAL*\n` +
-      `You can process customer orders manually with text commands anytime.`;
+    `You can process customer orders manually with text commands anytime.`;
 
   const finalChecklist = `✅ *YOU'RE FULLY OPERATIONAL, ${info.partnerName}!*\n` +
     `──────────────\n\n` +
@@ -1091,9 +1094,9 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, persistSte
     await persistStep(null, { onboardingComplete: true });
   } else {
     const payload = { onboardingStep: null, onboardingComplete: true };
-    if (db.users) {
-      if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => {});
-      if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => {});
+    1    if (db.users) {
+      if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => { });
+      if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => { });
     }
     if (mockUserStore && typeof mockUserStore.has === 'function') {
       if (fullUser.uid && mockUserStore.has(fullUser.uid)) Object.assign(mockUserStore.get(fullUser.uid), payload);

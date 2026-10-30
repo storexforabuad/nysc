@@ -906,22 +906,22 @@ async function startServer() {
               }
             }
 
-            // Attempt to generate and send a receipt image or message to the buyer
-            try {
-              const storeName = userData?.brandName || (userData?.verifiedName ? `Clarion AI - ${userData.verifiedName}` : undefined);
-              const receiptPath = await ReceiptGenerator.generate(order, storeName);
-              if (receiptPath && sessionManager.motherSock) {
-                await sessionManager.motherSock.sendMessage(destinationJid, {
-                  image: fs.readFileSync(receiptPath),
-                  caption: '📄 Your Clarion payment receipt is ready. Thank you for your purchase!'
-                });
-              }
-            } catch (sendErr) {
-              logger.warn(`Receipt image send failed for order ${orderId}: ${sendErr.message}`);
-            }
+            // Receipt graphic generation disabled — pure fast text delivery
+            // try {
+            //   const storeName = userData?.brandName || (userData?.verifiedName ? `Clarion AI - ${userData.verifiedName}` : undefined);
+            //   const receiptPath = await ReceiptGenerator.generate(order, storeName);
+            //   if (receiptPath && sessionManager.motherSock) {
+            //     await sessionManager.motherSock.sendMessage(destinationJid, {
+            //       image: fs.readFileSync(receiptPath),
+            //       caption: '📄 Your Clarion payment receipt is ready. Thank you for your purchase!'
+            //     });
+            //   }
+            // } catch (sendErr) {
+            //   logger.warn(`Receipt image send failed for order ${orderId}: ${sendErr.message}`);
+            // }
 
             const walletTip = isFirstPurchase
-              ? `\n\n💡 *Smart Tip:* You can avoid the ₦${(order.securityFee || 12).toLocaleString()} security fee next time!\n👉 Reply *FUND* anytime to top up your Clarion Wallet and enjoy fee-free instant data 24/7.`
+              ? `\n\n💡 *Smart Tip:* Reply *FUND* anytime to load your Clarion Wallet for 1-click instant vending 24/7 — no need to open your banking app each time!`
               : `\n\n· Reply *DATA* for your next order`;
 
             const dataReceiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n` +
