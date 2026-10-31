@@ -846,7 +846,8 @@ async function startServer() {
               }
             } else {
               // Data delivery
-              fulfillmentResult = await payflex.dispenseData(order.buyerPhone.split('@')[0], order.planId || order.serial);
+              const targetRecipient = order.recipientPhone || order.buyerPhone.split('@')[0];
+              fulfillmentResult = await payflex.dispenseData(targetRecipient, order.planId || order.serial);
             }
 
             // 3. COMPLETE
@@ -924,10 +925,15 @@ async function startServer() {
               ? `\n\n💡 *Smart Tip:* Reply *FUND* anytime to load your Clarion Wallet for 1-click instant vending 24/7 — no need to open your banking app each time!`
               : `\n\n· Reply *DATA* for your next order`;
 
+            const recipientDisplay = (order.recipientPhone && order.recipientPhone !== order.buyerPhone.split('@')[0])
+              ? `${order.recipientPhone} (GIFT ORDER)`
+              : destinationJid.split('@')[0];
+
             const dataReceiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n` +
               `📦 *Plan:* ${fulfillmentResult?.planDetails?.name || 'Data Package'}\n` +
-              `📱 *Recipient:* ${destinationJid.split('@')[0]}\n` +
-              `💰 *Total Paid:* ₦${order.amount.toLocaleString()}${walletTip}`;
+              `📱 *Recipient:* ${recipientDisplay}\n` +
+              `💰 *Total Paid:* ₦${order.amount.toLocaleString()}\n\n` +
+              `💚 *Thank you!* A portion of your purchase directly funds grassroots Community Development projects. 🇳🇬${walletTip}`;
 
             await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, dataReceiptMsg);
             logger.info(`Order ${orderId} vended and settled successfully.`);

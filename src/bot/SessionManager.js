@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { Worker } from 'worker_threads';
 import { getFreeGrantDays, BOT_MODES } from '../services/WalletService.js';
+import { getThursdayReference } from '../utils/dateHelpers.js';
 
 class SessionManager {
   constructor() {
@@ -557,9 +558,7 @@ class SessionManager {
     if (fullUser.role === 'REFERRAL' || fullUser.parentId) {
       const cleanPhone = phoneJid.split('@')[0];
       const partnerName = fullUser.name || info.partnerName || 'Partner';
-      const now = new Date();
-      const isThursday = now.getDay() === 4;
-      const thursdayRef = isThursday ? 'next Thursday' : 'on Thursday';
+      const thursdayRef = getThursdayReference();
 
       const referralGuide = `🎉 *WELCOME TO THE CLARION PARTNER NETWORK!* 🇳🇬\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
@@ -1094,7 +1093,7 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, persistSte
     await persistStep(null, { onboardingComplete: true });
   } else {
     const payload = { onboardingStep: null, onboardingComplete: true };
-    1    if (db.users) {
+    if (db.users) {
       if (fullUser.uid) await db.users.doc(fullUser.uid).set(payload, { merge: true }).catch(() => { });
       if (from && from !== fullUser.uid) await db.users.doc(from).set(payload, { merge: true }).catch(() => { });
     }

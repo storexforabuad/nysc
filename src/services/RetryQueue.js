@@ -61,8 +61,9 @@ class RetryQueue {
                     } else if (order.orderType === 'exam_pin' || order.type === 'PENDING_EXAM_PIN' || order.type === 'FAILED_EXAM_PIN') {
                         result = await payflex.purchaseExamPin(order.examType);
                     } else {
+                        const targetRecipient = order.recipientPhone || order.buyerPhone.split('@')[0];
                         result = await payflex.dispenseData(
-                            order.buyerPhone.split('@')[0],
+                            targetRecipient,
                             order.serial || order.planId
                         );
                     }

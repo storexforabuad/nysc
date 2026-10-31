@@ -7,6 +7,7 @@ import sessionManager, { handleOnboardingWizardInput } from './SessionManager.js
 import broadcastQueue from '../services/BroadcastQueue.js';
 import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT } from './MotherBot.js';
 import { detectNetwork } from '../utils/networkUtils.js';
+import { getThursdayReference } from '../utils/dateHelpers.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import QRCode from 'qrcode';
 
@@ -18,6 +19,9 @@ const awaitingFundMap = new Map();
 
 // ── In-memory tracking for awaiting REDEEM selection (Data Fuel redemption) ──
 const awaitingRedeemMap = new Map();
+
+// ── In-memory tracking for awaiting gift recipient (vCard sharing or recipient parsing) ──
+const awaitingGiftMap = new Map();
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const messageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -73,7 +77,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
     '';
   const pushName = msg.pushName || 'Partner';
 
-  if (!text && !msg.message?.contactMessage && !msg.message?.contactsArrayMessage) return;
+  const contactMsg = messageContent?.contactMessage || messageContent?.contactsArrayMessage?.contacts?.[0] || msg.message?.contactMessage || msg.message?.contactsArrayMessage?.contacts?.[0];
+
+  if (!text && !contactMsg) return;
 
   const command = text.toLowerCase().trim();
   const cleanCommand = command.replace(/^\./, '');
@@ -104,6 +110,41 @@ export const handleProxyMessage = async (sock, msg, user) => {
         cleanActionable.endsWith('8119772223') ||
         cleanActionable.includes('161856060690464')) {
       return;
+    }
+
+    // ── Intercept WhatsApp Contact Card (vCard) for Data Gifting ──
+    if (contactMsg && contactMsg.vcard) {
+      const vcard = contactMsg.vcard;
+      const fnMatch = vcard.match(/FN:(.+?)(?:\r?\n|$)/i);
+      const contactName = fnMatch ? fnMatch[1].trim() : 'Contact';
+
+      const telMatch = vcard.match(/TEL.*?:([+\d\s-]+)(?:\r?\n|$)/i);
+      if (telMatch) {
+        let rawPhone = telMatch[1].replace(/\D/g, '');
+        if (rawPhone.startsWith('234') && rawPhone.length === 13) rawPhone = '0' + rawPhone.slice(3);
+        if (rawPhone.length === 10) rawPhone = '0' + rawPhone;
+
+        if (rawPhone.length === 11) {
+          const net = detectNetwork(rawPhone);
+          const netLabel = net ? net.toUpperCase() : 'Telecom';
+
+          awaitingGiftMap.set(`${user.uid}_${actionableJid}`, {
+            recipientPhone: rawPhone,
+            name: contactName,
+            network: net,
+            timestamp: Date.now()
+          });
+
+          return sock.sendMessage(from, {
+            text: `🎁 *Want to send data to ${contactName}?* (${rawPhone}) ⚡\n\n` +
+              `Clarion AI detected this contact is on *${netLabel}*!\n\n` +
+              `👉 Reply *DATA 500* to view packages for their number\n` +
+              `👉 Reply *DATA* to view all plans\n\n` +
+              `──────────────\n` +
+              `_If you were just sharing this contact for a regular chat, feel free to ignore this note and continue chatting normally! 😊_`
+          });
+        }
+      }
     }
 
     // Handle universal CANCEL
@@ -589,9 +630,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const currentFuel = await wallet.getDataFuelBalance(user.uid);
       const rankEmoji = myRank === 1 ? '🥇' : myRank === 2 ? '🥈' : myRank === 3 ? '🥉' : '🎖️';
-      const now = new Date();
-      const isThursday = now.getDay() === 4;
-      const thursdayRef = isThursday ? 'next Thursday' : 'on Thursday';
+      const thursdayRef = getThursdayReference();
 
       const stateCodeStatus = user.isStateCodeVerified
         ? `✅ Verified (${user.stateCode})`
@@ -628,9 +667,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       user.stateCode = verifiedCode;
       user.isStateCodeVerified = true;
 
-      const now = new Date();
-      const isThursday = now.getDay() === 4;
-      const thursdayRef = isThursday ? 'next Thursday' : 'on Thursday';
+      const thursdayRef = getThursdayReference();
 
       return sock.sendMessage(from, {
         text: `✅ *NYSC State Code Verified!* (${verifiedCode})\n\n` +
@@ -697,6 +734,75 @@ export const handleProxyMessage = async (sock, msg, user) => {
         text: `✅ *Profit Split Updated!*\n\n` +
           `Partner +${cleanPhone} will now receive *${newSplit}%* of distributable profit (in Data Fuel).\n` +
           `Your store receives *${100 - newSplit}%* (in Withdrawable Cash).`
+      });
+    }
+
+    // ── Handle STATUS [1|2|3] command (Parent controls auto-status frequency & Squad inherits) ──
+    const statusFreqRegex = /^\.?status(?:\s+(1|2|3|0|on|off))?$/i;
+    const statusFreqMatch = command.match(statusFreqRegex);
+
+    if (statusFreqMatch) {
+      const requestedFreq = statusFreqMatch[1] ? statusFreqMatch[1].toLowerCase() : null;
+      const isParentOrIndependent = !user.parentId || user.role === 'PARENT';
+
+      // Child proxy attempting to modify status frequency
+      if (!isParentOrIndependent) {
+        const currentFreq = user.statusFrequency || 3;
+        return sock.sendMessage(from, {
+          text: `🔒 *SQUAD MANAGEMENT CONTROL*\n\n` +
+            `Status post frequency is managed centrally by your Parent Store.\n\n` +
+            `• Current Squad Frequency: *${currentFreq} post${currentFreq > 1 ? 's' : ''} daily*\n\n` +
+            `Your store automatically stays synchronized with your parent franchise! 🚀`
+        });
+      }
+
+      // Guardrail: Cannot disable auto-status (never 0)
+      if (requestedFreq === '0' || requestedFreq === 'off') {
+        return sock.sendMessage(from, {
+          text: `⚠️ *CANNOT DISABLE AUTO-STATUS*\n\n` +
+            `Automated status posts drive continuous customer orders to your storefront.\n\n` +
+            `You can choose between:\n` +
+            `• *STATUS 1* — 1 post daily (9:00 AM)\n` +
+            `• *STATUS 2* — 2 posts daily (9:00 AM & 7:30 PM)\n` +
+            `• *STATUS 3* — 3 posts daily (Morning, Afternoon & Evening)\n\n` +
+            `👉 Reply *STATUS 1*, *STATUS 2*, or *STATUS 3*.`
+        });
+      }
+
+      // Valid frequency selection (1, 2, or 3)
+      if (requestedFreq === '1' || requestedFreq === '2' || requestedFreq === '3') {
+        const numFreq = parseInt(requestedFreq, 10);
+        if (db.users) {
+          await db.users.doc(user.uid).set({
+            statusFrequency: numFreq
+          }, { merge: true });
+        }
+        user.statusFrequency = numFreq;
+
+        const scheduleDesc = numFreq === 1
+          ? '1 post daily (Morning 9:00 AM)'
+          : numFreq === 2
+          ? '2 posts daily (Morning 9:00 AM & Evening 7:30 PM)'
+          : '3 posts daily (Morning 9:00 AM, Afternoon 1:30 PM & Evening 7:30 PM)';
+
+        return sock.sendMessage(from, {
+          text: `✅ *Auto-Status Frequency Updated!*\n\n` +
+            `• Frequency: *${scheduleDesc}*\n` +
+            `• Squad Sync: All active partners in your Squad have also been synchronized to this frequency! ⚡\n\n` +
+            `Automated status posts will continue bringing orders to your store.`
+        });
+      }
+
+      // Default: show current frequency & commands
+      const currentFreq = user.statusFrequency || 3;
+      return sock.sendMessage(from, {
+        text: `📊 *Clarion Auto-Status Settings*\n\n` +
+          `• Current Frequency: *${currentFreq} post${currentFreq > 1 ? 's' : ''} daily*\n\n` +
+          `To adjust your posting frequency:\n` +
+          `• *STATUS 1* — 1 post daily (9:00 AM)\n` +
+          `• *STATUS 2* — 2 posts daily (9:00 AM & 7:30 PM)\n` +
+          `• *STATUS 3* — 3 posts daily (Morning, Afternoon & Evening)\n\n` +
+          `_(Squad partners automatically share your store's schedule)_`
       });
     }
 
@@ -1193,9 +1299,27 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     if (command === 'menu' || command === 'start' || command === 'catalog' || isDataMatch) {
-      const match = dataPriceMatch;
-      const targetPrice = match && match[1] ? parseInt(match[1]) : null;
-      const targetPhone = match && match[2] ? match[2] : null;
+      // Disambiguate arguments: budget vs phone number
+      const dataArgs = command.replace(/^\.?data\s*/i, '').trim().split(/\s+/);
+      let targetPrice = null;
+      let targetPhone = null;
+
+      for (const arg of dataArgs) {
+        const cleanArg = arg.replace(/\D/g, '');
+        if ((cleanArg.startsWith('0') && cleanArg.length === 11) || (cleanArg.startsWith('234') && cleanArg.length === 13) || cleanArg.length === 10) {
+          targetPhone = cleanArg.startsWith('0') ? cleanArg : ('0' + cleanArg.slice(-10));
+        } else if (/^\d+$/.test(arg) && parseInt(arg, 10) <= 100000) {
+          targetPrice = parseInt(arg, 10);
+        }
+      }
+
+      // Check for recently shared contact card if no targetPhone in command
+      if (!targetPhone) {
+        const cachedGift = awaitingGiftMap.get(`${user.uid}_${actionableJid}`);
+        if (cachedGift && Date.now() - cachedGift.timestamp < 5 * 60 * 1000) {
+          targetPhone = cachedGift.recipientPhone;
+        }
+      }
 
       // MTN / GLO keyword aliases — pre-set the detected network
       let forceNetwork = null;
@@ -1204,12 +1328,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const detectedNet = forceNetwork || detectNetwork(targetPhone || actionableJid);
       const hasExplicitNetwork = !!forceNetwork || !!targetPhone;
+      const isGift = targetPhone && targetPhone !== actionableJid.split('@')[0];
+      const scanTargetText = isGift ? ` for ${targetPhone}` : '';
 
       // ── Step 1: AI Scanning message — fires for ALL networks, always first ──
       await sock.sendMessage(from, {
         text: targetPrice
-          ? `🤖 *Clarion AI is scanning telecom servers for the best verified data packages around your ₦${targetPrice.toLocaleString()} budget...* ⏳`
-          : `🤖 *Clarion AI is scanning telecom servers for the best verified data packages...* ⏳`
+          ? `🤖 *Clarion AI is scanning telecom servers for the best verified data packages around your ₦${targetPrice.toLocaleString()} budget${scanTargetText}...* ⏳`
+          : `🤖 *Clarion AI is scanning telecom servers for the best verified data packages${scanTargetText}...* ⏳`
       });
 
       // ── Search & Demand Intelligence Logging ──
@@ -1287,13 +1413,18 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       const networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
-      let menuText = `⚡ *CLARION TELECOM CATALOG*\n_Affordable data · Instant delivery 24/7_\n──────────────\n\n`;
+      let menuText = isGift ? `🎁 *GIFT DATA FOR ${targetPhone}*\n` : '';
+      menuText += `⚡ *CLARION TELECOM CATALOG*\n_Affordable data · Instant delivery 24/7_\n──────────────\n\n`;
 
       if (hasExplicitNetwork && detectedNet && targetPhone) {
         menuText += `📶 *${networkStr}* detected for ${targetPhone}\n\n`;
       } else if (hasExplicitNetwork && detectedNet) {
         menuText += `📶 *${networkStr}* detected\n\n`;
       }
+
+      const buyPrompt = (plan) => isGift
+        ? `  👉 Reply *BUY ${plan.serial} ${targetPhone}*\n`
+        : `  👉 Reply *BUY ${plan.serial}*\n`;
 
       if (targetPrice) {
         if (!hasExactMatch) {
@@ -1312,7 +1443,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         filteredPlans.forEach(plan => {
           const networkLabel = plan.network.includes('mtn') ? 'MTN' : 'Glo';
           menuText += `· *${networkLabel} ${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
-          menuText += `  👉 Reply *BUY ${plan.serial}*\n`;
+          menuText += buyPrompt(plan);
         });
       } else if (hasExplicitNetwork) {
         // Single network requested (e.g. GLO or MTN keyword)
@@ -1326,7 +1457,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           menuText += `\n${cat}\n`;
           durationGroups[cat].forEach(plan => {
             menuText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
-            menuText += `  👉 Reply *BUY ${plan.serial}*\n`;
+            menuText += buyPrompt(plan);
           });
         }
       } else {
@@ -1346,7 +1477,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             secText += `\n${cat}\n`;
             groups[cat].forEach(plan => {
               secText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
-              secText += `  👉 Reply *BUY ${plan.serial}*\n`;
+              secText += buyPrompt(plan);
             });
           }
           return secText;
@@ -1366,7 +1497,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
     }
 
     // Handle Order initiation
-    if (command.startsWith('buy ')) {
+    if (command.startsWith('buy ') || command === 'buy') {
       // Debounce: block duplicate BUY commands within 5 seconds
       const debounceKey = `${from}_buy`;
       const lastBuy = buyDebounce.get(debounceKey);
@@ -1375,7 +1506,30 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
       buyDebounce.set(debounceKey, Date.now());
 
-      const serial = command.split(' ')[1];
+      const buyParts = command.trim().split(/\s+/);
+      const serial = buyParts[1];
+      if (!serial) {
+        return sock.sendMessage(from, { text: '💡 Reply *BUY [serial]* to order (e.g. *BUY 1*). Reply *DATA* to view all serials!' });
+      }
+
+      let recipientPhone = buyParts[2] ? buyParts[2].replace(/\D/g, '') : null;
+      if (recipientPhone) {
+        if (recipientPhone.startsWith('234') && recipientPhone.length === 13) recipientPhone = '0' + recipientPhone.slice(3);
+        if (recipientPhone.length === 10) recipientPhone = '0' + recipientPhone;
+      }
+
+      // If no recipient specified in command, check if gift recipient was cached from contact card
+      if (!recipientPhone) {
+        const cachedGift = awaitingGiftMap.get(`${user.uid}_${actionableJid}`);
+        if (cachedGift && Date.now() - cachedGift.timestamp < 5 * 60 * 1000) {
+          recipientPhone = cachedGift.recipientPhone;
+        }
+      }
+
+      const cleanBuyerPhone = actionableJid.split('@')[0];
+      const targetDispensePhone = recipientPhone || cleanBuyerPhone;
+      const isGiftOrder = !!(recipientPhone && recipientPhone !== cleanBuyerPhone);
+
       const plans = await payflex.getAvailablePlans();
       const plan = plans.find(p => p.serial.toString() === serial.toString());
 
@@ -1420,6 +1574,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             type: 'COMPLETED_DATA', // Already paid, ready to map
             userId: user.uid,
             buyerPhone: actionableJid,
+            recipientPhone: targetDispensePhone,
             planId: plan.id,
             serial: plan.serial,
             amount: plan.sellPrice,
@@ -1432,8 +1587,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
 
         try {
-          // Dispense inline
-          await payflex.dispenseData(actionableJid.split('@')[0], plan.serial);
+          // Dispense inline to target recipient
+          await payflex.dispenseData(targetDispensePhone, plan.serial);
 
           if (db.ledger) {
             await db.ledger.doc(orderRef).update({
@@ -1453,7 +1608,16 @@ export const handleProxyMessage = async (sock, msg, user) => {
             handleMilestoneCheck(user.uid, prevCds, newCds, user).catch(() => {});
           }
 
-          let receiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n📦 *Plan:* ${plan.name}\n💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\n`;
+          const recipientDisplay = isGiftOrder
+            ? `${targetDispensePhone} (GIFT ORDER)`
+            : cleanBuyerPhone;
+
+          let receiptMsg = `✅ *DATA DELIVERED!*\n──────────────\n\n` +
+            `📦 *Plan:* ${plan.name}\n` +
+            `📱 *Recipient:* ${recipientDisplay}\n` +
+            `💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\n` +
+            `💚 *Thank you!* A portion of your purchase directly funds grassroots Community Development projects. 🇳🇬\n\n`;
+
           if (!hasPurchasedBefore) {
             receiptMsg += `🎉 *Congratulations on your first order!*\n` +
               `💡 *Smart Tip:* You just completed this purchase instantly with 1-click using your Clarion Wallet!\n` +
@@ -1485,6 +1649,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           type: 'PENDING_DATA',
           userId: user.uid,
           buyerPhone: actionableJid,
+          recipientPhone: targetDispensePhone,
           planId: plan.id,
           serial: plan.serial,
           dataCost: plan.sellPrice,
@@ -1502,8 +1667,13 @@ export const handleProxyMessage = async (sock, msg, user) => {
         ? plan.name
         : `${networkLabel} ${plan.name}`;
 
+      const recipientNotice = isGiftOrder
+        ? `📱 *Recipient:* ${targetDispensePhone} (Gift Order)\n`
+        : '';
+
       const paymentInstruction = `💳 *ORDER CONFIRMATION: ${planDisplayName}*\n` +
         `──────────────\n` +
+        recipientNotice +
         `💰 *Amount to Transfer:* *₦${totalToTransfer.toLocaleString()}*\n\n` +
         `🏦 *Bank:* ${bankInfo.bankName}\n` +
         `🔢 *Account Number:* \`${bankInfo.accountNumber}\`\n` +
