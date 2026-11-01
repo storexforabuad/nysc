@@ -6,6 +6,7 @@ import PriceCardGenerator from '../services/PriceCardGenerator.js';
 import CaptionService from '../services/CaptionService.js';
 import { config, logger } from '../config/env.js';
 import sessionManager from '../bot/SessionManager.js';
+import { db } from '../services/firebase.js';
 
 const MEDIA_ROOT = path.join(process.cwd(), 'src', 'media');
 const PRICE_CARD_DIR = path.join(MEDIA_ROOT, 'price_cards');
@@ -149,7 +150,7 @@ const sendPromoStatus = async () => {
   await sendStatusToWorkers([selected], '✨ Clarion Status update — stay connected to the best data offers.');
 };
 
-// 3x Daily Schedule Matrix (7 Days x 3 Slots) with Sprinkles Collection Rotated into Afternoon Slots
+// Dynamic 7-Day Schedule Matrix with Smart Context-Aware Sprinkles Placement (Alternating Afternoon & Evening)
 const STATUS_SCHEDULE = {
   // 0: Sunday
   0: {
@@ -157,11 +158,11 @@ const STATUS_SCHEDULE = {
     afternoon: "💚 Smart data that gives back 🇳🇬\n\nEvery purchase on this line funds grassroots community projects. Fast, reliable MTN & Glo from ₦400 per GIG.\n\n👉 Reply *DATA* to support & recharge",
     evening: "🔋 Prepare for Monday with a loaded line! 🚀\n\nDon't start the new week with 0MB. Instant MTN & Glo data delivered automatically from just ₦400/GB!\n\n👉 Reply *DATA 500* or *DATA 1000* to recharge now"
   },
-  // 1: Monday
+  // 1: Monday (Evening has Sprinkles D: Why Fund Wallet & 1-Click Explained)
   1: {
     morning: "⚡ New week, fresh gigabytes! 🚀\n\nDon't let your work or calls pause. Instant MTN & Glo data delivered in seconds — starting from just ₦400/GB!\n\n👉 Reply *DATA* to browse all plans",
     afternoon: "📱 Data exhausted during morning hustle? ⏳\n\nNo need to open bank apps or wait around. Fast automated top-up right here on WhatsApp!\n\n👉 Reply *DATA 500* or *DATA 1000* for instant refill!",
-    evening: "🌙 Unwind without buffering tonight! 🎬\n\nAffordable MTN & Glo data for your TikTok, YouTube & WhatsApp calls. From just ₦400 per GIG!\n\n👉 Reply *DATA* to get yours in 15 seconds"
+    evening: "💡 Why smart buyers load their Clarion Wallet ⚡\n\nTired of opening bank apps, network timeouts, or waiting for USSD? Load your wallet once and enjoy:\n\n1️⃣ Zero Bank Delays — No failed bank transfers or network pending\n2️⃣ True 1-Click Buying — Reply *BUY 1* and your data lands in 1 second flat!\n3️⃣ 100% Zero Extra Fees — No bank charges on every small recharge\n4️⃣ 24/7 Instant Vending — Works even at 2:00 AM when bank apps sleep 🌙\n\n👉 Reply *FUND 1000* or *FUND 2000* to load your balance\n👉 Reply *DATA* to view all plans and test 1-click vending! 🚀"
   },
   // 2: Tuesday (Afternoon has Sprinkles C: Commands Cheat Sheet)
   2: {
@@ -181,17 +182,17 @@ const STATUS_SCHEDULE = {
     afternoon: "🇳🇬 Empowering Communities, One Gigabyte at a Time 🏫\n\nWhenever you purchase data here:\n• You get verified, low-cost MTN & Glo data instantly\n• A portion of the proceeds is donated to grassroots NYSC CDS projects (schools, health, & youth skills)\n\n👉 Reply *INFO* to learn more, or reply *DATA* to support today! 💚",
     evening: "⚡ Wrap up your Thursday with full connectivity! 📲\n\nAffordable MTN & Glo data that doesn't burn your pocket. Instant delivery from ₦400 per GIG.\n\n👉 Reply *DATA* to reload in seconds"
   },
-  // 5: Friday (Afternoon has Sprinkles D: 1-Click Wallet Loading)
+  // 5: Friday (Evening has Sprinkles F: Weekend Movie Prep & 1-Click Wallet Refill)
   5: {
     morning: "🎉 Happy Friday! 🥳\n\nGet your weekend data locked in early. Affordable MTN & Glo bundles delivered instantly from just ₦400/GB!\n\n👉 Reply *DATA* to see our rates",
-    afternoon: "💡 Smart Tip: Skip opening your banking app every time! 🏦\n\nLoad your Clarion Wallet once and enjoy 1-click instant vending 24/7:\n\n👉 Reply *FUND 1000* or *FUND 2000* to top up\n👉 Any order you place vends automatically in 1 second! ⚡\n\n_Fast • Seamless • Always Reliable._",
-    evening: "🍿 Movie night or social weekend? 🎬\n\nStream seamlessly on MTN & Glo with high-speed data starting at only ₦400 per GIG!\n\n👉 Reply *DATA* to connect right now"
+    afternoon: "🚀 Friday afternoon data top-up! 🔋\n\nDon't let your connection drop before the weekend begins. Instant MTN & Glo top-ups from ₦400 per GIG!\n\n👉 Reply *DATA 500* or *DATA 1000* to recharge now",
+    evening: "🍿 Movie night or social weekend? 🎬\n\nDon't let bank app downtime pause your streaming tonight.\n\n💡 *Smart Weekend Tip:* Load your Clarion Wallet once:\n👉 Reply *FUND 1000* or *FUND 2000*\n👉 Any order you place vends automatically in 1 second — no banking app required! ⚡\n\nStream smoothly on MTN & Glo from just ₦400 per GIG. Reply *DATA* to connect! 🚀"
   },
-  // 6: Saturday (Afternoon has Sprinkles B: Data for MiFi / Router / 2nd SIM)
+  // 6: Saturday (Evening has Sprinkles B: Data for MiFi, Router & 2nd SIM)
   6: {
     morning: "⚡ Saturday morning data deals! ☕\n\nAffordable MTN & Glo data packages active 24/7 — starting from ₦400 per GIG!\n\n👉 Reply *DATA* to browse and order in seconds",
-    afternoon: "📶 Need data on your WiFi router, MiFi, or 2nd phone? 🔌\n\nYou don't need to remove SIM cards or open other apps.\n\n👉 Simply reply:\n*DATA [budget] [router number]*\n_(e.g. DATA 1000 08051234567)_\n\nInstant delivery straight to your device 24/7! ⚡",
-    evening: "🌙 Weekend night data made cheap! ⚡\n\nStay connected all night with heavily discounted MTN & Glo bundles from ₦400 per GIG.\n\n👉 Reply *DATA* to get yours delivered instantly"
+    afternoon: "🏖️ Weekend chilling with high-speed data! 📲\n\nEnjoy smooth streaming, football, and social chats without breaking the bank. Instant MTN & Glo from ₦400/GB!\n\n👉 Reply *DATA* to pick your bundle in seconds",
+    evening: "📶 Need data on your WiFi router, MiFi, or 2nd phone? 🔌\n\nYou don't need to remove SIM cards or open other apps.\n\n👉 Simply reply:\n*DATA [budget] [router number]*\n_(e.g. DATA 1000 08051234567)_\n\nInstant delivery straight to your device 24/7! ⚡"
   }
 };
 
@@ -203,7 +204,8 @@ export const getEffectiveStatusFrequency = async (user) => {
   if (!user) return 3;
   if (user.parentId) {
     try {
-      const parentDoc = await sessionManager.getUser(user.parentId);
+      const parentSnap = await db.users.doc(user.parentId).get();
+      const parentDoc = parentSnap.exists ? parentSnap.data() : null;
       if (parentDoc && parentDoc.statusFrequency) {
         return Math.max(1, Math.min(3, parseInt(parentDoc.statusFrequency)));
       }
@@ -237,7 +239,12 @@ export const sendScheduledSlotStatus = async (slotKey = 'morning') => {
   for (const [uid, worker] of sessionManager.sessions.entries()) {
     if (!worker || typeof worker.postMessage !== 'function') continue;
     try {
-      const userDoc = await sessionManager.getUser(uid);
+      // Fetch user document directly from Firestore (sessionManager.getUser does not exist)
+      let userDoc = null;
+      if (db.users) {
+        const snap = await db.users.doc(uid).get();
+        userDoc = snap.exists ? snap.data() : null;
+      }
 
       // 1. Skip if user has an active promo running
       if (userDoc?.activePromo?.status === 'ACTIVE' && userDoc?.activePromo?.claimsRemaining > 0) {

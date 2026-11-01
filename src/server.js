@@ -656,7 +656,7 @@ async function startServer() {
             await manualOrderDocRef.update({
               status: 'DISPENSING',
               updatedAt: new Date().toISOString()
-            }).catch(() => {});
+            }).catch(() => { });
           }
           manualOrder.status = 'DISPENSING';
 
@@ -681,7 +681,7 @@ async function startServer() {
                 status: 'FULFILLED',
                 fulfilledAt: new Date().toISOString(),
                 settlement
-              }).catch(() => {});
+              }).catch(() => { });
             }
             manualOrder.status = 'FULFILLED';
             if (mockManualOrders) mockManualOrders.set(manualOrder.orderId, manualOrder);
@@ -699,41 +699,41 @@ async function startServer() {
                 paystackTransactionRef: TransactionRef,
                 squadTransactionRef: TransactionRef,
                 createdAt: new Date().toISOString()
-              }).catch(() => {});
+              }).catch(() => { });
             }
 
             if (db.users && matchedPartnerId && settlement.cdsShare > 0) {
               const targetCdsUser = matchedPartner?.parentId || matchedPartnerId;
               let prevCds = Number(matchedPartner?.totalCdsDonated) || 0;
               const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
-              handleMilestoneCheck(targetCdsUser, prevCds, newCds, matchedPartner).catch(() => {});
+              handleMilestoneCheck(targetCdsUser, prevCds, newCds, matchedPartner).catch(() => { });
             }
 
             if (sessionManager.motherSock) {
               const partnerJid = matchedPartnerId.includes('@') ? matchedPartnerId : `${matchedPartnerId}@s.whatsapp.net`;
 
               const confirmMsg = `✅ *ORDER ${manualOrder.orderId} FULFILLED!*\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `━━━━━━━━━━━━━━\n` +
                 `📱 *Customer:* ${manualOrder.targetPhone}\n` +
                 `📦 *Plan:* ${manualOrder.planName}\n` +
                 `💰 *Amount:* ₦${manualOrder.amount.toLocaleString()}\n` +
                 `💵 *Your Earnings:* ₦${settlement.coMemberShare.toFixed(2)}\n` +
                 `🎖️ *CDS Contribution:* ₦${settlement.cdsShare.toFixed(2)}\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━`;
+                `━━━━━━━━━━━━━━`;
 
               const deliveryTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
               const receiptMsg = `👇 *Forward this receipt to your customer:*\n\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `━━━━━━━━━━━━━━\n` +
                 `✅ *DATA DELIVERED!*\n\n` +
                 `📱 *Number:* ${manualOrder.targetPhone}\n` +
                 `📦 *Plan:* ${manualOrder.planName}\n` +
                 `🕐 *Delivered:* ${deliveryTime}\n` +
                 `🔖 *Ref:* ${manualOrder.orderId}\n\n` +
                 `Powered by Clarion A.I. ⚡\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━`;
+                `━━━━━━━━━━━━━━`;
 
-              await sessionManager.motherSock.sendMessage(partnerJid, { text: confirmMsg }).catch(() => {});
-              await sessionManager.motherSock.sendMessage(partnerJid, { text: receiptMsg }).catch(() => {});
+              await sessionManager.motherSock.sendMessage(partnerJid, { text: confirmMsg }).catch(() => { });
+              await sessionManager.motherSock.sendMessage(partnerJid, { text: receiptMsg }).catch(() => { });
             }
 
             if (db.users && manualOrder.targetPhone) {
@@ -743,7 +743,7 @@ async function startServer() {
                   totalSpent: admin.firestore.FieldValue.increment(manualOrder.amount),
                   totalOrders: admin.firestore.FieldValue.increment(1)
                 }, { merge: true });
-              } catch (e) {}
+              } catch (e) { }
             }
 
             return res.status(200).json({ status: 'success', message: 'Manual order fulfilled' });
@@ -754,7 +754,7 @@ async function startServer() {
                 status: 'FAILED_DISPENSE',
                 lastError: dispenseErr.message,
                 updatedAt: new Date().toISOString()
-              }).catch(() => {});
+              }).catch(() => { });
             }
             return res.status(500).json({ error: 'Manual order dispense failed', details: dispenseErr.message });
           }
@@ -835,14 +835,14 @@ async function startServer() {
               if (sessionManager.motherSock) {
                 await sessionManager.motherSock.sendMessage(destinationJid, {
                   text: `✅ *Airtime Vended Successfully!*\n\n📱 *Recipient:* ${target}\n🌐 *Network:* ${(order.network || '').toUpperCase()}\n💰 *Amount:* ₦${order.amount.toLocaleString()}\n\nThank you for using Clarion A.I!`
-                }).catch(() => {});
+                }).catch(() => { });
               }
             } else if (order.type === 'PENDING_EXAM_PIN' || order.orderType === 'exam_pin') {
               fulfillmentResult = await payflex.purchaseExamPin(order.examType);
               if (sessionManager.motherSock) {
                 await sessionManager.motherSock.sendMessage(destinationJid, {
                   text: `🎓 *${fulfillmentResult.productName || 'Exam PIN'} Delivered!*\n\n🔑 *PIN:* \`${fulfillmentResult.pin}\`\n🔢 *Serial:* \`${fulfillmentResult.serialNumber}\`\n💰 *Amount:* ₦${order.amount.toLocaleString()}\n\nThank you for using Clarion A.I!`
-                }).catch(() => {});
+                }).catch(() => { });
               }
             } else {
               // Data delivery
@@ -857,7 +857,7 @@ async function startServer() {
               try {
                 const uDoc = await db.users.doc(order.userId).get();
                 if (uDoc.exists) userData = uDoc.data();
-              } catch (e) {}
+              } catch (e) { }
             }
 
             const settlement = await wallet.settleCompletedOrder({
@@ -884,7 +884,7 @@ async function startServer() {
               const targetCdsUser = userData?.parentId || order.userId;
               let prevCds = Number(userData?.totalCdsDonated) || 0;
               const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
-              handleMilestoneCheck(targetCdsUser, prevCds, newCds, userData).catch(() => {});
+              handleMilestoneCheck(targetCdsUser, prevCds, newCds, userData).catch(() => { });
             }
 
             // Check if this was customer's first purchase to include wallet educational tip
@@ -994,7 +994,7 @@ async function startServer() {
                 text: `💰 *PROMO FUEL LOADED!* 🚀\n\n` +
                   `Your wallet has been credited with *₦${Body.amount.toLocaleString()}*.\n\n` +
                   `🎨 Generating your custom *Launch Giveaway Poster* now...`
-              }).catch(() => {});
+              }).catch(() => { });
 
               try {
                 const promoBuffer = await mediaGen.generateGiveawayPromoCard({
@@ -1005,13 +1005,13 @@ async function startServer() {
 
                 const giveawayStatusText = isSame
                   ? `🎉 *MY 24/7 DATA AI BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated AI bot right now!\n\n` +
-                    `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
-                    `Watch the AI bot reply and vend your data in 20 seconds! ⚡`
+                  `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated AI bot right now!\n\n` +
+                  `👉 *To claim: Just reply to ME right here with:* \n*DATA*\n\n` +
+                  `Watch the AI bot reply and vend your data in 20 seconds! ⚡`
                   : `🎉 *MY 24/7 DATA AI BOT IS OFFICIALLY LIVE!* 🚀\n\n` +
-                    `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated AI bot right now!\n\n` +
-                    `👉 *To claim: Tap this link to message my AI bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
-                    `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
+                  `To celebrate my launch, I’m giving away FREE 500MB Data to the first 5 people who test my automated AI bot right now!\n\n` +
+                  `👉 *To claim: Tap this link to message my AI bot:*\nhttps://wa.me/234${partnerPhone.slice(-10)}?text=DATA\n\n` +
+                  `Or text *DATA* to 0${partnerPhone.slice(-10)}! ⚡`;
 
                 await sessionManager.motherSock.sendMessage(userJid, {
                   image: promoBuffer,

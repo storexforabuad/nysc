@@ -207,6 +207,13 @@ async function startWorker(isInitialBoot = true) {
             const { text, statusJidList } = msg;
             const statusJid = 'status@broadcast';
             try {
+                // If socket is not yet open, wait up to 6 seconds for connection
+                let waitAttempts = 0;
+                while ((!sock || sock.ws?.readyState !== 1) && waitAttempts < 12) {
+                    await new Promise(r => setTimeout(r, 500));
+                    waitAttempts++;
+                }
+
                 let resolvedJids = statusJidList;
                 if (!resolvedJids || resolvedJids.length === 0) {
                     resolvedJids = await getStatusRecipients(user);

@@ -70,7 +70,7 @@ export function startThursdayPromotionJob() {
 
                 // Build Leaderboard Message for Parent
                 let report = `🎖️ *NYSC CDS THURSDAY PROMOTION REVIEW* 🇳🇬\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `━━━━━━━━━━━━━━━━━━\n` +
                     `Here is your Partners' Weekly Performance:\n\n`;
 
                 scoredChildren.forEach((child, idx) => {
@@ -87,7 +87,7 @@ export function startThursdayPromotionJob() {
                         `   • NYSC Status: ${stateCodeDisplay}\n\n`;
                 });
 
-                report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                report += `━━━━━━━━━━━━━━━━━━\n`;
 
                 if (rank1.isStateCodeVerified && rank1.score > 0) {
                     const cleanPhone = rank1.phoneNumber || rank1.id.split('@')[0];

@@ -106,9 +106,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
     const cleanActionable = String(actionableJid || '').replace(/[^0-9]/g, '');
     if ((user.motherBotJid && actionableJid.includes(user.motherBotJid.split('@')[0])) ||
-        (user.motherBotLid && actionableJid.includes(user.motherBotLid.split('@')[0])) ||
-        cleanActionable.endsWith('8119772223') ||
-        cleanActionable.includes('161856060690464')) {
+      (user.motherBotLid && actionableJid.includes(user.motherBotLid.split('@')[0])) ||
+      cleanActionable.endsWith('8119772223') ||
+      cleanActionable.includes('161856060690464')) {
       return;
     }
 
@@ -134,6 +134,54 @@ export const handleProxyMessage = async (sock, msg, user) => {
             network: net,
             timestamp: Date.now()
           });
+
+          // Graceful handling for upcoming networks
+          if (net === 'airtel' || net === '9mobile' || net === 't2mobile') {
+            return sock.sendMessage(from, {
+              text: `🎁 *Want to send data to ${contactName}?* (${rawPhone}) ⚡\n\n` +
+                `Clarion AI checked all available servers and is currently optimizing affordable data packages for *${netLabel}*. 🔧\n\n` +
+                `In the meantime, you can gift affordable *MTN & Glo* packages starting at *₦400/GB*:\n` +
+                `👉 Reply *DATA* to view all available packages\n\n` +
+                `──────────────\n` +
+                `_If you were just sharing this contact for a regular chat, feel free to ignore this note and continue chatting normally! 😊_`
+            });
+          }
+
+          // For MTN and Glo: immediately display detected network plans with durations
+          let planRowsText = '';
+          try {
+            const allPlans = await payflex.getAvailablePlans();
+            const netPlans = allPlans.filter(p => net === 'mtn' ? p.network.includes('mtn') : p.network.includes('glo'));
+            if (netPlans.length > 0) {
+              const groups = {};
+              for (const plan of netPlans) {
+                const cat = plan.durationCategory || '🗓️ Other Plans';
+                if (!groups[cat]) groups[cat] = [];
+                groups[cat].push(plan);
+              }
+              for (const cat of Object.keys(groups)) {
+                planRowsText += `\n${cat}\n`;
+                groups[cat].forEach(plan => {
+                  planRowsText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
+                  planRowsText += `  👉 Reply *BUY ${plan.serial} ${rawPhone}*\n`;
+                });
+              }
+            }
+          } catch (e) {
+            logger.warn(`Failed to fetch plans for contact card display: ${e.message}`);
+          }
+
+          if (planRowsText) {
+            return sock.sendMessage(from, {
+              text: `🎁 *Want to send data to ${contactName}?* (${rawPhone}) ⚡\n\n` +
+                `📶 *${netLabel}* detected for this number!\n` +
+                `Here are the verified packages available right now:\n` +
+                planRowsText +
+                `\n──────────────\n` +
+                `👉 Reply *DATA 500 ${rawPhone}* for deals near ₦500\n` +
+                `_If you were just sharing this contact for a regular chat, feel free to ignore this note and continue chatting normally! 😊_`
+            });
+          }
 
           return sock.sendMessage(from, {
             text: `🎁 *Want to send data to ${contactName}?* (${rawPhone}) ⚡\n\n` +
@@ -206,7 +254,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             if (freshData.subscription) user.subscription = freshData.subscription;
             if (freshData.onboardingStep !== undefined) user.onboardingStep = freshData.onboardingStep;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
 
@@ -248,7 +296,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             isIntroduced = true;
             introducedContacts.add(contactTrackingKey);
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       if (!isIntroduced) {
@@ -258,13 +306,13 @@ export const handleProxyMessage = async (sock, msg, user) => {
           await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
             introduced: true,
             introducedAt: new Date().toISOString()
-          }, { merge: true }).catch(() => {});
+          }, { merge: true }).catch(() => { });
         }
 
         const storeName = user.brandName || user.franchiseName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
 
         // Natural typing delay (1.2–2.0s)
-        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await sock.sendPresenceUpdate('composing', from).catch(() => { });
         await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
         await sock.sendMessage(from, {
@@ -276,13 +324,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
             `_Have a great day! 😊_`
         });
 
-        await sock.sendPresenceUpdate('paused', from).catch(() => {});
+        await sock.sendPresenceUpdate('paused', from).catch(() => { });
 
         // If the original message was not a recognized command, return here so we don't double-reply
         if (!isDataMatch && !command.startsWith('buy ') && command !== 'menu'
-            && command !== 'start' && command !== 'balance' && !isFundMatch
-            && !cardCommandRegex.test(command) && !pinCommandRegex.test(command)
-            && command !== 'cds' && command !== 'community' && command !== 'info' && command !== 'donate') {
+          && command !== 'start' && command !== 'balance' && !isFundMatch
+          && !cardCommandRegex.test(command) && !pinCommandRegex.test(command)
+          && command !== 'cds' && command !== 'community' && command !== 'info' && command !== 'donate'
+          && command !== 'about' && command !== 'info story' && command !== 'story' && command !== 'saed') {
           return;
         }
       }
@@ -322,7 +371,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               const partnerJid = user.uid.includes('@') ? user.uid : `${user.uid}@s.whatsapp.net`;
               await sessionManager.motherSock.sendMessage(partnerJid, {
                 text: `🔄 *Autonomous Mode Auto-Renewed!*\n\nYour ${planConfig.label} has renewed for ₦${planConfig.price.toLocaleString()} from your wallet.\nNext renewal: ${new Date(expiresAt).toLocaleDateString('en-GB')}.`
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         }
@@ -337,7 +386,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             const partnerJid = user.uid.includes('@') ? user.uid : `${user.uid}@s.whatsapp.net`;
             await sessionManager.motherSock.sendMessage(partnerJid, {
               text: `⚠️ *Autonomous Mode Expired*\n\nYour ${user.subscription?.plan || 'subscription'} has ended and could not auto-renew.\nYour store is now in Manual Mode.\n\nText *UPGRADE* to reactivate 24/7 automation for *₦950/month*.`
-            }).catch(() => {});
+            }).catch(() => { });
           }
           return; // Silent for this message
         }
@@ -354,28 +403,52 @@ export const handleProxyMessage = async (sock, msg, user) => {
       return;
     }
 
-    // ── CDS / COMMUNITY INFO keyword ──
-    if (command === 'cds' || command === 'community' || command === 'info') {
-      const storeName = user.brandName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+    // ── INFO STORY / STORY keyword (The Full Founding SAED Journey) ──
+    if (command === 'info story' || command === 'story' || command === 'saed') {
+      return sock.sendMessage(from, {
+        text: `📖 *THE CLARION JOURNEY: FROM SAED TO A.I.*\n` +
+          `━━━━━━━━━━━━━━━\n\n` +
+          `In NYSC orientation camp, the SAED program introduces Corps Members to recharge card printing. But in today's smartphone world, manual paper vouchers require heavy machine investments and paper waste.\n\n` +
+          `We asked a bold question:\n` +
+          `_Why can't every Nigerian Corps Member and youth operate an automated cloud telecom network right on WhatsApp without capital barrier?_\n\n` +
+          `Clarion was engineered from Jigawa State as a national service innovation:\n` +
+          `1️⃣ *Zero Capital Barrier:* Any youth can launch an automated AI storefront.\n` +
+          `2️⃣ *Wholesale Affordability:* Direct telecom pipelines starting at ₦400/GB.\n` +
+          `3️⃣ *Built-in Giving Back:* A portion of every transaction quietly funds grassroots CDS community projects in underserved areas.\n\n` +
+          `To our customers and NYSC family: Thank you for building Nigeria with us! 🇳🇬\n\n` +
+          `— *MGL*\n` +
+          `Founder & Lead Architect, Clarion A.I.\n` +
+          `Serving Corps Member, Jigawa State \`[JG/26A/2535]\`\n` +
+          `📞 Direct Line: +2347032905036\n\n` +
+          `──────────────\n` +
+          `👉 Reply *DATA* to support & order data in seconds!`
+      });
+    }
+
+    // ── INFO / ABOUT / CDS / COMMUNITY keyword ──
+    if (command === 'info' || command === 'about' || command === 'cds' || command === 'community') {
+      const operatorName = user.brandName || user.franchiseName || user.verifiedName || user.name || 'Clarion Partner';
+      const operatorBadge = user.isStateCodeVerified
+        ? `(\`${user.stateCode}\` ✅)`
+        : (user.role === 'REFERRAL' || user.parentId ? `(Partner Store)` : `(Official Store)`);
 
       return sock.sendMessage(from, {
-        text: `🇳🇬 *Clarion AI Community Development Initiative*\n\n` +
-          `Every time you buy data from *${storeName}*, a percentage of the profit is ` +
-          `automatically allocated to NYSC Community Development Service (CDS) projects.\n\n` +
-          `*What Clarion CDS Funds Support:*\n` +
-          `🏫 School renovation & educational supplies\n` +
-          `🏥 Community health outreach programs\n` +
-          `🌳 Environmental sustainability projects\n` +
-          `💻 Digital literacy & youth empowerment\n` +
-          `🤝 Skills acquisition workshops\n\n` +
-          `*How It Works:*\n` +
-          `20% to 80% of vendor profits flow directly into CDS projects ` +
-          `(depending on your vendor's chosen tier).\n\n` +
+        text: `🇳🇬 *ABOUT CLARION A.I. STOREFRONT*\n` +
+          `━━━━━━━━━━━━━━\n\n` +
+          `🏪 *Store Operator:* ${operatorName} ${operatorBadge}\n` +
+          `⚡ *Platform:* Clarion A.I. (NYSC SAED Digital Enterprise)\n\n` +
+          `💡 *Our Mission & Heritage:*\n` +
+          `Inspired by the NYSC SAED recharge card production initiative, Clarion modernizes physical voucher printing into a 24/7 cloud AI storefront — delivering high-speed MTN & Glo data at wholesale rates from just ₦400/GB.\n\n` +
+          `💚 *Grassroots Impact (CDS):*\n` +
+          `Every purchase on this line directly co-funds local NYSC Community Development projects (school renovations, health supplies, and youth digital skills).\n\n` +
+          `━━━━━━━━━━━━━━\n` +
+          `👨‍💻 *Lead Architect:*\n` +
+          `*MGL*, Founder & Lead Architect\n` +
+          `Serving Corps Member, Jigawa State \`[JG/26A/2535]\` 🇳🇬\n\n` +
           `──────────────\n` +
-          `Want to make an even bigger impact? You can donate directly:\n\n` +
-          `👉 Reply *DONATE* to contribute to the Clarion CDS Fund\n` +
-          `👉 Reply *DATA* to buy affordable data (automatic CDS contribution included)\n\n` +
-          `_Every naira counts. Thank you for building Nigeria! 🇳🇬_`
+          `👉 Reply *INFO STORY* to read our full journey from SAED to AI\n` +
+          `👉 Reply *DATA* to view all packages\n` +
+          `👉 Reply *DONATE* to support community projects`
       });
     }
 
@@ -473,7 +546,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         });
 
         let menuText = `⚡ *Clarion Data Fuel Dispenser*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `━━━━━━━━━━━━━━━\n\n` +
           `💰 Your Earned Data Fuel: *₦${dataFuelBalance.toLocaleString()}*\n` +
           `📱 Destination: *${targetPhone} (${network.toUpperCase()})*\n\n` +
           `Reply with a number to redeem your earned data:\n`;
@@ -625,7 +698,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           totalPartners = Math.max(1, scores.length);
           const idx = scores.findIndex(s => s.uid === user.uid);
           if (idx !== -1) myRank = idx + 1;
-        } catch (e) {}
+        } catch (e) { }
       }
 
       const currentFuel = await wallet.getDataFuelBalance(user.uid);
@@ -638,7 +711,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       return sock.sendMessage(from, {
         text: `📊 *Your Partner Performance & Rank*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `━━━━━━━━━━━━━━━\n\n` +
           `${rankEmoji} *Store Rank:* *#${myRank} of ${totalPartners} Partners*\n` +
           `⭐ *Promotion Score:* *${myScore.toLocaleString()} pts*\n\n` +
           `📦 *Completed Orders:* ${userMetrics.totalOrders || 0}\n` +
@@ -686,7 +759,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
 
         let msgText = `👥 *Your Squad (${refsSnap.size} Active Partners)*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+          `━━━━━━━━━━━━━━━\n\n`;
 
         let pIdx = 1;
         refsSnap.forEach(doc => {
@@ -704,7 +777,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           pIdx++;
         });
 
-        msgText += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        msgText += `━━━━━━━━━━━━━━━\n` +
           `💡 *To change a partner's profit share:*\n` +
           `Reply *SETSPLIT [Phone] [Percent]* (e.g. *SETSPLIT 08012345678 40*)`;
 
@@ -782,8 +855,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
         const scheduleDesc = numFreq === 1
           ? '1 post daily (Morning 9:00 AM)'
           : numFreq === 2
-          ? '2 posts daily (Morning 9:00 AM & Evening 7:30 PM)'
-          : '3 posts daily (Morning 9:00 AM, Afternoon 1:30 PM & Evening 7:30 PM)';
+            ? '2 posts daily (Morning 9:00 AM & Evening 7:30 PM)'
+            : '3 posts daily (Morning 9:00 AM, Afternoon 1:30 PM & Evening 7:30 PM)';
 
         return sock.sendMessage(from, {
           text: `✅ *Auto-Status Frequency Updated!*\n\n` +
@@ -889,7 +962,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
           await promotedSock.sendMessage(childJid, {
             text: `🎓 *CONGRATULATIONS CORPS MEMBER!* 🇳🇬\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+              `━━━━━━━━━━━━━━━\n\n` +
               `You have officially graduated to a *Full Clarion Parent Store*!\n\n` +
               `✨ *Your Upgraded Privileges:*\n` +
               `• 💰 *100% Cash Earnings* — No longer limited to Data Fuel!\n` +
@@ -983,7 +1056,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         if (checkout.success && checkout.authorizationUrl) {
           onlinePaymentText = `\n💳 *Or Pay with Card / USSD:*\n${checkout.authorizationUrl}\n`;
         }
-      } catch (err) {}
+      } catch (err) { }
 
       return sock.sendMessage(from, {
         text: `💳 *WALLET FUNDING INVOICE*\n` +
@@ -1029,7 +1102,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         try {
           const cDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
           if (cDoc.exists) customerWallet = cDoc.data().walletBalance || 0;
-        } catch (e) {}
+        } catch (e) { }
       }
 
       const orderRef = `CLARION_AIR_${Date.now()}`;
@@ -1056,7 +1129,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               status: 'COMPLETED',
               reference: res.reference,
               createdAt: new Date().toISOString()
-            }).catch(() => {});
+            }).catch(() => { });
           }
           return sock.sendMessage(from, {
             text: `✅ *Airtime Vended Successfully!*\n\n📱 *Recipient:* ${targetPhone}\n🌐 *Network:* ${network.toUpperCase()}\n💰 *Amount:* ₦${amount.toLocaleString()}\n💳 *Paid via:* Clarion Wallet\n\nThank you for using Clarion A.I! 🎉`
@@ -1076,7 +1149,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               retryCount: 0,
               lastError: err.message,
               createdAt: new Date().toISOString()
-            }).catch(() => {});
+            }).catch(() => { });
           }
           return sock.sendMessage(from, { text: `⚠️ We experienced a slight delay dispensing your airtime. Our automated retry system will deliver it shortly.` });
         }
@@ -1094,7 +1167,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           amount,
           status: 'AWAITING_PAYMENT',
           createdAt: new Date().toISOString()
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
@@ -1134,7 +1207,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         try {
           const cDoc = await db.users.doc(user.uid).collection('contacts').doc(actionableJid).get();
           if (cDoc.exists) customerWallet = cDoc.data().walletBalance || 0;
-        } catch (e) {}
+        } catch (e) { }
       }
 
       const orderRef = `CLARION_PIN_${Date.now()}`;
@@ -1160,7 +1233,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               status: 'COMPLETED',
               reference: res.reference,
               createdAt: new Date().toISOString()
-            }).catch(() => {});
+            }).catch(() => { });
           }
           return sock.sendMessage(from, {
             text: `🎓 *${product.name} Delivered!*\n\n` +
@@ -1187,7 +1260,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           amount: product.sellPrice,
           status: 'AWAITING_PAYMENT',
           createdAt: new Date().toISOString()
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       const bankInfo = user.virtualAccount || CENTRAL_HUB_ACCOUNT;
@@ -1236,7 +1309,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       // Save updated promo to Firestore
       if (db.users) {
-        await db.users.doc(user.uid).set({ activePromo: updatedPromo }, { merge: true }).catch(() => {});
+        await db.users.doc(user.uid).set({ activePromo: updatedPromo }, { merge: true }).catch(() => { });
       }
       user.activePromo = updatedPromo;
 
@@ -1251,8 +1324,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
           await db.users.doc(user.uid).collection('contacts').doc(actionableJid).set({
             introduced: true,
             introducedAt: new Date().toISOString()
-          }, { merge: true }).catch(() => {});
-        } catch (e) {}
+          }, { merge: true }).catch(() => { });
+        } catch (e) { }
       }
 
       // Dispense free data grant
@@ -1331,11 +1404,9 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const isGift = targetPhone && targetPhone !== actionableJid.split('@')[0];
       const scanTargetText = isGift ? ` for ${targetPhone}` : '';
 
-      // ── Step 1: AI Scanning message — fires for ALL networks, always first ──
+      // ── Step 1: Scanning message ──
       await sock.sendMessage(from, {
-        text: targetPrice
-          ? `🤖 *Clarion AI is scanning telecom servers for the best verified data packages around your ₦${targetPrice.toLocaleString()} budget${scanTargetText}...* ⏳`
-          : `🤖 *Clarion AI is scanning telecom servers for the best verified data packages${scanTargetText}...* ⏳`
+        text: `🔍 _Searching for the best verified data plans${targetPrice ? ` around ₦${targetPrice.toLocaleString()}` : ''}${scanTargetText}..._`
       });
 
       // ── Search & Demand Intelligence Logging ──
@@ -1385,14 +1456,21 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       const plans = await payflex.getAvailablePlans();
 
+      // ── showSingleNetwork: true when a specific phone/keyword was given OR when
+      //    a budget was provided and the buyer's network can be detected ──
+      const showSingleNetwork = hasExplicitNetwork || (!!targetPrice && !!detectedNet);
+
       let filteredPlans = plans;
-      if (hasExplicitNetwork && detectedNet) {
-        filteredPlans = plans.filter(p => {
+      if (showSingleNetwork && detectedNet) {
+        const netFiltered = plans.filter(p => {
           if (detectedNet === 'mtn') return p.network.includes('mtn');
           return p.network.includes(detectedNet);
         });
+        // Fall back to all plans only if that network has zero entries
+        if (netFiltered.length > 0) filteredPlans = netFiltered;
       }
 
+      // Check if there is an exact price match (drives header wording)
       const hasExactMatch = targetPrice ? filteredPlans.some(p => p.sellPrice === targetPrice) : true;
 
       // Check customer's previous purchase status to determine footer tip
@@ -1403,22 +1481,23 @@ export const handleProxyMessage = async (sock, msg, user) => {
           if (cDoc.exists && cDoc.data().hasPurchased) {
             hasPurchased = true;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
+      // Budget sort: proximity → slice top 5 → re-sort ascending by price
       if (targetPrice) {
         filteredPlans.sort((a, b) => Math.abs(a.sellPrice - targetPrice) - Math.abs(b.sellPrice - targetPrice));
-        filteredPlans = filteredPlans.slice(0, 4);
+        filteredPlans = filteredPlans.slice(0, 5);
         filteredPlans.sort((a, b) => a.sellPrice - b.sellPrice);
       }
 
-      const networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Network';
+      const networkStr = detectedNet ? detectedNet.toUpperCase() : 'All Networks';
       let menuText = isGift ? `🎁 *GIFT DATA FOR ${targetPhone}*\n` : '';
       menuText += `⚡ *CLARION TELECOM CATALOG*\n_Affordable data · Instant delivery 24/7_\n──────────────\n\n`;
 
-      if (hasExplicitNetwork && detectedNet && targetPhone) {
+      if (isGift && detectedNet) {
         menuText += `📶 *${networkStr}* detected for ${targetPhone}\n\n`;
-      } else if (hasExplicitNetwork && detectedNet) {
+      } else if (showSingleNetwork && detectedNet && !isGift) {
         menuText += `📶 *${networkStr}* detected\n\n`;
       }
 
@@ -1426,60 +1505,49 @@ export const handleProxyMessage = async (sock, msg, user) => {
         ? `  👉 Reply *BUY ${plan.serial} ${targetPhone}*\n`
         : `  👉 Reply *BUY ${plan.serial}*\n`;
 
-      if (targetPrice) {
-        if (!hasExactMatch) {
-          menuText += `🔍 *We don't have an exact ₦${targetPrice.toLocaleString()} plan, but here are the closest high-value plans for you:*\n`;
-        } else {
-          menuText += `💰 *Best verified plans near ₦${targetPrice.toLocaleString()} budget:*\n`;
+      // ── Shared helper: group a plan list by durationCategory and render rows ──
+      const renderWithDurations = (plansToRender, showNetLabel = false) => {
+        const groups = {};
+        for (const plan of plansToRender) {
+          const cat = plan.durationCategory || '🗓️ Other Plans';
+          if (!groups[cat]) groups[cat] = [];
+          groups[cat].push(plan);
         }
-      } else if (hasExplicitNetwork) {
-        menuText += `📶 *${networkStr} Data Plans:*\n`;
-      }
+        let out = '';
+        for (const cat of Object.keys(groups)) {
+          out += `\n${cat}\n`;
+          groups[cat].forEach(plan => {
+            const netLabel = showNetLabel ? (plan.network.includes('mtn') ? 'MTN ' : 'Glo ') : '';
+            out += `· *${netLabel}${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
+            out += buyPrompt(plan);
+          });
+        }
+        return out;
+      };
 
       if (filteredPlans.length === 0) {
         menuText += `\n❌ No plans found matching your criteria. Reply *DATA* to view all packages.`;
       } else if (targetPrice) {
-        // Budget view: show nearest 4 plans across networks with network prefix
-        filteredPlans.forEach(plan => {
-          const networkLabel = plan.network.includes('mtn') ? 'MTN' : 'Glo';
-          menuText += `· *${networkLabel} ${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
-          menuText += buyPrompt(plan);
-        });
-      } else if (hasExplicitNetwork) {
-        // Single network requested (e.g. GLO or MTN keyword)
-        const durationGroups = {};
-        for (const plan of filteredPlans) {
-          const cat = plan.durationCategory || '🗓️ Other Plans';
-          if (!durationGroups[cat]) durationGroups[cat] = [];
-          durationGroups[cat].push(plan);
+        // Budget view (single-network or cross-network fallback) — always with duration groups
+        if (!hasExactMatch) {
+          menuText += `🔍 *No exact ₦${targetPrice.toLocaleString()} plan — closest matches:*`;
+        } else {
+          menuText += `💰 *Best plans near ₦${targetPrice.toLocaleString()}:*`;
         }
-        for (const cat of Object.keys(durationGroups)) {
-          menuText += `\n${cat}\n`;
-          durationGroups[cat].forEach(plan => {
-            menuText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
-            menuText += buyPrompt(plan);
-          });
-        }
+        // Show "MTN"/"Glo" prefix only when we couldn't narrow to one network
+        menuText += renderWithDurations(filteredPlans, !showSingleNetwork);
+      } else if (showSingleNetwork) {
+        // Single network full catalog (MTN/GLO keyword, gift, or network alias)
+        menuText += `📶 *${networkStr} Data Plans:*`;
+        menuText += renderWithDurations(filteredPlans, false);
       } else {
         // Bare DATA: show both MTN and Glo sections cleanly separated
         const mtnPlans = filteredPlans.filter(p => p.network.includes('mtn'));
         const gloPlans = filteredPlans.filter(p => p.network.includes('glo'));
 
         const renderSection = (title, secPlans) => {
-          let secText = `📶 *${title}*\n`;
-          const groups = {};
-          for (const plan of secPlans) {
-            const cat = plan.durationCategory || '🗓️ Other Plans';
-            if (!groups[cat]) groups[cat] = [];
-            groups[cat].push(plan);
-          }
-          for (const cat of Object.keys(groups)) {
-            secText += `\n${cat}\n`;
-            groups[cat].forEach(plan => {
-              secText += `· *${plan.name}* — *₦${plan.sellPrice.toLocaleString()}*\n`;
-              secText += buyPrompt(plan);
-            });
-          }
+          let secText = `📶 *${title}*`;
+          secText += renderWithDurations(secPlans, false);
           return secText;
         };
 
@@ -1488,8 +1556,19 @@ export const handleProxyMessage = async (sock, msg, user) => {
         menuText += renderSection('GLO Data Plans:', gloPlans);
       }
 
+      // Append dynamic coming soon note only when no specific recipient phone is targeted
+      let comingSoonNote = '';
+      if (!targetPhone) {
+        if (targetPrice) {
+          comingSoonNote = '\n──────────────\n📡 *Coming Soon:* More data options + high-speed router bundles! ⚡';
+        } else {
+          comingSoonNote = '\n──────────────\n📡 *Coming Soon:* Airtel & 9mobile support + high-speed router bundles! ⚡';
+        }
+      }
+      menuText += comingSoonNote;
+
       if (hasPurchased) {
-        menuText += '\n──────────────\n💡 *Save time: Reply *FUND* to top up your Clarion Wallet & buy in 1-click anytime!*\n· Reply *CANCEL* to exit';
+        menuText += '\n──────────────\n💡 *Tip: Reply *FUND* to top up your Clarion Wallet & buy in 1-click anytime!*\n· Reply *CANCEL* to exit';
       } else {
         menuText += '\n──────────────\n_Transfer exact amount upon prompt. Data dispenses instantly._\n· Reply *CANCEL* to exit';
       }
@@ -1604,8 +1683,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
             const newCds = +(prevCds + settlement.cdsShare).toFixed(2);
             await db.users.doc(user.uid).set({
               totalCdsDonated: admin.firestore.FieldValue.increment(settlement.cdsShare)
-            }, { merge: true }).catch(() => {});
-            handleMilestoneCheck(user.uid, prevCds, newCds, user).catch(() => {});
+            }, { merge: true }).catch(() => { });
+            handleMilestoneCheck(user.uid, prevCds, newCds, user).catch(() => { });
           }
 
           const recipientDisplay = isGiftOrder

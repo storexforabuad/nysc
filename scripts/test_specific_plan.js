@@ -62,13 +62,13 @@ async function run() {
 
     if (data.status === 'SUCCESS') {
       console.log('\n✅ DATA VENDED SUCCESSFULLY!');
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('━━━━━━━━━━━━━━━━━━━━━');
       console.log(`📦 Plan:       ${PLAN.label}`);
       console.log(`📱 Phone:      ${phone}`);
       console.log(`🔖 Reference:  ${data.reference}`);
       console.log(`💰 Amount:     ₦${data.amount || PLAN.wholesale_cost}`);
       console.log(`💳 Balance Left: ₦${data.balance || 'N/A'}`);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('━━━━━━━━━━━━━━━━━━━━━');
       console.log('\nFull API Response:');
       console.log(JSON.stringify(data, null, 2));
     } else {

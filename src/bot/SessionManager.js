@@ -561,7 +561,7 @@ class SessionManager {
       const thursdayRef = getThursdayReference();
 
       const referralGuide = `🎉 *WELCOME TO THE CLARION PARTNER NETWORK!* 🇳🇬\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `━━━━━━━━━━━━━━━\n\n` +
         `Congratulations *${partnerName}*! Your WhatsApp line is now powered by Clarion A.I. ⚡\n\n` +
         `🚀 *How Your Automated Store Works:*\n` +
         `1. *Auto-Vending:* When your contacts text you *DATA*, *DATA 500*, or *BUY*, your AI bot automatically answers, takes payment, and delivers MTN & Glo data (starting at just ₦400/GB) in seconds!\n` +
@@ -572,7 +572,7 @@ class SessionManager {
         `• *STATS* — Check your total sales, Data Fuel balance, and leaderboard standing.\n` +
         `• *STATECODE [YourCode]* — Submit your NYSC State Code to qualify for promotion to a Full Store ${thursdayRef}! _(e.g. STATECODE JG/26A/2535)_\n` +
         `• *SUGGEST [Phone] [Name]* — Invite a fellow Corps Member to earn +25 promotion points.\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `━━━━━━━━━━━━━━━\n` +
         `_You can continue using your WhatsApp normally with friends. The AI bot only responds when keywords are sent._ Have a profitable day! 🚀`;
 
       try {
@@ -585,7 +585,7 @@ class SessionManager {
       if (fullUser.parentId) {
         const parentJid = fullUser.parentId.includes('@') ? fullUser.parentId : `${fullUser.parentId}@s.whatsapp.net`;
         const parentAlert = `🎉 *PARTNER ACTIVATION CONFIRMED!*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `━━━━━━━━━━━━━━━\n\n` +
           `Partner *${partnerName}* (+${cleanPhone}) has successfully scanned and is now *ONLINE* under your Store! ⚡\n\n` +
           `• *Your Share:* 65% Cash (credited to your withdrawable wallet on every sale)\n` +
           `• *Partner Share:* 35% Data Fuel (free data redemption)\n` +
@@ -959,9 +959,9 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       `──────────────\n` +
       `_⚡ 3 of 3 free grants remaining_`
       : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is officially live!\n\n` +
-      `Get instant, affordable MTN, Airtel, Glo & 9mobile data delivered automatically 24/7. ⚡\n\n` +
-      `👉 Just reply *DATA* or *DATA 1000* to this chat to view all available packages!\n\n` +
-      `💚 _A percentage of every purchase supports NYSC Community Development projects._ 🇳🇬`;
+      `Get instant, affordable MTN & Glo data delivered automatically in seconds — starting at just ₦400 per GIG! ⚡\n\n` +
+      `💚 Every purchase helps co-fund local NYSC Community Development (CDS) projects. 🇳🇬\n\n` +
+      `👉 Just reply *DATA* or *DATA 1000* to this chat to view all available packages!`;
 
     const statusGateMsg = `📢 *STEP 4 OF 5 — AUTO LAUNCH STATUS PREVIEW*\n\n` +
       `We are ready to automatically broadcast this announcement to your WhatsApp Status:\n` +
@@ -981,7 +981,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     if (['approve', 'post', 'yes', 'ok', '1'].includes(text)) {
       const statusText = fullUser.pendingStatusText || (fullUser.promoActive
         ? `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\nMy 24/7 automated data store (*${info.storeName}*) is live! Reply *PROMO* to claim 500MB free data now!`
-        : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is live! Reply *DATA* to order.`);
+        : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is live! Reply *DATA* for instant MTN & Glo data from ₦400/GB!`);
 
       try {
         const cleanPhone = String(fullUser.phoneNumber || fullUser.phone || fullUser.uid || from || '').replace(/[^0-9]/g, '');
@@ -1001,9 +1001,22 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
             break;
           }
         }
+        if (!worker && sessionManager.sessions && cleanPhone) {
+          for (const [k, w] of sessionManager.sessions.entries()) {
+            if (k.includes(cleanPhone)) {
+              worker = w;
+              break;
+            }
+          }
+        }
 
         if (worker && typeof worker.postMessage === 'function') {
+          // Brief warm-up delay so the worker socket is fully established before posting
+          await new Promise(r => setTimeout(r, 1200));
           worker.postMessage({ type: 'text_status', text: statusText });
+          if (db.users) {
+            await db.users.doc(fullUser.uid || from).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
+          }
           logger.info(`[AUTO-STATUS] Dispatched launch status to worker for ${fullUser.uid || from}`);
           await sock.sendMessage(from, { text: `✅ *Launch announcement posted to your WhatsApp Status!* 🚀` });
         } else {
@@ -1020,19 +1033,19 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       await new Promise(r => setTimeout(r, 800));
     }
 
-    const scheduleMsg = `📅 *STEP 5 OF 5 — 7-DAY DAILY AUTO-STATUS SCHEDULE*\n` +
-      `Your store automatically posts 1 high-converting status daily at 9:00 AM:\n\n` +
-      `· Day 1 (Mon): ⚡ Cheap MTN, Airtel & Glo 24/7 (Reply *DATA*)\n` +
-      `· Day 2 (Tue): 📱 Running low on data? (Reply *DATA 500*)\n` +
-      `· Day 3 (Wed): 🇳🇬 Support NYSC CDS community projects (Reply *DATA*)\n` +
-      `· Day 4 (Thu): 🎓 WAEC & NECO Result Checker PINs (Reply *PIN WAEC*)\n` +
-      `· Day 5 (Fri): 💳 Instant Airtime Top-ups (Reply *CARD 500*)\n` +
-      `· Day 6 (Sat): ⚡ Weekend High-Speed Bundles (Reply *DATA*)\n` +
-      `· Day 7 (Sun): 🎉 Sunday Data Deals & Top-ups (Reply *DATA*)\n` +
+    const scheduleMsg = `📅 *STEP 5 OF 5 — SMART AUTO-STATUS SCHEDULE*\n` +
+      `Your store posts *high-impact WhatsApp Statuses automatically* across the day:\n\n` +
+      `🌅 *Morning (9:00 AM)* — Daily data deals & wallet tips\n` +
+      `☀️ *Afternoon (1:30 PM)* — Cheat sheets, gifting tips & CDS impact stories\n` +
+      `🌙 *Evening (7:30 PM)* — Weekend bundles, movie data & promo countdowns\n\n` +
+      `✨ *Clarion Sprinkles* — Educational value posts auto-placed throughout the week to build trust.\n\n` +
       `──────────────\n` +
-      `Auto-Posting is currently: *ACTIVE* 🟢\n` +
-      `(You can toggle anytime by replying *STATUS ON* or *STATUS OFF*)\n\n` +
-      `👉 Reply *NEXT* to view your final operational checklist!`;
+      `📡 *Status Frequency Keywords:*\n` +
+      `· *STATUS 1* — 1 post daily (Morning only)\n` +
+      `· *STATUS 2* — 2 posts daily (Morning + Evening)\n` +
+      `· *STATUS 3* — 3 posts daily (Morning, Afternoon & Evening) ← *Recommended*\n\n` +
+      `Auto-Posting is currently: *ACTIVE 🟢* (${fullUser.statusFrequency || 3} posts/day)\n\n` +
+      `👉 Reply *NEXT* to view your full command reference!`;
 
     await sock.sendMessage(from, { text: scheduleMsg });
     await persistStep(5);
@@ -1069,20 +1082,35 @@ async function finishWizard(sock, from, fullUser, info, isAutonomous, persistSte
     `──────────────\n\n` +
     `Your digital telecom franchise is officially active:\n\n` +
     `📦 *SALES COMMANDS*\n` +
-    `· *DATA* — View full data catalog\n` +
-    `· *CHECK [net] [size]* — Instant price check\n` +
-    `· *ORDER [size] [phone]* — Manual customer order\n` +
-    `· *ORDERS* — Live order feed & delivery status\n\n` +
+    `· *DATA* — View full MTN & Glo catalog\n` +
+    `· *DATA [budget]* — e.g. *DATA 500* — budget-filtered plans\n` +
+    `· *DATA [budget] [phone]* — gift data to another number\n` +
+    `· *MTN* / *GLO* — Single-network catalog\n` +
+    `· *BUY [serial]* — Instant order from catalog\n` +
+    `· *CARD [amt]* — Airtime top-up\n` +
+    `· *PIN WAEC* / *PIN NECO* — Exam result PINs\n\n` +
     `💰 *WALLET & CASHOUT*\n` +
-    `· *BALANCE* — Real-time earnings & wallet balance\n` +
-    `· *WITHDRAW [amount]* — Payout to your verified bank\n\n` +
-    `📢 *MARKETING & LAUNCH*\n` +
-    `· *PROMO* — Launch & monitor customer giveaways\n` +
-    `· *STATUS* — View & toggle daily WhatsApp status\n` +
+    `· *BALANCE* — Customer wallet balance\n` +
+    `· *FUND* — Top up Clarion Wallet (fee-free vending)\n` +
+    `· *WITHDRAW [amount]* — Payout to your bank\n\n` +
+    `📢 *STATUS & MARKETING*\n` +
+    `· *STATUS* — View current auto-status settings\n` +
+    `· *STATUS 1 / 2 / 3* — Set posting frequency\n` +
+    `· *PROMO* — Launch & monitor giveaway engine\n` +
     `· *KIT* — Store graphics & marketing assets\n` +
-    `· *ANNOUNCE* — Toggle first-contact greeting banner\n\n` +
-    `🤖 *AUTOMATION*\n` +
-    `· *MODE* — View AI autopilot status\n\n` +
+    `· *ANNOUNCE* — Toggle first-contact greeting\n\n` +
+    `👥 *SQUAD (Parent Stores)*\n` +
+    `· *SQUAD* — View all your referral partners\n` +
+    `· *SUGGEST [phone] [name]* — Onboard a new partner\n` +
+    `· *SETSPLIT [phone] [%]* — Adjust partner profit share\n` +
+    `· *APPROVE_UPGRADE [phone]* — Graduate top partner\n` +
+    `· *STATS* / *RANK* — View your leaderboard position\n` +
+    `· *STATECODE [code]* — Verify your NYSC state code\n\n` +
+    `🤖 *AUTOMATION & IDENTITY*\n` +
+    `· *MODE* — View AI autopilot status (via Mother Bot)\n` +
+    `· *INFO* — Store info card (what we are & why)\n` +
+    `· *INFO STORY* — Full Clarion founding journey\n` +
+    `· *REDEEM* — Redeem your earned Data Fuel\n\n` +
     `──────────────\n` +
     `${autoPledge}\n\n` +
     `──────────────\n` +

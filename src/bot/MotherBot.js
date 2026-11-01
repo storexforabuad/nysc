@@ -10,6 +10,7 @@ import reportService from '../services/ReportService.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
 import mediaGen from '../services/mediaGen.js';
 import { detectNetwork, parseNyscBatch } from '../utils/networkUtils.js';
+import { getThursdayReference } from '../utils/dateHelpers.js';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import QRCode from 'qrcode';
 import { mockCdsProposals } from '../services/AdminService.js';
@@ -1047,7 +1048,7 @@ export const handleMotherMessage = async (sock, msg) => {
           try {
             const snap = await db.users.doc(partnerUid).collection('manualOrders').orderBy('createdAt', 'desc').limit(5).get();
             orders = snap.docs.map(d => d.data());
-          } catch (e) {}
+          } catch (e) { }
         }
         if (orders.length === 0) {
           orders = Array.from(mockManualOrders.values()).filter(o => o.partnerId === partnerUid).slice(0, 5);
@@ -1085,6 +1086,28 @@ export const handleMotherMessage = async (sock, msg) => {
           logger.error('Failed to trigger manual status broadcast:', e.message);
           return sock.sendMessage(from, {
             text: '❌ Could not dispatch status post at this time. Please ensure your ProxyBot is connected.'
+          });
+        }
+      }
+
+      // 🧪 STATUS TEST — Instantly fires current time-slot text status to all active proxies
+      if (lower === 'status test') {
+        try {
+          const { sendScheduledSlotStatus } = await import('../jobs/statusPostJob.js');
+          const hour = new Date().getHours();
+          const slot = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+          await sendScheduledSlotStatus(slot);
+          const workerCount = sessionManager.sessions ? sessionManager.sessions.size : 0;
+          return sock.sendMessage(from, {
+            text: `✅ *Status Test Complete!*\n\n` +
+              `📤 Slot fired: *${slot.toUpperCase()}*\n` +
+              `📱 Active ProxyBot sessions targeted: *${workerCount}*\n\n` +
+              `Check your ProxyBot's WhatsApp Status tab to confirm the story appeared. If no story appeared, ensure the ProxyBot is connected and has contacts synced.`
+          });
+        } catch (e) {
+          logger.error('STATUS TEST failed:', e.message);
+          return sock.sendMessage(from, {
+            text: `❌ *Status test failed:* ${e.message}\n\nEnsure your ProxyBot worker is running and connected.`
           });
         }
       }
@@ -1130,7 +1153,17 @@ export const handleMotherMessage = async (sock, msg) => {
       }
 
       if (lower === 'mode') {
-        const isAuto = userData.botMode === 'autonomous';
+        // Always read fresh from Firestore to avoid stale in-memory state
+        let liveBotMode = userData.botMode;
+        if (db && db.users) {
+          try {
+            const freshDoc = await db.users.doc(from).get();
+            if (freshDoc.exists && freshDoc.data().botMode) {
+              liveBotMode = freshDoc.data().botMode;
+            }
+          } catch (_) { }
+        }
+        const isAuto = liveBotMode === 'autonomous';
         return sock.sendMessage(from, {
           text: `⚙️ *FRANCHISE AUTOMATION MODE*\n──────────────\n\nCurrent Mode: *${isAuto ? 'AUTONOMOUS 🤖' : 'MANUAL 👤'}*\n\n• Reply *MODE AUTO* to switch to autonomous AI\n• Reply *MODE MANUAL* to switch to manual handling\n• Reply *0* to return to EARN menu`
         });
@@ -1290,7 +1323,7 @@ export const handleMotherMessage = async (sock, msg) => {
                 .filter(f => f.startsWith(userPhone))
                 .map(f => path.join(PITCHES_DIR, f));
               if (diskFiles.length > 0) files = diskFiles;
-            } catch (e) {}
+            } catch (e) { }
           }
         }
 
@@ -1383,7 +1416,7 @@ export const handleMotherMessage = async (sock, msg) => {
                 .filter(f => f.startsWith(userPhone))
                 .map(f => path.join(DESIGNS_DIR, f));
               if (diskFiles.length > 0) files = diskFiles;
-            } catch (e) {}
+            } catch (e) { }
           }
         }
 
@@ -2225,7 +2258,7 @@ export const handleMotherMessage = async (sock, msg) => {
         matchedPlans.forEach(p => {
           msg += `👉 *${p.name}* — ₦${p.sellPrice.toLocaleString()}\n`;
         });
-        msg += `\n━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        msg += `\n━━━━━━━━━━━━━━\n` +
           `💡 *To create an order:* \n` +
           `Text *ORDER [Size/Price] [Phone]*\n` +
           `Example: *ORDER 1GB ${prefix}1234567* (network auto-detected!)`;
@@ -2334,22 +2367,22 @@ export const handleMotherMessage = async (sock, msg) => {
         const expiryTimeStr = expiresAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
         const partnerBlock = `${warningText}✅ *Order ${orderId} Created*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `━━━━━━━━━━━━━━\n` +
           `📦 *Plan:* ${selectedPlan.name}\n` +
           `📱 *Customer:* ${targetPhone}\n` +
           `💰 *Price:* ₦${selectedPlan.sellPrice.toLocaleString()}\n` +
           `💵 *Your Profit:* ₦${(selectedPlan.sellPrice - selectedPlan.basePrice).toLocaleString()}\n` +
           `⏰ *Expires:* ${expiryTimeStr} (in 30 mins)\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `━━━━━━━━━━━━━━\n\n` +
           `👇 *Forward the message below to your customer:*\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `━━━━━━━━━━━━━━\n` +
           `💳 *Payment Transfer Details*\n` +
           `🏦 *Bank:* ${virtualAcct.bankName}\n` +
           `🔢 *Account:* ${virtualAcct.accountNumber}\n` +
           `👤 *Name:* ${virtualAcct.accountName || `Clarion - ${partnerName}`}\n` +
           `💰 *Amount:* ₦${selectedPlan.sellPrice.toLocaleString()} exactly\n\n` +
           `⚡ Once paid, your *${selectedPlan.name}* will be delivered automatically to *${targetPhone}* in under 20 seconds!\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━`;
+          `━━━━━━━━━━━━━━`;
 
         return sock.sendMessage(from, { text: partnerBlock });
       }
@@ -2384,7 +2417,7 @@ export const handleMotherMessage = async (sock, msg) => {
           });
         }
 
-        let ordersMsg = `📋 *Your Recent Customer Orders*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        let ordersMsg = `📋 *Your Recent Customer Orders*\n━━━━━━━━━━━━━━\n\n`;
         const now = new Date();
 
         orders.forEach(o => {
@@ -2407,7 +2440,7 @@ export const handleMotherMessage = async (sock, msg) => {
             `   📱 ${o.targetPhone} | ₦${o.amount.toLocaleString()} (${statusLabel})\n\n`;
         });
 
-        ordersMsg += `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        ordersMsg += `━━━━━━━━━━━━━━\n` +
           `Text *CANCEL [orderId]* to cancel a pending order.`;
 
         return sock.sendMessage(from, { text: ordersMsg.trim() });
@@ -2544,7 +2577,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
         const expFormatted = expiresAt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
-        const confirmMsg = `🎉 *Autonomous Mode Activated!* 🚀\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        const confirmMsg = `🎉 *Autonomous Mode Activated!* 🚀\n━━━━━━━━━━━━━━\n\n` +
           `Your ProxyBot is now running *24/7 in Autonomous Mode* (${planConfig.label})!\n\n` +
           `⚡ *What happens next:*\n` +
           `• When customers text *DATA*, *CARD*, or *PIN*, your bot responds instantly\n` +
@@ -2589,7 +2622,7 @@ export const handleMotherMessage = async (sock, msg) => {
 
           const expDate = new Date(activeSub.expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
           return sock.sendMessage(from, {
-            text: `🛑 *Auto-Renewal Cancelled*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            text: `🛑 *Auto-Renewal Cancelled*\n━━━━━━━━━━━━━━\n\n` +
               `You have successfully cancelled subscription renewal.\n\n` +
               `✨ *Good news:* You've already paid for your current cycle, so your ProxyBot will stay *24/7 Autonomous until ${expDate}*!\n\n` +
               `After *${expDate}*, your store will switch to *Manual Mode* without charging your wallet again.\n\n` +
@@ -2609,7 +2642,7 @@ export const handleMotherMessage = async (sock, msg) => {
         await saveUser(updatedUser);
 
         return sock.sendMessage(from, {
-          text: `🛑 *Switched to Manual Mode*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          text: `🛑 *Switched to Manual Mode*\n━━━━━━━━━━━━━━\n\n` +
             `Your ProxyBot is now silent. You will handle customer inquiries manually and process sales using MotherBot:\n\n` +
             `👉 *CHECK [prefix] [size]* — Find prices\n` +
             `👉 *ORDER [size] [phone]* — Generate order & payment details\n\n` +
@@ -2660,6 +2693,13 @@ export const handleMotherMessage = async (sock, msg) => {
           `· *KIT* — Promotional status text & share card\n` +
           `· *PROMO* — Launch giveaway poster & promo fuel\n` +
           `· *GIFT [phone] [plan]* — Gift data to a friend\n\n` +
+          `👥 *Squad & Partners*\n` +
+          `· *SQUAD* — View referral partners & squad sales\n` +
+          `· *SUGGEST [phone] [name]* — Onboard a new partner\n` +
+          `· *SETSPLIT [phone] [%]* — Adjust profit share\n` +
+          `· *APPROVE_UPGRADE [phone]* — Graduate top partner\n` +
+          `· *STATUS [1/2/3]* — Auto-status posting frequency\n` +
+          `· *STATECODE [code]* — Verify NYSC state code\n\n` +
           `🎖️ *Community & Impact*\n` +
           `· *RANK* / *PROFILE* — NYSC Franchise License\n` +
           `· *IMPACT* — CDS donation milestone score\n` +
@@ -2671,39 +2711,100 @@ export const handleMotherMessage = async (sock, msg) => {
         return sock.sendMessage(from, { text: helpMsg });
       }
 
+      // ── INFO STORY / STORY keyword (The Full Founding SAED Journey) ──
+      else if (userData.state === STATES.COMPLETED && /^(?:info\s+story|story|saed)$/i.test(command)) {
+        return sock.sendMessage(from, {
+          text: `📖 *THE CLARION JOURNEY: FROM SAED TO A.I.*\n` +
+            `━━━━━━━━━━━━━━━\n\n` +
+            `In NYSC orientation camp, the SAED program introduces Corps Members to recharge card printing. But in today's smartphone world, manual paper vouchers require heavy machine investments and paper waste.\n\n` +
+            `We asked a bold question:\n` +
+            `_Why can't every Nigerian Corps Member and youth operate an automated cloud telecom network right on WhatsApp without capital barrier?_\n\n` +
+            `Clarion was engineered from Jigawa State as a national service innovation:\n` +
+            `1️⃣ *Zero Capital Barrier:* Any youth can launch an automated AI storefront.\n` +
+            `2️⃣ *Wholesale Affordability:* Direct telecom pipelines starting at ₦400/GB.\n` +
+            `3️⃣ *Built-in Giving Back:* A portion of every transaction quietly funds grassroots CDS community projects in underserved areas.\n\n` +
+            `To our partners, customers and NYSC family: Thank you for building Nigeria with us! 🇳🇬\n\n` +
+            `— *MGL*\n` +
+            `Founder & Lead Architect, Clarion A.I.\n` +
+            `Serving Corps Member, Jigawa State \`[JG/26A/2535]\`\n` +
+            `📞 Direct Line: +2347032905036\n\n` +
+            `──────────────\n` +
+            `👉 Reply *0* for Main Menu`
+        });
+      }
+
+      // ── INFO / ABOUT keyword ──
+      else if (userData.state === STATES.COMPLETED && /^(?:info|about|origin)$/i.test(command)) {
+        const operatorName = userData.brandName || userData.franchiseName || userData.verifiedName || userData.name || 'Partner';
+        const operatorBadge = userData.isStateCodeVerified
+          ? `(\`${userData.stateCode}\` ✅)`
+          : (userData.role === 'REFERRAL' || userData.parentId ? `(Partner Store)` : `(Official Franchise)`);
+
+        return sock.sendMessage(from, {
+          text: `🇳🇬 *ABOUT CLARION A.I. STOREFRONT*\n` +
+            `━━━━━━━━━━━━━━\n\n` +
+            `🏪 *Store Operator:* ${operatorName} ${operatorBadge}\n` +
+            `⚡ *Platform:* Clarion A.I. (NYSC SAED Digital Enterprise)\n\n` +
+            `💡 *Our Mission & Heritage:*\n` +
+            `Inspired by the NYSC SAED recharge card production initiative, Clarion modernizes physical voucher printing into a 24/7 cloud AI storefront — delivering high-speed MTN & Glo data at wholesale rates from just ₦400/GB.\n\n` +
+            `💚 *Grassroots Impact (CDS):*\n` +
+            `Every purchase on this network directly co-funds local NYSC Community Development projects (school renovations, health supplies, and youth digital skills).\n\n` +
+            `━━━━━━━━━━━━━━\n` +
+            `👨‍💻 *Lead Architect:*\n` +
+            `*MGL*, Founder & Lead Architect\n` +
+            `Serving Corps Member, Jigawa State \`[JG/26A/2535]\` 🇳🇬\n\n` +
+            `──────────────\n` +
+            `👉 Reply *INFO STORY* to read our full journey from SAED to AI\n` +
+            `👉 Reply *0* for Main Menu`
+        });
+      }
+
       // ── MODE Command (Check current bot operating mode & subscription status) ──
       else if (userData.state === STATES.COMPLETED && /^mode$/i.test(command)) {
-        const currentMode = userData.botMode || BOT_MODES.MANUAL;
-        const sub = userData.subscription;
-        const now = new Date();
-
-        if (currentMode === BOT_MODES.AUTONOMOUS && sub?.expiresAt) {
-          const expDate = new Date(sub.expiresAt);
-          const isExpired = now > expDate;
-          const daysLeft = Math.max(0, Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)));
-
-          if (!isExpired) {
-            const planTitle = sub.plan === 'FREE_GRANT' ? 'Complimentary Free AI Grant' : sub.plan;
-            const announceStatus = userData.announceNewContacts !== false ? 'ENABLED 📢' : 'OFF 🔕';
-            return sock.sendMessage(from, {
-              text: `⚙️ *AUTOPILOT CONTROLS*\n` +
-                `_Manage your ProxyBot AI response engine._\n` +
-                `──────────────\n\n` +
-                `Status: *AUTONOMOUS ACTIVE* 🤖\n` +
-                `Plan: ${planTitle} · ${daysLeft} days left\n` +
-                `Expires: ${expDate.toLocaleDateString('en-GB')}\n` +
-                `Auto-Renew: ${sub.autoRenew !== false ? '✅ Active' : '❌ Inactive'}\n` +
-                `First-Contact Intro: *${announceStatus}*\n\n` +
-                `· Reply *DOWNGRADE* — Switch to manual mode\n` +
-                `· Reply *UPGRADE* — Extend automation\n` +
-                `· Reply *ANNOUNCE ON/OFF* — Toggle welcome messages\n\n` +
-                `──────────────\n` +
-                `· Reply *0* for Main Menu`
-            });
-          }
+        // Read fresh from Firestore if available
+        let liveData = userData;
+        if (db && db.users) {
+          try {
+            const freshDoc = await db.users.doc(from).get();
+            if (freshDoc.exists) liveData = { ...userData, ...freshDoc.data() };
+          } catch (_) { }
         }
 
-        const announceStatus = userData.announceNewContacts !== false ? 'ENABLED 📢' : 'OFF 🔕';
+        const currentMode = liveData.botMode || BOT_MODES.AUTONOMOUS;
+        const sub = liveData.subscription;
+        const now = new Date();
+        const announceStatus = liveData.announceNewContacts !== false ? 'ENABLED 📢' : 'OFF 🔕';
+
+        if (currentMode === BOT_MODES.AUTONOMOUS || currentMode === 'autonomous') {
+          let planText = 'Complimentary AI Franchise';
+          let expiresText = 'Active';
+          if (sub?.expiresAt) {
+            const expDate = new Date(sub.expiresAt);
+            const isExpired = now > expDate;
+            const daysLeft = Math.max(0, Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)));
+            if (!isExpired) {
+              planText = `${sub.plan === 'FREE_GRANT' ? 'Complimentary AI Grant' : (sub.plan || 'Active')} · ${daysLeft} days left`;
+              expiresText = expDate.toLocaleDateString('en-GB');
+            }
+          }
+
+          return sock.sendMessage(from, {
+            text: `⚙️ *AUTOPILOT CONTROLS*\n` +
+              `_Manage your ProxyBot AI response engine._\n` +
+              `──────────────\n\n` +
+              `Status: *AUTONOMOUS ACTIVE* 🤖\n` +
+              `Plan: ${planText}\n` +
+              `Expires: ${expiresText}\n` +
+              `Auto-Renew: ${sub?.autoRenew !== false ? '✅ Active' : '❌ Inactive'}\n` +
+              `First-Contact Intro: *${announceStatus}*\n\n` +
+              `· Reply *DOWNGRADE* — Switch to manual mode\n` +
+              `· Reply *UPGRADE* — Extend automation\n` +
+              `· Reply *ANNOUNCE ON/OFF* — Toggle welcome messages\n\n` +
+              `──────────────\n` +
+              `· Reply *0* for Main Menu`
+          });
+        }
+
         return sock.sendMessage(from, {
           text: `⚙️ *AUTOPILOT CONTROLS*\n` +
             `_Manage your ProxyBot AI response engine._\n` +
@@ -2718,6 +2819,328 @@ export const handleMotherMessage = async (sock, msg) => {
             `· Reply *ANNOUNCE ON/OFF* — Toggle welcome messages\n\n` +
             `──────────────\n` +
             `· Reply *0* for Main Menu`
+        });
+      }
+
+      // ── SQUAD / MYREFS / PARTNERS Command (Parent Store Squad Management) ──
+      else if (userData.state === STATES.COMPLETED && /^(?:squad|myrefs|partners)$/i.test(command)) {
+        const cleanUserPhone = String(userData.phoneNumber || userData.phone || from || '').replace(/[^0-9]/g, '');
+        const parentIdsToQuery = Array.from(new Set([
+          from,
+          userData.uid,
+          cleanUserPhone,
+          `proxy_${cleanUserPhone}`,
+          cleanUserPhone ? `${cleanUserPhone}@s.whatsapp.net` : null
+        ].filter(Boolean)));
+
+        let squadMembers = [];
+        if (db.users) {
+          try {
+            for (const pId of parentIdsToQuery) {
+              const snap = await db.users.where('parentId', '==', pId).get();
+              snap.forEach(d => {
+                if (!squadMembers.some(m => m.id === d.id)) {
+                  squadMembers.push({ id: d.id, ...d.data() });
+                }
+              });
+            }
+          } catch (err) {
+            logger.warn(`Failed to fetch squad for ${from}: ${err.message}`);
+          }
+        }
+
+        if (squadMembers.length === 0) {
+          return sock.sendMessage(from, {
+            text: `👥 *YOUR CLARION SQUAD*\n` +
+              `━━━━━━━━━━━━━━\n\n` +
+              `You currently have *0 active partners* in your squad.\n\n` +
+              `💡 *Why build a squad?*\n` +
+              `• Earn cash profit overrides on *every single gigabyte* your partners sell.\n` +
+              `• Receive *+25 CDS Promotion Points* for every recruit.\n` +
+              `• Accelerate your climb to the top of the NYSC State Leaderboard!\n\n` +
+              `👉 *To onboard your first partner:*\n` +
+              `Reply *SUGGEST [Phone] [Name]*\n` +
+              `_Example:_ *SUGGEST 08012345678 Chinedu*\n\n` +
+              `──────────────\n` +
+              `· Reply *0* for Main Menu`
+          });
+        }
+
+        let squadMsg = `👥 *YOUR CLARION SQUAD (${squadMembers.length} Active Partners)*\n` +
+          `━━━━━━━━━━━━━━\n\n`;
+
+        squadMembers.forEach((m, idx) => {
+          const phone = m.phoneNumber || m.phone || m.id.split('@')[0];
+          const name = m.name || m.franchiseName || m.verifiedName || `Partner ${idx + 1}`;
+          const metrics = m.metrics || {};
+          const split = m.profitSharePercent !== undefined ? m.profitSharePercent : 35;
+          const state = m.isStateCodeVerified ? `✅ \`${m.stateCode}\`` : '⚠️ No Code';
+
+          squadMsg += `${idx + 1}. *${name}* (+${phone})\n` +
+            `   • Orders: ${metrics.totalOrders || 0} (₦${(metrics.totalRevenueNaira || 0).toLocaleString()})\n` +
+            `   • Profit Split: ${split}% Data Fuel | ${100 - split}% Cash to You\n` +
+            `   • State Code: ${state}\n\n`;
+        });
+
+        squadMsg += `━━━━━━━━━━━━━━\n` +
+          `💡 *Squad Management Commands:*\n` +
+          `· *SETSPLIT [Phone] [Percent]* — Adjust partner split (e.g. *SETSPLIT 08012345678 40*)\n` +
+          `· *APPROVE_UPGRADE [Phone]* — Graduate verified partner to full sovereign store\n` +
+          `· *SUGGEST [Phone] [Name]* — Onboard another partner\n\n` +
+          `──────────────\n` +
+          `· Reply *0* for Main Menu`;
+
+        return sock.sendMessage(from, { text: squadMsg });
+      }
+
+      // ── SUGGEST Command (Onboard new Squad member / partner) ──
+      else if (userData.state === STATES.COMPLETED && /^suggest\s+/i.test(command)) {
+        const suggestMatch = command.match(/^suggest\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})\s+(.+)$/i);
+        if (!suggestMatch) {
+          return sock.sendMessage(from, {
+            text: `💡 *How to suggest a new partner:*\n\nReply *SUGGEST [Phone] [Name]*\nExample: *SUGGEST 08012345678 Chinedu*`
+          });
+        }
+
+        let rawNum = suggestMatch[1].replace(/\D/g, '');
+        if (rawNum.startsWith('0') && rawNum.length === 11) {
+          rawNum = '234' + rawNum.substring(1);
+        }
+        const candidatePhone = rawNum;
+        const candidateJid = `${candidatePhone}@s.whatsapp.net`;
+        const candidateName = suggestMatch[2].trim();
+        const parentId = userData.uid || from;
+
+        if (db.users) {
+          await db.users.doc(candidateJid).set({
+            uid: candidateJid,
+            phoneNumber: candidatePhone,
+            phoneJid: candidateJid,
+            name: candidateName,
+            role: 'REFERRAL',
+            parentId: parentId,
+            recruitedBy: from,
+            state: 'AWAITING_QR_SCAN',
+            profitSharePercent: 35,
+            dataFuelBalance: 0,
+            metrics: {
+              totalOrders: 0,
+              totalRevenueNaira: 0,
+              totalProfitNaira: 0,
+              recruitedPartnersCount: 0
+            },
+            suggestedAt: new Date().toISOString()
+          }, { merge: true });
+        }
+
+        await sock.sendMessage(from, {
+          text: `⏳ *Generating Activation QR Code for ${candidateName} (+${candidatePhone})...*\n\nPlease stand by — the QR code image will appear right here for you to display to ${candidateName}!`
+        });
+
+        try {
+          await sessionManager.startQRPairingForUser(
+            {
+              uid: candidateJid,
+              phoneNumber: candidatePhone,
+              phoneJid: candidateJid,
+              name: candidateName,
+              ownerJid: from,
+              motherJid: from,
+              parentId: parentId,
+              recruitedBy: from
+            },
+            async (rawQR) => {
+              try {
+                const qrBuffer = await QRCode.toBuffer(rawQR, { width: 600, margin: 2 });
+                await sock.sendMessage(from, {
+                  image: qrBuffer,
+                  caption: `📸 *Scan this Activation QR Code with ${candidateName}'s Phone (+${candidatePhone})!*\n\n` +
+                    `1. Open WhatsApp on *+${candidatePhone}*\n` +
+                    `2. Go to *Settings > Linked Devices > Link a Device*\n` +
+                    `3. Point camera at this QR code!\n\n` +
+                    `⏱️ *Expires in 60 seconds.*\n` +
+                    `🎖️ *You will earn +25 CDS Promotion Points once ${candidateName} is online!*`
+                });
+              } catch (err) {
+                logger.error('Error generating referral QR buffer in MotherBot:', err);
+              }
+            }
+          );
+        } catch (pairErr) {
+          logger.error('Failed to start suggested pairing in MotherBot:', pairErr.message);
+          return sock.sendMessage(from, {
+            text: `❌ Could not generate QR code for ${candidateName}. Please verify the phone number and try again.`
+          });
+        }
+        return;
+      }
+
+      // ── SETSPLIT Command (Adjust profit split % for a squad member) ──
+      else if (userData.state === STATES.COMPLETED && /^setsplit\s+/i.test(command)) {
+        const setSplitMatch = command.match(/^setsplit\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})\s+(\d{1,2}|100)$/i);
+        if (!setSplitMatch) {
+          return sock.sendMessage(from, {
+            text: `💡 *How to update profit split:*\n\nReply *SETSPLIT [Phone] [Percent]*\nExample: *SETSPLIT 08012345678 40*`
+          });
+        }
+
+        let cleanPhone = setSplitMatch[1].replace(/\D/g, '');
+        if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+          cleanPhone = '234' + cleanPhone.substring(1);
+        }
+        const targetChildJid = `${cleanPhone}@s.whatsapp.net`;
+        const newSplit = parseInt(setSplitMatch[2], 10);
+
+        if (db.users) {
+          await db.users.doc(targetChildJid).set({
+            profitSharePercent: newSplit
+          }, { merge: true });
+        }
+
+        return sock.sendMessage(from, {
+          text: `✅ *Profit Split Updated!*\n\n` +
+            `Partner +${cleanPhone} will now receive *${newSplit}%* of distributable profit (in Data Fuel).\n` +
+            `Your store receives *${100 - newSplit}%* (in Withdrawable Cash).`
+        });
+      }
+
+      // ── APPROVE_UPGRADE Command (Graduate top performing squad member to Sovereign Store) ──
+      else if (userData.state === STATES.COMPLETED && /^approve_upgrade\s+/i.test(command)) {
+        const upgradeMatch = command.match(/^approve_upgrade\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10})$/i);
+        if (!upgradeMatch) {
+          return sock.sendMessage(from, {
+            text: `💡 *How to approve upgrade:*\n\nReply *APPROVE_UPGRADE [Phone]*\nExample: *APPROVE_UPGRADE 08012345678*`
+          });
+        }
+
+        let cleanPhone = upgradeMatch[1].replace(/\D/g, '');
+        if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+          cleanPhone = '234' + cleanPhone.substring(1);
+        }
+        const childJid = `${cleanPhone}@s.whatsapp.net`;
+
+        if (!db.users) {
+          return sock.sendMessage(from, { text: '❌ Database unavailable. Please try again later.' });
+        }
+
+        const childDoc = await db.users.doc(childJid).get();
+        if (!childDoc.exists) {
+          return sock.sendMessage(from, { text: `❌ Partner +${cleanPhone} not found.` });
+        }
+
+        const childData = childDoc.data();
+        const myUid = userData.uid || from;
+        if (childData.parentId !== myUid && childData.parentId !== from && !config.isSuperParent?.(myUid)) {
+          return sock.sendMessage(from, { text: `❌ +${cleanPhone} is not registered under your squad.` });
+        }
+
+        if (!childData.isStateCodeVerified) {
+          return sock.sendMessage(from, {
+            text: `⚠️ Cannot promote +${cleanPhone}: Their NYSC State Code has not been verified yet.`
+          });
+        }
+
+        await sock.sendMessage(from, {
+          text: `⏳ *Graduating +${cleanPhone} to Full Store Ownership...*\n\nProvisioning sovereign account and setting up independent node...`
+        });
+
+        let virtualAccount = null;
+        try {
+          const dva = await paystack.createDedicatedAccount({
+            email: `${cleanPhone}@clarionhub.ng`,
+            first_name: childData.name || 'Clarion',
+            last_name: 'Store',
+            phone: cleanPhone
+          });
+          if (dva && dva.account_number) {
+            virtualAccount = {
+              bankName: dva.bank?.name || 'Wema Bank',
+              accountNumber: dva.account_number,
+              accountName: dva.account_name
+            };
+          }
+        } catch (dvaErr) {
+          logger.warn('Paystack DVA generation for promoted child in MotherBot:', dvaErr.message);
+        }
+
+        const graduationUpdates = {
+          role: 'PARENT',
+          isGraduatedFromReferral: true,
+          graduatedAt: new Date().toISOString(),
+          parentId: null,
+          previousParentId: myUid
+        };
+        if (virtualAccount) graduationUpdates.virtualAccount = virtualAccount;
+
+        await db.users.doc(childJid).set(graduationUpdates, { merge: true });
+
+        return sock.sendMessage(from, {
+          text: `🎓 *Graduation Complete!*\n\n` +
+            `Partner +${cleanPhone} is now an *Independent Sovereign Store Owner*!\n\n` +
+            `They retain 100% of their sales profits directly to their bank, and your leadership helped build a new digital enterprise! 🇳🇬`
+        });
+      }
+
+      // ── STATUS Command (View / set auto-status frequency) ──
+      else if (userData.state === STATES.COMPLETED && /^status(?:\s+(1|2|3|0|on|off))?$/i.test(command)) {
+        const statusMatch = command.match(/^status(?:\s+(1|2|3|0|on|off))?$/i);
+        const requestedFreq = statusMatch[1] ? statusMatch[1].toLowerCase() : null;
+
+        if (requestedFreq) {
+          let newFreq = 3;
+          if (requestedFreq === '1') newFreq = 1;
+          if (requestedFreq === '2') newFreq = 2;
+          if (requestedFreq === '3') newFreq = 3;
+          if (requestedFreq === '0' || requestedFreq === 'off') newFreq = 0;
+
+          if (db.users) {
+            await db.users.doc(from).set({ statusFrequency: newFreq }, { merge: true });
+          }
+          await saveUser({ ...userData, statusFrequency: newFreq });
+
+          return sock.sendMessage(from, {
+            text: `✅ *Auto-Status Posting Updated!*\n\n` +
+              `Your franchise is set to *${newFreq === 0 ? 'PAUSED' : `${newFreq} post${newFreq > 1 ? 's' : ''} daily`}*.\n` +
+              `All squad members connected to your store automatically inherit this schedule.`
+          });
+        }
+
+        const currentFreq = userData.statusFrequency !== undefined ? userData.statusFrequency : 3;
+        return sock.sendMessage(from, {
+          text: `📢 *AUTO-STATUS CONTROLS*\n` +
+            `━━━━━━━━━━━━━━\n\n` +
+            `Current Frequency: *${currentFreq === 0 ? 'PAUSED' : `${currentFreq} post${currentFreq > 1 ? 's' : ''} daily`}*\n\n` +
+            `• *STATUS 1* — 1 post daily (Morning 9:00 AM)\n` +
+            `• *STATUS 2* — 2 posts daily (Morning 9:00 AM, Evening 7:30 PM)\n` +
+            `• *STATUS 3* — 3 posts daily (Morning, Afternoon, Evening + Sprinkles)\n` +
+            `• *STATUS OFF* — Pause automated status broadcasts\n\n` +
+            `──────────────\n` +
+            `· Reply *0* for Main Menu`
+        });
+      }
+
+      // ── STATECODE Command (Corps Member Verification) ──
+      else if (userData.state === STATES.COMPLETED && /^statecode\s+/i.test(command)) {
+        const codeMatch = command.match(/^statecode\s+([A-Za-z]{2}\/\d{2}[A-Za-z]\/\d{4,5})$/i);
+        if (!codeMatch) {
+          return sock.sendMessage(from, {
+            text: `💡 *How to verify your NYSC State Code:*\n\nReply *STATECODE [Your_Code]*\nExample: *STATECODE JG/26A/2535*`
+          });
+        }
+
+        const verifiedCode = codeMatch[1].toUpperCase().trim();
+        if (db.users) {
+          await db.users.doc(from).set({
+            stateCode: verifiedCode,
+            isStateCodeVerified: true
+          }, { merge: true });
+        }
+        await saveUser({ ...userData, stateCode: verifiedCode, isStateCodeVerified: true });
+        const thursdayRef = getThursdayReference();
+
+        return sock.sendMessage(from, {
+          text: `✅ *NYSC State Code Verified!* (${verifiedCode})\n\n` +
+            `Your profile is officially verified as an active Corps Member. You are eligible for promotion to Full Sovereign Store ${thursdayRef} when you reach Rank #1! 🇳🇬`
         });
       }
 
@@ -2809,7 +3232,7 @@ export const handleMotherMessage = async (sock, msg) => {
           : '🌱 Community Contributor';
 
         let msg = `📈 *Your Weekly Clarion Enterprise Report*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `━━━━━━━━━━━━━━━\n\n` +
           `📊 *This Week's Sales*\n` +
           `• Total Orders: ${stats.totalOrders}\n` +
           `• Data Orders: ${stats.dataOrders || 0}\n` +
@@ -2839,7 +3262,7 @@ export const handleMotherMessage = async (sock, msg) => {
           msg += `\n`;
         }
 
-        msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        msg += `━━━━━━━━━━━━━━━\n` +
           `_Keep building your digital enterprise! Have a highly profitable weekend._ 🚀`;
 
         return sock.sendMessage(from, { text: msg });
@@ -3818,7 +4241,11 @@ You’ve just been awarded *${giftSizeMb}MB Free Data*:
             !cleanCmd.toLowerCase().startsWith('check') &&
             !cleanCmd.toLowerCase().startsWith('order') &&
             !cleanCmd.toLowerCase().startsWith('gift') &&
-            !cleanCmd.toLowerCase().startsWith('promo')) {
+            !cleanCmd.toLowerCase().startsWith('promo') &&
+            !command.trim().toLowerCase().startsWith('suggest') &&
+            !command.trim().toLowerCase().startsWith('mode') &&
+            !command.trim().toLowerCase().startsWith('fund') &&
+            !command.trim().toLowerCase().startsWith('status')) {
             detectedPhone = cleanCmd;
           }
         }

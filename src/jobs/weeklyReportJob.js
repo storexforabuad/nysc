@@ -39,7 +39,7 @@ export function startWeeklyReportJob() {
                         : '🌱 Community Contributor';
 
                     let msg = `📈 *Your Weekly Clarion Enterprise Report*\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                        `━━━━━━━━━━━━━━━\n\n` +
                         `📊 *This Week's Sales*\n` +
                         `• Total Orders: ${stats.totalOrders}\n` +
                         `• Data Orders: ${stats.dataOrders || 0}\n` +
@@ -69,7 +69,7 @@ export function startWeeklyReportJob() {
                         msg += `\n`;
                     }
 
-                    msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    msg += `━━━━━━━━━━━━━━━\n` +
                         `_Keep building your digital enterprise! Have a highly profitable weekend._ 🚀`;
 
                     try {
