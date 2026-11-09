@@ -35,6 +35,10 @@ const config = {
     publicKey: process.env.PAYSTACK_PUBLIC_KEY,
     baseUrl: process.env.PAYSTACK_BASE_URL || 'https://api.paystack.co'
   },
+  husmodata: {
+    token: process.env.HUSMODATA_TOKEN,
+    baseUrl: process.env.HUSMODATA_BASE_URL || 'https://husmodata.com/api'
+  },
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   firebaseCredentials: process.env.FIREBASE_CREDENTIALS_JSON,
   superParentNumber: process.env.SUPER_PARENT_NUMBER || '07032905036',

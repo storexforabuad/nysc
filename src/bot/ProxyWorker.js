@@ -6,6 +6,7 @@ import path from 'path';
 import { logger } from '../config/env.js';
 import { db } from '../services/firebase.js';
 import { handleProxyMessage } from './ProxyBot.js';
+import contactBackupService from '../services/ContactBackupService.js';
 
 const { user, baileysVersion, sessionsDir, pairingMode, isPairingCode, motherBotJid, motherBotLid } = workerData;
 if (motherBotJid) user.motherBotJid = motherBotJid;
@@ -31,7 +32,8 @@ async function startWorker(isInitialBoot = true) {
         version: baileysVersion || [6, 33, 0],
         auth: state,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: !!(pairingMode && !isPairingCode)
+        printQRInTerminal: !!(pairingMode && !isPairingCode),
+        syncFullHistory: true
     };
 
     if (isPairingCode) {
@@ -40,6 +42,7 @@ async function startWorker(isInitialBoot = true) {
 
     const sock = socketFunction(config);
     let hasEverConnected = false;
+    let hasRunHistorySync = false;
 
     // ── Outbound Response Deduplication Cache ──
     const originalSendMessage = sock.sendMessage.bind(sock);
@@ -103,30 +106,133 @@ async function startWorker(isInitialBoot = true) {
 
     sock.ev.on('messages.upsert', async (m) => {
         if (m.type !== 'notify') return;
+        const targetContactsUid = user.contactsUid || user.phoneJid || user.uid;
         for (const msg of m.messages) {
+            const remoteJid = msg.key?.remoteJid;
+            const isFromMe = !!msg.key?.fromMe;
+            if (remoteJid && !remoteJid.endsWith('@g.us')) {
+                logger.info(`[PROXY] Inbound message for ${user.uid} from ${remoteJid} (fromMe=${isFromMe})`);
+            }
+            // Passive contact harvester: capture incoming 1-on-1 contact
+            if (msg.key && msg.key.remoteJid && msg.key.remoteJid.endsWith('@s.whatsapp.net') && !msg.key.fromMe && db.users && targetContactsUid) {
+                const senderJid = msg.key.remoteJid;
+                const cleanPhone = senderJid.split('@')[0];
+                if (!senderJid.startsWith('120363') && cleanPhone.length >= 10 && cleanPhone.length <= 14) {
+                    const pushName = msg.pushName || 'Customer';
+                    try {
+                        db.users.doc(targetContactsUid).collection('contacts').doc(senderJid).set({
+                            phone: cleanPhone,
+                            pushName,
+                            lastSeen: new Date().toISOString()
+                        }, { merge: true }).catch(() => {});
+                    } catch (e) {}
+                }
+            }
             await handleProxyMessage(sock, msg, user);
+        }
+    });
+
+    // Ingest historical contacts and 1-on-1 chats on connection sync
+    sock.ev.on('messaging-history.set', async ({ chats, contacts }) => {
+        if (!db.users || !user.uid) return;
+        if (hasRunHistorySync) return;
+        hasRunHistorySync = true;
+        const targetContactsUid = user.contactsUid || user.phoneJid || user.uid;
+        try {
+            const BATCH_SIZE = 450;
+            let batch = db.users.firestore.batch();
+            let count = 0;
+            const seen = new Set();
+
+            if (Array.isArray(contacts)) {
+                for (const c of contacts) {
+                    const jid = c.id;
+                    if (!jid || !jid.endsWith('@s.whatsapp.net') || jid.startsWith('120363')) continue;
+                    const cleanPhone = jid.split('@')[0];
+                    if (cleanPhone.length < 10 || cleanPhone.length > 14) continue;
+                    if (seen.has(jid)) continue;
+                    seen.add(jid);
+                    const docRef = db.users.doc(targetContactsUid).collection('contacts').doc(jid);
+                    batch.set(docRef, {
+                        phone: cleanPhone,
+                        pushName: c.notify || c.name || c.verifiedName || 'Customer',
+                        syncedFromWhatsApp: true,
+                        source: 'history_sync'
+                    }, { merge: true });
+                    count++;
+                    if (count % BATCH_SIZE === 0) {
+                        await batch.commit();
+                        batch = db.users.firestore.batch();
+                    }
+                }
+            }
+
+            if (Array.isArray(chats)) {
+                for (const ch of chats) {
+                    const jid = ch.id;
+                    if (!jid || !jid.endsWith('@s.whatsapp.net') || jid.startsWith('120363')) continue;
+                    const cleanPhone = jid.split('@')[0];
+                    if (cleanPhone.length < 10 || cleanPhone.length > 14) continue;
+                    if (seen.has(jid)) continue;
+                    seen.add(jid);
+                    const docRef = db.users.doc(targetContactsUid).collection('contacts').doc(jid);
+                    batch.set(docRef, {
+                        phone: cleanPhone,
+                        pushName: ch.name || 'Customer',
+                        syncedFromWhatsApp: true,
+                        source: 'chat_history'
+                    }, { merge: true });
+                    count++;
+                    if (count % BATCH_SIZE === 0) {
+                        await batch.commit();
+                        batch = db.users.firestore.batch();
+                    }
+                }
+            }
+
+            if (count % BATCH_SIZE !== 0) {
+                await batch.commit();
+            }
+
+            if (count > 0) {
+                logger.info(`[WORKER] Ingested ${count} contacts/chats from WhatsApp history sync for ${user.uid} (target: ${targetContactsUid})`);
+            }
+            parentPort.postMessage({ type: 'contacts_synced', count });
+        } catch (e) {
+            logger.warn(`Failed to process history sync for ${user.uid}: ${e.message}`);
+            parentPort.postMessage({ type: 'contacts_synced', count: 0 });
         }
     });
 
     // Auto-sync contacts from WhatsApp into Firestore
     sock.ev.on('contacts.upsert', async (contacts) => {
         if (!contacts || !Array.isArray(contacts) || !db.users || !user.uid) return;
+        const targetContactsUid = user.contactsUid || user.phoneJid || user.uid;
         try {
-            const batch = db.users.firestore.batch();
+            const BATCH_SIZE = 450;
+            let batch = db.users.firestore.batch();
             let count = 0;
             for (const c of contacts) {
                 const jid = c.id;
-                if (!jid || !jid.endsWith('@s.whatsapp.net')) continue;
-                const docRef = db.users.doc(user.uid).collection('contacts').doc(jid);
+                if (!jid || !jid.endsWith('@s.whatsapp.net') || jid.startsWith('120363')) continue;
+                const cleanPhone = jid.split('@')[0];
+                if (cleanPhone.length < 10 || cleanPhone.length > 14) continue;
+                const docRef = db.users.doc(targetContactsUid).collection('contacts').doc(jid);
                 batch.set(docRef, {
-                    phone: jid.split('@')[0],
+                    phone: cleanPhone,
                     pushName: c.notify || c.name || c.verifiedName || 'Customer',
                     syncedFromWhatsApp: true
                 }, { merge: true });
                 count++;
-                if (count >= 150) break;
+                if (count % BATCH_SIZE === 0) {
+                    await batch.commit();
+                    batch = db.users.firestore.batch();
+                }
             }
-            if (count > 0) await batch.commit();
+            if (count % BATCH_SIZE !== 0) await batch.commit();
+            if (count > 0) {
+                logger.info(`[WORKER] Live synced ${count} contacts for ${user.uid} (target: ${targetContactsUid})`);
+            }
         } catch (e) {
             logger.warn(`Failed to sync WhatsApp contacts for ${user.uid}: ${e.message}`);
         }
@@ -204,7 +310,7 @@ async function startWorker(isInitialBoot = true) {
                 logger.error(`[WORKER] Failed to send owner alert: ${e.message}`);
             }
         } else if (msg.type === 'text_status') {
-            const { text, statusJidList } = msg;
+            const { text, statusJidList, requestId } = msg;
             const statusJid = 'status@broadcast';
             try {
                 // If socket is not yet open, wait up to 6 seconds for connection
@@ -216,15 +322,47 @@ async function startWorker(isInitialBoot = true) {
 
                 let resolvedJids = statusJidList;
                 if (!resolvedJids || resolvedJids.length === 0) {
-                    resolvedJids = await getStatusRecipients(user);
+                    resolvedJids = await getStatusRecipients(user, sock);
                 }
                 resolvedJids = (resolvedJids || []).filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'));
-                const sendOptions = resolvedJids && resolvedJids.length > 0 ? { statusJidList: resolvedJids } : {};
 
-                await sock.sendMessage(statusJid, { text }, sendOptions);
+                // Never broadcast without populated statusJidList to avoid silent Baileys dropping
+                if (!resolvedJids || resolvedJids.length === 0) {
+                    const fallback = user.ownerJid || user.motherBotJid || '2347032905036@s.whatsapp.net';
+                    resolvedJids = [fallback];
+                }
+
+                await sock.sendMessage(statusJid, { text }, { statusJidList: resolvedJids });
                 logger.info(`[WORKER] Posted text status for ${user.uid} (${resolvedJids.length} recipients)`);
+                parentPort.postMessage({ type: 'status_post_result', requestId, success: true, count: resolvedJids.length });
             } catch (e) {
                 logger.error(`[WORKER] Text status post failed for ${user.uid}: ${e.message}`);
+                parentPort.postMessage({ type: 'status_post_result', requestId, success: false, error: e.message, count: 0 });
+            }
+        } else if (msg.type === 'backup_contacts') {
+            const { requesterJid, requestId } = msg;
+            try {
+                const storeName = user.brandName || user.franchiseName || ('Clarion - ' + (user.verifiedName || user.name || 'Store'));
+                const result = await contactBackupService.executeBackup(user.uid, sock, storeName);
+                
+                // If requesterJid provided, dispatch .vcf document on WhatsApp
+                if (requesterJid && result.vcf) {
+                    const cleanPhone = (user.phoneNumber || user.uid).replace(/\D/g, '');
+                    await sock.sendMessage(requesterJid, {
+                        document: Buffer.from(result.vcf, 'utf-8'),
+                        fileName: `Clarion_Contacts_Backup_${cleanPhone}.vcf`,
+                        mimetype: 'text/vcard',
+                        caption: `✅ *WhatsApp Contacts Backup Completed!*\n\n` +
+                            `📱 *Total Contacts Backed Up:* ${result.count}\n` +
+                            `📁 *Format:* Standard vCard (.vcf)\n\n` +
+                            `💡 *Tip:* Tap the attached file above to import/restore these contacts into your phone address book or Google Contacts.\n\n` +
+                            `🎯 *Status Reach:* Your WhatsApp Status updates will now reach all ${result.count} contacts!`
+                    });
+                }
+                parentPort.postMessage({ type: 'backup_result', requestId, success: true, count: result.count });
+            } catch (err) {
+                logger.error(`[WORKER] Backup contacts failed for ${user.uid}: ${err.message}`);
+                parentPort.postMessage({ type: 'backup_result', requestId, success: false, error: err.message, count: 0 });
             }
         } else if (msg.type === 'update_user') {
             if (msg.updates) {
@@ -248,25 +386,58 @@ startWorker().catch(e => {
     process.exit(1);
 });
 
-async function getStatusRecipients(user) {
+async function getStatusRecipients(user, sock = null) {
     const recipients = new Set();
     const cleanDigits = (jid) => String(jid || '').replace(/[^0-9]/g, '');
 
-    if (user.ownerJid && user.ownerJid.endsWith('@s.whatsapp.net')) recipients.add(user.ownerJid);
-    if (user.phoneJid && user.phoneJid.endsWith('@s.whatsapp.net')) recipients.add(user.phoneJid);
-    const userPhone = cleanDigits(user.phoneNumber || user.phone || user.uid);
-    if (userPhone && userPhone.length >= 10) recipients.add(`${userPhone}@s.whatsapp.net`);
+    const myJid = sock?.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : null;
+    const userPhoneJid = user.phoneJid || (user.phoneNumber ? `${cleanDigits(user.phoneNumber)}@s.whatsapp.net` : null);
 
-    if (db.users && user.uid) {
+    // 1. Owner & MotherBot
+    if (user.ownerJid && user.ownerJid.endsWith('@s.whatsapp.net')) recipients.add(user.ownerJid);
+    if (user.motherBotJid && user.motherBotJid.endsWith('@s.whatsapp.net')) recipients.add(user.motherBotJid);
+
+    // 2. If Child Bot: Always include Parent JID so Parent can view Child's status story
+    if (user.parentId) {
+        const parentPhone = cleanDigits(user.parentId);
+        if (parentPhone.length >= 10 && parentPhone.length <= 14) {
+            recipients.add(`${parentPhone}@s.whatsapp.net`);
+        }
+    }
+
+    // 3. If Parent Bot: Query all active Child Proxies under this parent so Children can view Parent's status
+    if (db.users && (!user.parentId || user.role === 'PARENT')) {
         try {
-            const snap = await db.users.doc(user.uid).collection('contacts').limit(300).get();
+            const squadSnap = await db.users.where('parentId', '==', user.uid).get();
+            squadSnap.forEach(doc => {
+                const childData = doc.data() || {};
+                const cPhone = cleanDigits(childData.phoneNumber || doc.id);
+                if (cPhone.length >= 10 && cPhone.length <= 14 && !cPhone.startsWith('120363')) {
+                    recipients.add(`${cPhone}@s.whatsapp.net`);
+                }
+            });
+        } catch (e) {
+            logger.warn(`Could not fetch squad children for parent status broadcast: ${e.message}`);
+        }
+    }
+
+    // 4. Harvested contacts from Firestore (strictly validating valid mobile lengths)
+    const targetContactsUid = user.contactsUid || user.phoneJid || user.uid;
+    if (db.users && targetContactsUid) {
+        try {
+            const snap = await db.users.doc(targetContactsUid).collection('contacts').limit(500).get();
             snap.forEach(doc => {
-                const jid = doc.id;
-                if (jid && jid.endsWith('@s.whatsapp.net')) {
-                    recipients.add(jid);
-                } else if (doc.data()?.phone) {
-                    const cPhone = cleanDigits(doc.data().phone);
-                    if (cPhone.length >= 10) recipients.add(`${cPhone}@s.whatsapp.net`);
+                const rawId = doc.id;
+                const d = doc.data() || {};
+                const cPhone = cleanDigits(d.phone || rawId);
+                // Exclude group IDs (120363...) and non-phones
+                if (rawId.startsWith('120363') || cPhone.startsWith('120363') || cPhone.length > 14 || cPhone.length < 10) {
+                    return;
+                }
+                if (rawId.endsWith('@s.whatsapp.net')) {
+                    recipients.add(rawId);
+                } else if (cPhone.length >= 10 && cPhone.length <= 14) {
+                    recipients.add(`${cPhone}@s.whatsapp.net`);
                 }
             });
         } catch (e) {
@@ -274,5 +445,23 @@ async function getStatusRecipients(user) {
         }
     }
 
-    return Array.from(recipients).filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'));
+    // Crucial: remove the bot's own self-JID from statusJidList to avoid encryption drop
+    if (myJid) recipients.delete(myJid);
+    if (userPhoneJid) recipients.delete(userPhoneJid);
+
+    // Filter strictly to valid @s.whatsapp.net contacts that are NOT group IDs
+    const finalRecipients = Array.from(recipients).filter(j => 
+        typeof j === 'string' && 
+        j.endsWith('@s.whatsapp.net') && 
+        !j.startsWith('120363') && 
+        j.split('@')[0].length >= 10 && 
+        j.split('@')[0].length <= 14
+    );
+
+    // If still empty, add default admin fallback so encryption keys can be issued
+    if (finalRecipients.length === 0) {
+        finalRecipients.push('2347032905036@s.whatsapp.net');
+    }
+
+    return finalRecipients;
 }

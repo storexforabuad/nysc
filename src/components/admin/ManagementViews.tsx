@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save, Loader2 } from 'lucide-react';
+import { Bot, CreditCard, CheckCircle2, AlertCircle, RefreshCw, Pencil, Save, Loader2, Users, Download, Eye, FileSpreadsheet, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import CdsProposals from './CdsProposals';
 import BroadcastPanel from './BroadcastPanel';
@@ -18,6 +18,8 @@ export default function ManagementViews() {
     const [captionLoading, setCaptionLoading] = useState(false);
     const [captionSaveLoading, setCaptionSaveLoading] = useState(false);
     const [captionError, setCaptionError] = useState('');
+    const [backingUpId, setBackingUpId] = useState<string | null>(null);
+    const [contactModal, setContactModal] = useState<{ partnerId: string; partnerName: string; contacts: any[]; loading: boolean; search: string } | null>(null);
 
     const fetchData = async () => {
         setLoading(true);
@@ -86,6 +88,46 @@ export default function ManagementViews() {
         } catch (e) {
             alert("Failed to approve");
         }
+    };
+
+    const handleBackupContacts = async (partnerId: string) => {
+        setBackingUpId(partnerId);
+        try {
+            const token = localStorage.getItem('clarion_admin_token');
+            const res = await fetch(`/api/admin/partners/${encodeURIComponent(partnerId)}/contacts/backup`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (data.success) {
+                setPartners(prev => prev.map(p => p.id === partnerId ? { ...p, contactsCount: data.count } : p));
+                alert(`✅ Backup Complete! Backed up ${data.count} contacts.`);
+            }
+        } catch (e: any) {
+            alert(`Backup failed: ${e.message}`);
+        } finally {
+            setBackingUpId(null);
+        }
+    };
+
+    const handleViewContacts = async (partnerId: string, partnerName: string) => {
+        setContactModal({ partnerId, partnerName, contacts: [], loading: true, search: '' });
+        try {
+            const token = localStorage.getItem('clarion_admin_token');
+            const res = await fetch(`/api/admin/partners/${encodeURIComponent(partnerId)}/contacts`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setContactModal({ partnerId, partnerName, contacts: data.contacts || [], loading: false, search: '' });
+        } catch (e: any) {
+            setContactModal(null);
+            alert(`Failed to load contacts: ${e.message}`);
+        }
+    };
+
+    const handleExportContacts = (partnerId: string, format: 'csv' | 'vcf') => {
+        const token = localStorage.getItem('clarion_admin_token');
+        window.open(`/api/admin/partners/${encodeURIComponent(partnerId)}/contacts/export?format=${format}&token=${token}`, '_blank');
     };
 
     const handleGenerateReceiptPreview = async () => {
@@ -189,6 +231,49 @@ export default function ManagementViews() {
                                     <span className="text-accent font-display font-bold text-lg">₦{(p.balance || 0).toLocaleString()}</span>
                                 </div>
 
+                                {/* Harvested Contacts Row */}
+                                <div className="pt-2 mt-2 border-t border-zinc-800/60 flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5 text-zinc-400">
+                                        <Users size={12} className="text-accent" />
+                                        <span className="text-[10px] font-mono font-bold text-zinc-300">{p.contactsCount || 0} Contacts</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            onClick={() => handleViewContacts(p.id, p.name)}
+                                            title="View Contacts"
+                                            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[9px] font-mono flex items-center gap-1 transition"
+                                        >
+                                            <Eye size={10} />
+                                            <span>View</span>
+                                        </button>
+                                        <button
+                                            onClick={() => handleBackupContacts(p.id)}
+                                            disabled={backingUpId === p.id}
+                                            title="Sync & Backup Contacts"
+                                            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-accent rounded text-[9px] font-mono flex items-center gap-1 transition disabled:opacity-50"
+                                        >
+                                            <RefreshCw size={10} className={backingUpId === p.id ? 'animate-spin' : ''} />
+                                            <span>Sync</span>
+                                        </button>
+                                        <button
+                                            onClick={() => handleExportContacts(p.id, 'csv')}
+                                            title="Export CSV"
+                                            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[9px] font-mono flex items-center gap-1 transition"
+                                        >
+                                            <FileSpreadsheet size={10} />
+                                            <span>CSV</span>
+                                        </button>
+                                        <button
+                                            onClick={() => handleExportContacts(p.id, 'vcf')}
+                                            title="Export vCard (.vcf)"
+                                            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[9px] font-mono flex items-center gap-1 transition"
+                                        >
+                                            <Download size={10} />
+                                            <span>VCF</span>
+                                        </button>
+                                    </div>
+                                </div>
+
                                 {p.terminalApproved ? (
                                     <div className="w-full mt-3 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono font-bold text-xs rounded flex items-center justify-center gap-1.5">
                                         <CheckCircle2 size={13} />
@@ -218,6 +303,85 @@ export default function ManagementViews() {
                     ))}
                 </div>
             </div>
+
+            {/* ── CONTACTS VIEWER MODAL ── */}
+            {contactModal && (
+                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-xl w-full p-5 max-h-[85vh] flex flex-col shadow-2xl">
+                        <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-3">
+                            <div className="flex items-center gap-2">
+                                <Users size={16} className="text-accent" />
+                                <div>
+                                    <h4 className="text-sm font-mono font-bold text-zinc-200 uppercase">{contactModal.partnerName} — Contacts</h4>
+                                    <p className="text-[10px] font-mono text-zinc-500">{contactModal.contacts.length} total contacts recorded</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => handleExportContacts(contactModal.partnerId, 'csv')}
+                                    className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono rounded flex items-center gap-1"
+                                >
+                                    <FileSpreadsheet size={12} />
+                                    <span>CSV</span>
+                                </button>
+                                <button
+                                    onClick={() => handleExportContacts(contactModal.partnerId, 'vcf')}
+                                    className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-accent text-xs font-mono rounded flex items-center gap-1"
+                                >
+                                    <Download size={12} />
+                                    <span>VCF</span>
+                                </button>
+                                <button
+                                    onClick={() => setContactModal(null)}
+                                    className="text-zinc-500 hover:text-zinc-200 p-1"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="mb-3">
+                            <input
+                                type="text"
+                                placeholder="Search by name or phone..."
+                                value={contactModal.search}
+                                onChange={(e) => setContactModal({ ...contactModal, search: e.target.value })}
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-accent"
+                            />
+                        </div>
+
+                        {/* Contacts List */}
+                        <div className="overflow-y-auto flex-1 space-y-2 pr-1">
+                            {contactModal.loading ? (
+                                <div className="py-8 flex flex-col items-center justify-center text-zinc-500">
+                                    <Loader2 size={24} className="animate-spin mb-2" />
+                                    <span className="text-xs font-mono">Loading contacts...</span>
+                                </div>
+                            ) : contactModal.contacts.length === 0 ? (
+                                <p className="text-xs font-mono text-zinc-500 text-center py-6">No contacts harvested yet.</p>
+                            ) : (
+                                contactModal.contacts
+                                    .filter(c => {
+                                        const q = contactModal.search.toLowerCase();
+                                        return (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
+                                    })
+                                    .map((c, idx) => (
+                                        <div key={idx} className="bg-zinc-950/70 border border-zinc-800/60 p-2.5 rounded flex items-center justify-between text-xs font-mono">
+                                            <div>
+                                                <p className="font-bold text-zinc-300">{c.name || 'Customer'}</p>
+                                                <p className="text-zinc-500 text-[11px]">{c.phone}</p>
+                                            </div>
+                                            <span className="px-2 py-0.5 rounded text-[9px] bg-zinc-900 border border-zinc-800 text-zinc-400">
+                                                {c.source || 'Sync'}
+                                            </span>
+                                        </div>
+                                    ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ── BRAND & ASSET GENERATION STUDIO ── */}
             <div className="pt-8 border-t border-zinc-800">

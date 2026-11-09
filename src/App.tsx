@@ -6,6 +6,7 @@ import AdminLogin from './components/AdminLogin';
 import MetricsDisplay from './components/admin/MetricsDisplay';
 import ManagementViews from './components/admin/ManagementViews';
 import ScaleAdvisor from './components/admin/ScaleAdvisor';
+import ProxyDashboard from './components/proxy/ProxyDashboard';
 
 function LandingPage() {
   const navigate = useNavigate();
@@ -204,6 +205,8 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/admin" element={<AdminLogin />} />
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        <Route path="/p/:identifier" element={<ProxyDashboard />} />
+        <Route path="/proxy/:identifier" element={<ProxyDashboard />} />
       </Routes>
     </BrowserRouter>
   );

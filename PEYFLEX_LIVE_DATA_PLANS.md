@@ -226,4 +226,4 @@ ACTIVE PLANS WE WANT TO SELL:
 
 ## 🌐 9mobile Data (`9mobile_data`) 9mobile have rebranded to T2 Mobile. so we shoould right T2 Mobile (fka 9mobile)
 
-we wont offer data for 9mobile for now. if a user has a 9mobile we should let them know they are rebranding and we will list there plans soon
+

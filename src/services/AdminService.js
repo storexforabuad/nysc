@@ -288,16 +288,35 @@ class AdminService {
                     const data = doc.data();
                     if (!data.virtualAccount && data.state !== 'COMPLETED' && !data.pairedAt && !data.phoneNumber) continue;
 
-                    const balance = await wallet.getBalance(doc.id);
-                    partnerMap.set(doc.id, {
-                        id: doc.id,
-                        name: data.verifiedName || data.name || 'Unknown Partner',
-                        stateCode: data.stateCode || '',
-                        franchiseName: data.brandName || data.franchiseName || '',
-                        terminalApproved: data.terminalApproved === true || data.approvalStatus === 'APPROVED' || data.botMode === 'autonomous',
-                        virtualAccount: data.virtualAccount || null,
-                        balance
-                    });
+                    // Resolve canonical phone key so LID documents merge into the primary phone entry
+                    const cleanPhone = (data.phoneNumber || data.phoneJid || (doc.id.includes('@lid') ? '' : doc.id)).replace(/\D/g, '');
+                    const canonicalId = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : doc.id;
+
+                    const balance = await wallet.getBalance(canonicalId).catch(() => 0) || (await wallet.getBalance(doc.id).catch(() => 0));
+                    const isApproved = data.terminalApproved === true || data.approvalStatus === 'APPROVED' || data.botMode === 'autonomous';
+
+                    const existing = partnerMap.get(canonicalId);
+                    if (existing) {
+                        if (data.stateCode && !existing.stateCode) existing.stateCode = data.stateCode;
+                        if (data.verifiedName && existing.name === 'Unknown Partner') existing.name = data.verifiedName;
+                        if (data.brandName || data.franchiseName) existing.franchiseName = data.brandName || data.franchiseName;
+                        if (isApproved) existing.terminalApproved = true;
+                        if (data.virtualAccount && !existing.virtualAccount) existing.virtualAccount = data.virtualAccount;
+                        if (data.contactsCount && data.contactsCount > existing.contactsCount) existing.contactsCount = data.contactsCount;
+                        if (balance > existing.balance) existing.balance = balance;
+                    } else {
+                        partnerMap.set(canonicalId, {
+                            id: canonicalId,
+                            name: data.verifiedName || data.name || 'Unknown Partner',
+                            stateCode: data.stateCode || '',
+                            franchiseName: data.brandName || data.franchiseName || '',
+                            terminalApproved: isApproved,
+                            virtualAccount: data.virtualAccount || null,
+                            balance,
+                            contactsCount: data.contactsCount || 0,
+                            lastContactsBackupAt: data.lastContactsBackupAt || null
+                        });
+                    }
                 }
             } catch (error) {
                 logger.warn('Error reading db.users in listPartners:', error.message);
@@ -311,22 +330,29 @@ class AdminService {
                 for (const [id, data] of mockUserStore.entries()) {
                     if (!data.virtualAccount && data.state !== 'COMPLETED' && !data.pairedAt && !data.phoneNumber) continue;
 
-                    const existing = partnerMap.get(id);
+                    const cleanPhone = (data.phoneNumber || data.phoneJid || (id.includes('@lid') ? '' : id)).replace(/\D/g, '');
+                    const canonicalId = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : id;
+
+                    const existing = partnerMap.get(canonicalId);
                     const isApproved = data.terminalApproved === true || data.approvalStatus === 'APPROVED' || data.botMode === 'autonomous';
 
                     if (existing) {
                         if (isApproved) existing.terminalApproved = true;
                         if (data.brandName || data.franchiseName) existing.franchiseName = data.brandName || data.franchiseName;
+                        if (data.contactsCount) existing.contactsCount = data.contactsCount;
+                        if (data.stateCode && !existing.stateCode) existing.stateCode = data.stateCode;
                     } else {
-                        const balance = await wallet.getBalance(id);
-                        partnerMap.set(id, {
-                            id,
+                        const balance = await wallet.getBalance(canonicalId).catch(() => 0) || (await wallet.getBalance(id).catch(() => 0));
+                        partnerMap.set(canonicalId, {
+                            id: canonicalId,
                             name: data.verifiedName || data.name || 'Unknown Partner',
                             stateCode: data.stateCode || '',
                             franchiseName: data.brandName || data.franchiseName || '',
                             terminalApproved: isApproved,
                             virtualAccount: data.virtualAccount || null,
-                            balance
+                            balance,
+                            contactsCount: data.contactsCount || 0,
+                            lastContactsBackupAt: data.lastContactsBackupAt || null
                         });
                     }
                 }

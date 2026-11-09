@@ -6,11 +6,13 @@ import { config, logger } from './config/env.js';
 import squad from './services/SquadService.js';
 import paystack from './services/PaystackService.js';
 import payflex from './services/payflex.js';
+import telecomDispatcher from './services/TelecomDispatcher.js';
 import admin, { db } from './services/firebase.js';
 import sessionManager from './bot/SessionManager.js';
 import mediaGen from './services/mediaGen.js';
-import wallet from './services/WalletService.js';
+import wallet, { isSuperParent, calculateDynamicSquadCapacity } from './services/WalletService.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
+import { startWalletYieldReportJob } from './jobs/walletYieldReportJob.js';
 import { startStatusPostJob } from './jobs/statusPostJob.js';
 import { startSubscriptionReminderJob } from './jobs/SubscriptionReminderJob.js';
 import { startThursdayPromotionJob } from './jobs/thursdayPromotionJob.js';
@@ -24,6 +26,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { CENTRAL_HUB_ACCOUNT, handleMilestoneCheck, checkIsSameNumber, mockManualOrders } from './bot/MotherBot.js';
 import networkRecoveryNotifier from './services/NetworkRecoveryNotifier.js';
+import contactBackupService from './services/ContactBackupService.js';
 
 // ── HTTP Rate Limiters ──
 const webhookLimiter = rateLimit({
@@ -131,6 +134,47 @@ async function startServer() {
       res.json(partners);
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch partners' });
+    }
+  });
+
+  // ── Partner Contacts & Export Endpoints ──
+  app.get('/api/admin/partners/:id/contacts', verifyAdminToken, async (req, res) => {
+    try {
+      const contacts = await contactBackupService.gatherContacts(req.params.id);
+      res.json({ count: contacts.length, contacts });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/partners/:id/contacts/backup', verifyAdminToken, async (req, res) => {
+    try {
+      const result = await contactBackupService.executeBackup(req.params.id);
+      res.json({ success: true, count: result.count });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/admin/partners/:id/contacts/export', verifyAdminToken, async (req, res) => {
+    try {
+      const format = (req.query.format || 'csv').toLowerCase();
+      const contacts = await contactBackupService.gatherContacts(req.params.id);
+      const cleanPhone = req.params.id.split('@')[0].replace(/\D/g, '');
+
+      if (format === 'vcf') {
+        const vcf = contactBackupService.generateVcf(contacts);
+        res.setHeader('Content-Type', 'text/vcard');
+        res.setHeader('Content-Disposition', `attachment; filename="contacts_${cleanPhone}.vcf"`);
+        return res.send(vcf);
+      } else {
+        const csv = contactBackupService.generateCsv(contacts);
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="contacts_${cleanPhone}.csv"`);
+        return res.send(csv);
+      }
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -485,6 +529,270 @@ async function startServer() {
     }
   });
 
+  // ── Helper: Calculate Next Auto-Status Broadcast Slot & Countdown (Africa/Lagos) ──
+  function getNextStatusSchedule() {
+    const now = new Date();
+    const lagosTimeStr = now.toLocaleTimeString('en-US', { timeZone: 'Africa/Lagos', hour12: false, hour: '2-digit', minute: '2-digit' });
+    const parts = lagosTimeStr.split(':');
+    const currH = parseInt(parts[0], 10) || 0;
+    const currM = parseInt(parts[1], 10) || 0;
+    const currTotalMin = currH * 60 + currM;
+
+    const slots = [
+      { label: 'Morning Motivation & Fresh Data', time: '07:30', totalMin: 7 * 60 + 30, h: 7, m: 30 },
+      { label: 'Afternoon Commands Cheat Sheet', time: '13:30', totalMin: 13 * 60 + 30, h: 13, m: 30 },
+      { label: 'Evening Wallet Advantage & Night Top-up', time: '18:30', totalMin: 18 * 60 + 30, h: 18, m: 30 }
+    ];
+
+    let nextSlot = slots.find(s => s.totalMin > currTotalMin);
+    let isNextDay = false;
+    if (!nextSlot) {
+      nextSlot = slots[0];
+      isNextDay = true;
+    }
+
+    const targetDate = new Date(now);
+    if (isNextDay) targetDate.setDate(targetDate.getDate() + 1);
+    targetDate.setHours(nextSlot.h, nextSlot.m, 0, 0);
+
+    const diffMs = Math.max(0, targetDate.getTime() - now.getTime());
+    const countdownSeconds = Math.floor(diffMs / 1000);
+
+    return {
+      nextSlotLabel: nextSlot.label,
+      nextSlotTime: nextSlot.time,
+      isNextDay,
+      countdownSeconds
+    };
+  }
+
+  // ── PROXY DASHBOARD API (No-PIN Frictionless Mobile Dashboard) ──
+  app.get('/api/proxy/:phone/dashboard', apiLimiter, async (req, res) => {
+    try {
+      const rawInput = String(req.params.phone || '').trim();
+      let cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) cleanDigits = '0' + cleanDigits.slice(3);
+      if (cleanDigits.length === 10) cleanDigits = '0' + cleanDigits;
+      const intlDigits = cleanDigits.startsWith('0') ? '234' + cleanDigits.slice(1) : cleanDigits;
+      const jid = `${intlDigits}@s.whatsapp.net`;
+
+      const isMasterSuper = isSuperParent(cleanDigits) || isSuperParent(intlDigits) || isSuperParent(jid);
+
+      let userData = null;
+      let matchedUid = jid;
+
+      if (db.users) {
+        let docSnap = await db.users.doc(jid).get().catch(() => null);
+        if (!docSnap || !docSnap.exists) {
+          docSnap = await db.users.doc(cleanDigits).get().catch(() => null);
+        }
+        if (!docSnap || !docSnap.exists) {
+          docSnap = await db.users.doc(intlDigits).get().catch(() => null);
+        }
+        if (!docSnap || !docSnap.exists) {
+          const qSnap = await db.users.where('phoneNumber', 'in', [cleanDigits, intlDigits, '0' + intlDigits.slice(3)]).limit(1).get().catch(() => null);
+          if (qSnap && !qSnap.empty) docSnap = qSnap.docs[0];
+        }
+
+        if (docSnap && docSnap.exists) {
+          userData = docSnap.data();
+          matchedUid = docSnap.id;
+        }
+
+        // ── LID / Phone JID Reconciliation (bind verified bankDetails from LID doc if missing) ──
+        if (userData && (!userData.bankDetails || !userData.bankDetails.accountNumber)) {
+          try {
+            // Check if there is an LID document or another document linked to this phone
+            const phoneVariants = [cleanDigits, intlDigits, '0' + intlDigits.slice(3), jid];
+            const lidQuery = await db.users
+              .where('phoneJid', 'in', [jid, `${cleanDigits}@s.whatsapp.net`])
+              .get()
+              .catch(() => null);
+
+            let foundBankDoc = null;
+            if (lidQuery && !lidQuery.empty) {
+              foundBankDoc = lidQuery.docs.find(d => d.data().bankDetails && d.data().bankDetails.accountNumber);
+            }
+
+            if (!foundBankDoc && isMasterSuper) {
+              // Direct lookup for Super Parent known LID document
+              const spLidDoc = await db.users.doc('259794569039973@lid').get().catch(() => null);
+              if (spLidDoc && spLidDoc.exists && spLidDoc.data().bankDetails) {
+                foundBankDoc = spLidDoc;
+              }
+            }
+
+            if (foundBankDoc) {
+              const bData = foundBankDoc.data();
+              userData.bankDetails = bData.bankDetails;
+              if (bData.virtualAccount && !userData.virtualAccount) {
+                userData.virtualAccount = bData.virtualAccount;
+              }
+              if (bData.stateCode && !userData.stateCode) {
+                userData.stateCode = bData.stateCode;
+              }
+              if (bData.verifiedName && !userData.verifiedName) {
+                userData.verifiedName = bData.verifiedName;
+              }
+              // Also sync back to primary doc asynchronously so future reads are instant
+              await db.users.doc(matchedUid).set({
+                bankDetails: bData.bankDetails,
+                virtualAccount: bData.virtualAccount || null,
+                verifiedName: bData.verifiedName || null
+              }, { merge: true }).catch(() => {});
+            }
+          } catch (reconcileErr) {
+            logger.warn('Error during LID-Phone bank reconciliation:', reconcileErr.message);
+          }
+        }
+      }
+
+      if (!userData) {
+        userData = {
+          name: isMasterSuper ? 'Mustapha Lawal Gambo' : `Partner ${cleanDigits.slice(-4)}`,
+          phoneNumber: cleanDigits,
+          role: isMasterSuper ? 'SUPER_PARENT' : 'CHILD_PROXY',
+          botMode: 'autonomous',
+          statusPostingEnabled: true,
+          statusPostFrequency: 2,
+          announceNewContacts: true,
+          metrics: { totalOrders: 0, totalRevenueNaira: 0, totalProfitNaira: 0 },
+          bankDetails: null
+        };
+      }
+
+      const balance = await wallet.getBalance(matchedUid).catch(() => 0);
+      const tier = wallet.getMultiplierTier(balance);
+      const schedule = getNextStatusSchedule();
+
+      let squadPartners = [];
+      let graduatedLeaders = [];
+      let activeCount = 0;
+      if (db.users) {
+        try {
+          let sSnap;
+          if (isMasterSuper) {
+            sSnap = await db.users.where('parentId', 'in', [matchedUid, '2347032905036@s.whatsapp.net', '07032905036']).get().catch(() => null);
+          } else {
+            sSnap = await db.users.where('parentId', '==', matchedUid).get().catch(() => null);
+          }
+          if (sSnap && !sSnap.empty) {
+            sSnap.docs.forEach(d => {
+              const data = d.data();
+              const partnerObj = {
+                name: data.name || data.verifiedName || 'Partner',
+                phone: (data.phoneNumber || d.id.split('@')[0]),
+                orders: data.metrics?.totalOrders || 0,
+                revenue: data.metrics?.totalRevenueNaira || 0,
+                isGraduated: Boolean(data.isGraduatedSquadLeader),
+                online: true
+              };
+              if (data.isGraduatedSquadLeader) {
+                graduatedLeaders.push(partnerObj);
+              } else {
+                squadPartners.push(partnerObj);
+              }
+            });
+            activeCount = isMasterSuper ? sSnap.size : squadPartners.length;
+          }
+        } catch (e) { }
+      }
+
+      // Calculate dynamic squad capacity
+      const dynamicSquad = isMasterSuper
+          ? { capacity: 80, nextMilestone: null, progressPercent: 100, totalSquadOrders: 0 }
+          : calculateDynamicSquadCapacity(
+              { ...userData, uid: matchedUid, walletBalance: balance },
+              squadPartners.map(p => ({ metrics: { totalOrders: p.orders }, walletBalance: p.walletBalance || 0 }))
+            );
+
+      let maskedBank = null;
+      if (userData.bankDetails && userData.bankDetails.accountNumber) {
+        const acct = String(userData.bankDetails.accountNumber);
+        maskedBank = {
+          bankName: userData.bankDetails.bankName || 'Bank',
+          maskedAccount: acct.length >= 4 ? `••••${acct.slice(-4)}` : acct,
+          accountName: userData.bankDetails.accountName || userData.name || 'Verified Partner',
+          verified: Boolean(userData.bankDetails.verified)
+        };
+      }
+
+      res.json({
+        success: true,
+        user: {
+          uid: matchedUid,
+          name: userData.name || (isMasterSuper ? 'Mustapha Lawal Gambo' : 'Clarion Partner'),
+          phoneNumber: cleanDigits,
+          role: userData.role || (isMasterSuper ? 'SUPER_PARENT' : 'CHILD_PROXY'),
+          isSuperParent: isMasterSuper,
+          botMode: userData.botMode || 'autonomous',
+          statusPostingEnabled: userData.statusPostingEnabled !== false,
+          statusPostFrequency: Number(userData.statusPostFrequency) || 2,
+          announceNewContacts: userData.announceNewContacts !== false,
+          walletBalance: balance,
+          multiplierTier: tier,
+          bankDetails: maskedBank,
+          metrics: userData.metrics || { totalOrders: 0, totalRevenueNaira: 0, totalProfitNaira: 0 }
+        },
+        statusSchedule: schedule,
+        squad: {
+          activeCount,
+          capacity: dynamicSquad.capacity,
+          nextMilestone: dynamicSquad.nextMilestone || null,
+          progressPercent: dynamicSquad.progressPercent || 0,
+          totalSquadOrders: dynamicSquad.totalSquadOrders || 0,
+          partners: squadPartners,
+          graduatedLeaders
+        },
+        gateways: {
+          mtn: telecomDispatcher.isNetworkDegraded('mtn') ? 'DEGRADED' : 'HEALTHY',
+          airtel: telecomDispatcher.isNetworkDegraded('airtel') ? 'DEGRADED' : 'HEALTHY',
+          glo: telecomDispatcher.isNetworkDegraded('glo') ? 'DEGRADED' : 'HEALTHY'
+        },
+        botWhatsAppPhone: '2347032905036'
+      });
+    } catch (err) {
+      logger.error('Error fetching proxy dashboard:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/proxy/:phone/settings', apiLimiter, async (req, res) => {
+    try {
+      const rawInput = String(req.params.phone || '').trim();
+      let cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) cleanDigits = '0' + cleanDigits.slice(3);
+      if (cleanDigits.length === 10) cleanDigits = '0' + cleanDigits;
+      const intlDigits = cleanDigits.startsWith('0') ? '234' + cleanDigits.slice(1) : cleanDigits;
+      const jid = `${intlDigits}@s.whatsapp.net`;
+
+      const { botMode, statusPostingEnabled, statusPostFrequency, announceNewContacts } = req.body || {};
+      const updates = {};
+      if (botMode !== undefined) updates.botMode = botMode;
+      if (statusPostingEnabled !== undefined) updates.statusPostingEnabled = Boolean(statusPostingEnabled);
+      if (statusPostFrequency !== undefined) updates.statusPostFrequency = Math.max(1, Math.min(3, parseInt(statusPostFrequency, 10)));
+      if (announceNewContacts !== undefined) updates.announceNewContacts = Boolean(announceNewContacts);
+
+      if (db.users) {
+        let docRef = db.users.doc(jid);
+        const docSnap = await docRef.get().catch(() => null);
+        if (!docSnap || !docSnap.exists) {
+          const altSnap = await db.users.doc(cleanDigits).get().catch(() => null);
+          if (altSnap && altSnap.exists) docRef = db.users.doc(cleanDigits);
+        }
+        await docRef.set(updates, { merge: true });
+      }
+
+      sessionManager.updateWorkerUser(jid, updates);
+      sessionManager.updateWorkerUser(cleanDigits, updates);
+
+      res.json({ success: true, updated: updates });
+    } catch (err) {
+      logger.error('Error updating proxy settings:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Memory cache for duplicate transaction prevention (bounded to 10,000 entries)
   const processedTxnRefs = new Set();
 
@@ -661,7 +969,7 @@ async function startServer() {
           manualOrder.status = 'DISPENSING';
 
           try {
-            await payflex.dispenseData(manualOrder.targetPhone, manualOrder.planSerial);
+            await telecomDispatcher.dispenseData(manualOrder.targetPhone, manualOrder.planCode || manualOrder.planSerial);
 
             const netProfit = +(manualOrder.amount - manualOrder.baseCost).toFixed(2);
             const settlement = await wallet.settleCompletedOrder({
@@ -847,7 +1155,7 @@ async function startServer() {
             } else {
               // Data delivery
               const targetRecipient = order.recipientPhone || order.buyerPhone.split('@')[0];
-              fulfillmentResult = await payflex.dispenseData(targetRecipient, order.planId || order.serial);
+              fulfillmentResult = await telecomDispatcher.dispenseData(targetRecipient, order.code || order.serial || order.planId);
             }
 
             // 3. COMPLETE
@@ -864,6 +1172,8 @@ async function startServer() {
               orderId,
               userId: order.userId,
               amount: Body.amount,
+              baseCost: order.baseCost,
+              wholesaleCost: order.baseCost,
               netProfit,
               userDoc: userData,
               buyerPhone: order.buyerPhone,
@@ -1144,6 +1454,7 @@ async function startServer() {
         try {
           await sessionManager.initMotherBot();
           startWeeklyReportJob();
+          startWalletYieldReportJob();
           startStatusPostJob();
           startSubscriptionReminderJob();
           startThursdayPromotionJob();

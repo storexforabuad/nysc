@@ -1,6 +1,7 @@
 import { logger } from '../config/env.js';
 import { db } from './firebase.js';
 import payflex from './payflex.js';
+import telecomDispatcher from './TelecomDispatcher.js';
 import wallet from './WalletService.js';
 import admin from 'firebase-admin';
 
@@ -62,9 +63,9 @@ class RetryQueue {
                         result = await payflex.purchaseExamPin(order.examType);
                     } else {
                         const targetRecipient = order.recipientPhone || order.buyerPhone.split('@')[0];
-                        result = await payflex.dispenseData(
+                        result = await telecomDispatcher.dispenseData(
                             targetRecipient,
-                            order.serial || order.planId
+                            order.code || order.serial || order.planId
                         );
                     }
 
@@ -156,21 +157,38 @@ class RetryQueue {
                             }
                         }
 
-                        // Notify customer
+                        // Notify customer with secure wallet storage assurance (No bank refund option)
+                        const netName = order.network ? order.network.toUpperCase() : 'Telecom';
+                        const planLabel = order.planName || 'data';
+                        const safeWalletMessage = `⚠️ *Network Delivery Update*\n` +
+                            `━━━━━━━━━━━━━━━━━━━━━\n` +
+                            `${netName} servers were unable to process your ${planLabel} order after multiple automatic attempts.\n\n` +
+                            `💰 *₦${Number(order.amount).toLocaleString()}* is safely stored in your *Clarion In-Chat Wallet*!\n\n` +
+                            `Your funds are 100% secure and will NOT expire. We will notify you as soon as the ${netName} data server is restored and stable.\n\n` +
+                            `👉 In the meantime, reply *BUY [code]* to choose an alternative plan anytime using your wallet credit.`;
+
+                        const adminAlertMessage = `🚨 *FAILED ORDER DISPATCH ALERT*\n` +
+                            `━━━━━━━━━━━━━━━━━━━━━\n` +
+                            `Order ID: #${orderId}\n` +
+                            `Customer: ${order.buyerPhone?.split('@')[0] || 'Unknown'}\n` +
+                            `Plan: ${planLabel} (₦${Number(order.amount).toLocaleString()})\n` +
+                            `Cause: Telco server unresponsive on both providers after ${this.maxRetries} retries.\n` +
+                            `Action Taken: Customer wallet auto-credited with ₦${Number(order.amount).toLocaleString()}.`;
+
                         if (this.onOrderUpdate) {
                             this.onOrderUpdate({
                                 type: 'REFUNDED_TO_WALLET',
                                 orderId,
                                 order,
-                                message: `😔 *We're sorry* — the network is currently experiencing issues and we could not deliver your ${order.planName || 'data'} plan.\n\n✅ *Good news:* Your payment of *₦${order.amount}* has been safely refunded directly into your *Clarion Wallet*!\n\nReply *BALANCE* to view your funds, or send *BUY* again later to use your wallet to re-order. 🛡️`
+                                message: safeWalletMessage
                             });
 
-                            // Also notify the store owner
+                            // Also notify the store owner / admin
                             this.onOrderUpdate({
                                 type: 'OWNER_ALERT',
                                 orderId,
                                 order,
-                                message: `🚨 *Failed Order Auto-Refunded*\n\nA customer order failed due to network issues. The funds have been safely pushed to their Customer Wallet.\n\n• Plan: ${order.planName || 'N/A'}\n• Refunded: ₦${order.amount}\n• Customer: ${order.buyerPhone?.split('@')[0] || 'Unknown'}\n• Auto Action: REFUNDED_TO_WALLET`
+                                message: adminAlertMessage
                             });
                         }
                     } else {

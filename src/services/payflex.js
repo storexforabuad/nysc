@@ -450,7 +450,7 @@ class PayflexService {
       }
 
       this.cachedPlans = allPlans;
-      logger.info(`Synced exactly ${allPlans.length} active plans successfully!`);
+      logger.info(`Synced ${allPlans.length} active Peyflex direct-api plans to cache (Combined with Husmodata via TelecomDispatcher for 40 total live plans).`);
       return allPlans;
     }
     return [];
@@ -535,6 +535,42 @@ class PayflexService {
     } catch (error) {
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       logger.error(`Error dispensing data to ${phoneNumber}: ${detail}`);
+      throw new Error(error.response?.data?.message || error.message);
+    }
+  }
+
+  async dispenseRaw(phoneNumber, network, planCode) {
+    try {
+      if (config.mockMode) {
+        if (phoneNumber === '08000000000') {
+          throw new Error('MOCK TELCO NETWORK ERROR');
+        }
+        return {
+          status: 'success',
+          reference: `MOCK_PEYFLEX_${Date.now()}`,
+          apiResponse: { status: 'SUCCESS' }
+        };
+      }
+
+      logger.info(`Dispensing raw via Peyflex: ${planCode} on ${network} to ${phoneNumber}`);
+      const response = await this.postBreaker.fire('/api/data/purchase/', {
+        network,
+        mobile_number: phoneNumber,
+        plan_code: planCode
+      });
+
+      if (response.data?.status === 'SUCCESS') {
+        return {
+          status: 'success',
+          reference: response.data.reference,
+          apiResponse: response.data
+        };
+      } else {
+        throw new Error(response.data?.message || 'Data vending failed at Peyflex');
+      }
+    } catch (error) {
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      logger.error(`Error in dispenseRaw to ${phoneNumber}: ${detail}`);
       throw new Error(error.response?.data?.message || error.message);
     }
   }

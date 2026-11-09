@@ -218,8 +218,8 @@ export const getEffectiveStatusFrequency = async (user) => {
  * Dispatches a scheduled status slot ('morning', 'afternoon', or 'evening')
  * respecting Day 0 exclusivity, active promos, and parent/squad frequency limits.
  */
-export const sendScheduledSlotStatus = async (slotKey = 'morning') => {
-  if (!sessionManager.sessions || sessionManager.sessions.size === 0) return;
+export const sendScheduledSlotStatus = async (slotKey = 'morning', force = false) => {
+  if (!sessionManager.sessions || sessionManager.sessions.size === 0) return { dispatched: 0, total: 0 };
 
   const dayOfWeek = new Date().getDay(); // 0 (Sun) - 6 (Sat)
   const todaySlots = STATUS_SCHEDULE[dayOfWeek];
@@ -227,7 +227,7 @@ export const sendScheduledSlotStatus = async (slotKey = 'morning') => {
 
   if (!statusText) {
     logger.warn(`No status text defined for slot: ${slotKey} on day: ${dayOfWeek}`);
-    return;
+    return { dispatched: 0, total: 0 };
   }
 
   // Minimum frequency required for this slot to run
@@ -235,6 +235,7 @@ export const sendScheduledSlotStatus = async (slotKey = 'morning') => {
   // Slot 3 (evening): frequency >= 2
   // Slot 2 (afternoon): frequency >= 3
   const requiredFreq = slotKey === 'morning' ? 1 : slotKey === 'evening' ? 2 : 3;
+  let dispatchedCount = 0;
 
   for (const [uid, worker] of sessionManager.sessions.entries()) {
     if (!worker || typeof worker.postMessage !== 'function') continue;
@@ -246,30 +247,35 @@ export const sendScheduledSlotStatus = async (slotKey = 'morning') => {
         userDoc = snap.exists ? snap.data() : null;
       }
 
-      // 1. Skip if user has an active promo running
-      if (userDoc?.activePromo?.status === 'ACTIVE' && userDoc?.activePromo?.claimsRemaining > 0) {
-        continue;
+      if (!force) {
+        // 1. Skip if user has an active promo running
+        if (userDoc?.activePromo?.status === 'ACTIVE' && userDoc?.activePromo?.claimsRemaining > 0) {
+          continue;
+        }
+
+        // 2. Skip on Day 0: launch status remains exclusive for the first 24 hours
+        if (userDoc?.pairedAt && new Date(userDoc.pairedAt).toDateString() === new Date().toDateString()) {
+          logger.info(`[STATUS] Skipping ${slotKey} status for ${uid} — Day 0 launch status is active.`);
+          continue;
+        }
+
+        // 3. Squad & Parent Frequency Gate
+        const effectiveFreq = await getEffectiveStatusFrequency(userDoc);
+        if (effectiveFreq < requiredFreq) {
+          logger.info(`[STATUS] Skipping ${slotKey} slot for ${uid} — effective frequency is ${effectiveFreq} (requires ${requiredFreq})`);
+          continue;
+        }
       }
 
-      // 2. Skip on Day 0: launch status remains exclusive for the first 24 hours
-      if (userDoc?.pairedAt && new Date(userDoc.pairedAt).toDateString() === new Date().toDateString()) {
-        logger.info(`[STATUS] Skipping ${slotKey} status for ${uid} — Day 0 launch status is active.`);
-        continue;
-      }
-
-      // 3. Squad & Parent Frequency Gate
-      const effectiveFreq = await getEffectiveStatusFrequency(userDoc);
-      if (effectiveFreq < requiredFreq) {
-        logger.info(`[STATUS] Skipping ${slotKey} slot for ${uid} — effective frequency is ${effectiveFreq} (requires ${requiredFreq})`);
-        continue;
-      }
-
-      worker.postMessage({ type: 'text_status', text: statusText });
-      logger.info(`[STATUS] Dispatched ${slotKey} (${requiredFreq}/3) data text status to ${uid}`);
+      worker.postMessage({ type: 'text_status', text: statusText, requestId: `slot_${Date.now()}` });
+      dispatchedCount++;
+      logger.info(`[STATUS] Dispatched ${slotKey} (${requiredFreq}/3) data text status to ${uid} (force=${force})`);
     } catch (err) {
       logger.error(`Failed to send ${slotKey} status to worker for user ${uid}:`, err.message);
     }
   }
+
+  return { dispatched: dispatchedCount, total: sessionManager.sessions.size };
 };
 
 const sendDailyTextStatus = async () => {

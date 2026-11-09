@@ -136,6 +136,12 @@ class SessionManager {
       const usersSnapshot = await db.users.where('state', 'in', ['COMPLETED', 'PAIRED']).get();
       for (const doc of usersSnapshot.docs) {
         const userData = { uid: doc.id, ...doc.data() };
+        if (userData.uid.includes('@lid') && userData.phoneJid) {
+          userData.contactsUid = userData.phoneJid;
+          userData.lidUid = doc.id;
+        } else {
+          userData.contactsUid = userData.phoneJid || userData.uid;
+        }
         this.startProxyBot(userData);
       }
     } catch (error) {
@@ -144,8 +150,8 @@ class SessionManager {
   }
 
   _handleWorkerIPC(worker, user, sessionKey) {
-    const phoneNumber = user.uid.split('@')[0];
-    const phoneJid = `${phoneNumber}@s.whatsapp.net`;
+    const phoneNumber = user.phoneNumber || (user.phoneJid ? user.phoneJid.split('@')[0] : user.uid.split('@')[0]);
+    const phoneJid = user.phoneJid || `${phoneNumber}@s.whatsapp.net`;
     let hasEverConnected = false;
 
     worker.on('message', async (msg) => {
@@ -162,8 +168,8 @@ class SessionManager {
           state: 'COMPLETED',
           botMode: resolvedMode,
           terminalApproved: resolvedApproved,
-          phoneJid,
-          phoneNumber,
+          phoneJid: user.phoneJid || phoneJid,
+          phoneNumber: user.phoneNumber || phoneNumber,
           pairedAt: user.pairedAt || new Date().toISOString()
         };
         if (user.subscription) activationData.subscription = user.subscription;
@@ -176,7 +182,11 @@ class SessionManager {
           if (ownerJid && ownerJid !== user.uid) {
             db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
           }
+          if (user.contactsUid && user.contactsUid !== user.uid) {
+            db.users.doc(user.contactsUid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update contactsUid failed:`, e.message));
+          }
         }
+        worker.postMessage({ type: 'update_user', updates: { ...user, ...activationData, contactsUid: user.contactsUid } });
         if (this.motherSock) {
           this._sendActivationSuccessMessages(ownerJid, user);
         }
@@ -186,6 +196,26 @@ class SessionManager {
         hasEverConnected = true;
         logger.info(`✅ Clarion Digital Store for ${user.uid} fully operational (Worker).`);
         this.pendingPairings.delete(user.uid);
+
+        // Fresh-read user data from BOTH LID and phone JID docs if LID exists and merge them
+        if (db.users) {
+          try {
+            const lidId = user.lidUid || (user.uid?.includes('@lid') ? user.uid : null);
+            const targetPhoneJid = user.phoneJid || phoneJid;
+            const [lidSnap, phoneSnap] = await Promise.all([
+              lidId ? db.users.doc(lidId).get().catch(() => null) : null,
+              targetPhoneJid ? db.users.doc(targetPhoneJid).get().catch(() => null) : null
+            ]);
+            const lidData = lidSnap?.exists ? lidSnap.data() : {};
+            const phoneData = phoneSnap?.exists ? phoneSnap.data() : {};
+            Object.assign(user, lidData, phoneData);
+            if (phoneData.phoneJid || targetPhoneJid) {
+              user.contactsUid = phoneData.phoneJid || targetPhoneJid;
+            }
+          } catch (mergeErr) {
+            logger.warn(`Could not merge user docs on open for ${user.uid}: ${mergeErr.message}`);
+          }
+        }
 
         const ownerJid = user.ownerJid || user.motherJid || phoneJid;
         const resolvedMode = user.botMode || BOT_MODES.AUTONOMOUS;
@@ -198,8 +228,8 @@ class SessionManager {
           state: 'COMPLETED',
           botMode: resolvedMode,
           terminalApproved: resolvedApproved,
-          phoneJid,
-          phoneNumber,
+          phoneJid: user.phoneJid || phoneJid,
+          phoneNumber: user.phoneNumber || phoneNumber,
           pairedAt: user.pairedAt || new Date().toISOString()
         };
         if (user.subscription) activationData.subscription = user.subscription;
@@ -212,59 +242,34 @@ class SessionManager {
           if (ownerJid && ownerJid !== user.uid) {
             db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
           }
+          if (user.contactsUid && user.contactsUid !== user.uid) {
+            db.users.doc(user.contactsUid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update contactsUid failed:`, e.message));
+          }
         }
 
-        // ── Day 0 Launch Status: Trigger 60s after first connection ──
+        // Hot-reload fresh user state into worker thread
+        worker.postMessage({ type: 'update_user', updates: { ...user, ...activationData, contactsUid: user.contactsUid } });
+
+        // ── Day 0 Launch Status: Start 90s fallback timer (cancelled early if contacts_synced arrives) ──
         if (!user.hasPostedLaunchStatus) {
-          setTimeout(async () => {
-            try {
-              let latestUser = user;
-              if (db.users) {
-                try {
-                  const freshSnap = await db.users.doc(user.uid).get();
-                  if (freshSnap.exists) latestUser = { ...user, ...freshSnap.data() };
-                } catch (e) { }
-              }
-
-              if (latestUser.hasPostedLaunchStatus) return;
-
-              let launchStatusText = '';
-              const isReferral = latestUser.role === 'REFERRAL' || Boolean(latestUser.parentId);
-
-              if (isReferral) {
-                let parentStoreName = 'Store';
-                if (db.users && latestUser.parentId) {
-                  try {
-                    const parentDoc = await db.users.doc(latestUser.parentId).get();
-                    if (parentDoc.exists) {
-                      const pData = parentDoc.data();
-                      parentStoreName = pData.brandName || pData.franchiseName || pData.verifiedName || 'Store';
-                    }
-                  } catch (e) { }
-                }
-
-                launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion A.I - ${parentStoreName} ⚡\n\n` +
-                  `Enjoy instant, affordable MTN & Glo data delivered automatically 24/7 — starting at just ₦400 per GIG!\n\n` +
-                  `💚 Every purchase supports community development projects. 🇳🇬\n\n` +
-                  `👉 Try it out now — reply DATA to this status to view our special rates!`;
-              } else {
-                launchStatusText = `🚀 Exciting news! My line is now officially powered by Clarion A.I. ⚡\n\n` +
-                  `Get instant, affordable MTN & Glo data delivered automatically in seconds — starting at just ₦400 per GIG!\n\n` +
-                  `💚 Every purchase funds Community Development projects. 🇳🇬\n\n` +
-                  `👉 Try it out now — just reply DATA to this status to see all plans!`;
-              }
-
-              worker.postMessage({ type: 'text_status', text: launchStatusText });
-              user.hasPostedLaunchStatus = true;
-              if (db.users) {
-                await db.users.doc(user.uid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
-              }
-              logger.info(`[LAUNCH-STATUS] Successfully posted Day 0 launch status for ${user.uid}`);
-            } catch (statusErr) {
-              logger.warn(`Failed to post Day 0 launch status for ${user.uid}:`, statusErr.message);
-            }
-          }, 60000);
+          if (user._launchStatusTimer) clearTimeout(user._launchStatusTimer);
+          user._launchStatusTimer = setTimeout(() => {
+            user._launchStatusTimer = null;
+            this._triggerDay0LaunchStatus(user, worker);
+          }, 90000);
         }
+      }
+
+      if (msg.type === 'contacts_synced') {
+        logger.info(`[SYNC] Contacts ready for ${user.uid}: ${msg.count} synced`);
+        if (user._launchStatusTimer) {
+          clearTimeout(user._launchStatusTimer);
+          user._launchStatusTimer = null;
+        }
+        // Small 2-second grace period for batch commit to settle in Firestore
+        setTimeout(() => {
+          this._triggerDay0LaunchStatus(user, worker);
+        }, 2000);
       }
 
       if (msg.type === 'close') {
@@ -308,9 +313,69 @@ class SessionManager {
     });
   }
 
+  async _triggerDay0LaunchStatus(user, worker) {
+    try {
+      let latestUser = user;
+      if (db.users) {
+        try {
+          const freshSnap = await db.users.doc(user.uid).get();
+          if (freshSnap.exists) latestUser = { ...user, ...freshSnap.data() };
+        } catch (e) { }
+      }
+
+      if (latestUser.hasPostedLaunchStatus) return;
+
+      let launchStatusText = '';
+      const isReferral = latestUser.role === 'REFERRAL' || Boolean(latestUser.parentId);
+
+      if (isReferral) {
+        let parentStoreName = 'Store';
+        if (db.users && latestUser.parentId) {
+          try {
+            const parentDoc = await db.users.doc(latestUser.parentId).get();
+            if (parentDoc.exists) {
+              const pData = parentDoc.data();
+              parentStoreName = pData.brandName || pData.franchiseName || pData.verifiedName || 'Store';
+            }
+          } catch (e) { }
+        }
+
+        launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion A.I - ${parentStoreName} ⚡\n\n` +
+          `Enjoy instant, affordable MTN, Airtel & Glo data delivered automatically 24/7 — starting at just ₦400 per GIG!\n\n` +
+          `💚 Every purchase supports community development projects. 🇳🇬\n\n` +
+          `👉 Try it out now — reply DATA to this status to view our special rates!`;
+      } else {
+        launchStatusText = `🚀 Exciting news! My line is now officially powered by Clarion A.I. ⚡\n\n` +
+          `Get instant, affordable MTN, Airtel & Glo data delivered automatically in seconds — starting at just ₦400 per GIG!\n\n` +
+          `💚 Every purchase funds Community Development projects. 🇳🇬\n\n` +
+          `👉 Try it out now — just reply DATA to this status to see all plans!`;
+      }
+
+      worker.postMessage({ type: 'text_status', text: launchStatusText });
+      user.hasPostedLaunchStatus = true;
+      if (db.users) {
+        await db.users.doc(user.uid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
+        if (user.contactsUid && user.contactsUid !== user.uid) {
+          await db.users.doc(user.contactsUid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
+        }
+      }
+      logger.info(`[LAUNCH-STATUS] Successfully posted Day 0 launch status for ${user.uid}`);
+    } catch (statusErr) {
+      logger.warn(`Failed to post Day 0 launch status for ${user.uid}:`, statusErr.message);
+    }
+  }
+
   startProxyBot(user) {
     if (user.terminalApproved === undefined) user.terminalApproved = true;
     if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    if (!user.contactsUid) {
+      if (user.uid?.includes('@lid') && user.phoneJid) {
+        user.contactsUid = user.phoneJid;
+        user.lidUid = user.uid;
+      } else {
+        user.contactsUid = user.phoneJid || user.uid;
+      }
+    }
     const sessionKey = user.phoneJid || user.uid;
     if (this.sessions.has(sessionKey)) return;
 
@@ -340,6 +405,14 @@ class SessionManager {
   async startQRPairingForUser(user, onQRReady) {
     if (user.terminalApproved === undefined) user.terminalApproved = true;
     if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    if (!user.contactsUid) {
+      if (user.uid?.includes('@lid') && user.phoneJid) {
+        user.contactsUid = user.phoneJid;
+        user.lidUid = user.uid;
+      } else {
+        user.contactsUid = user.phoneJid || user.uid;
+      }
+    }
     logger.info(`[HUB-ACTIVATE] Starting QR worker activation for ${user.uid}`);
 
     const sessionKey = user.phoneJid || user.uid;
@@ -387,6 +460,14 @@ class SessionManager {
   async requestPairingCodeForUser(user) {
     if (user.terminalApproved === undefined) user.terminalApproved = true;
     if (!user.botMode) user.botMode = BOT_MODES.AUTONOMOUS;
+    if (!user.contactsUid) {
+      if (user.uid?.includes('@lid') && user.phoneJid) {
+        user.contactsUid = user.phoneJid;
+        user.lidUid = user.uid;
+      } else {
+        user.contactsUid = user.phoneJid || user.uid;
+      }
+    }
     logger.info(`Requesting pairing code (via Worker) for ${user.uid}`);
 
     const sessionKey = user.phoneJid || user.uid;
@@ -505,11 +586,13 @@ class SessionManager {
     }
 
     // 2. Approved! Apply donation tier free grant and prepare Stage 0 Onboarding Briefing
+    const isChild = fullUser.role === 'REFERRAL' || fullUser.role === 'CHILD_PROXY' || Boolean(fullUser.parentId);
     const tier = fullUser.partnershipTier || fullUser.donationTier;
     const grantDays = getFreeGrantDays(tier);
     const now = new Date();
     const updates = {
-      onboardingStep: 0,
+      onboardingStep: isChild ? null : 0,
+      onboardingComplete: isChild ? true : false,
       announceNewContacts: true
     };
 
@@ -527,8 +610,8 @@ class SessionManager {
       fullUser.botMode = 'autonomous';
       fullUser.subscription = updates.subscription;
     } else {
-      updates.botMode = 'manual';
-      fullUser.botMode = 'manual';
+      updates.botMode = isChild ? 'autonomous' : 'manual';
+      fullUser.botMode = updates.botMode;
     }
 
     const targetUid = user?.uid || fullUser?.uid;
@@ -554,26 +637,37 @@ class SessionManager {
       announceNewContacts: true
     });
 
-    // ── Specialized Welcome Guide for Referral Partners ──
-    if (fullUser.role === 'REFERRAL' || fullUser.parentId) {
-      const cleanPhone = phoneJid.split('@')[0];
+    // ── Specialized Welcome Guide for Referral / Child Partners (Trimmed Apple Vibe Genesis Kit) ──
+    if (isChild) {
+      const cleanPhone = phoneJid.split('@')[0].replace(/\D/g, '');
       const partnerName = fullUser.name || info.partnerName || 'Partner';
-      const thursdayRef = getThursdayReference();
+      const isSuper = fullUser.parentId && (fullUser.parentId.includes('7032905036') || fullUser.parentId.includes('8119772223'));
+      const sponsorDisplayName = isSuper ? 'Mustapha Lawal Gambo (07032905036)' : (fullUser.sponsorName || 'Store Sponsor');
 
-      const referralGuide = `🎉 *WELCOME TO THE CLARION PARTNER NETWORK!* 🇳🇬\n` +
-        `━━━━━━━━━━━━━━━\n\n` +
-        `Congratulations *${partnerName}*! Your WhatsApp line is now powered by Clarion A.I. ⚡\n\n` +
-        `🚀 *How Your Automated Store Works:*\n` +
-        `1. *Auto-Vending:* When your contacts text you *DATA*, *DATA 500*, or *BUY*, your AI bot automatically answers, takes payment, and delivers MTN & Glo data (starting at just ₦400/GB) in seconds!\n` +
-        `2. *Status Promotions:* Your AI bot automatically posts attractive data discount updates to your WhatsApp Status.\n` +
-        `3. *Earn Free Data:* You receive a commission on every sale, credited directly to your *Data Fuel Balance*!\n\n` +
-        `🔑 *Your Key Commands (Text in this chat):*\n` +
-        `• *REDEEM* — Instantly redeem your earned Data Fuel for free data to your line!\n` +
-        `• *STATS* — Check your total sales, Data Fuel balance, and leaderboard standing.\n` +
-        `• *STATECODE [YourCode]* — Submit your NYSC State Code to qualify for promotion to a Full Store ${thursdayRef}! _(e.g. STATECODE JG/26A/2535)_\n` +
-        `• *SUGGEST [Phone] [Name]* — Invite a fellow Corps Member to earn +25 promotion points.\n\n` +
-        `━━━━━━━━━━━━━━━\n` +
-        `_You can continue using your WhatsApp normally with friends. The AI bot only responds when keywords are sent._ Have a profitable day! 🚀`;
+      const referralGuide = `✦ Clarion OS\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `Welcome, ${partnerName}.\n\n` +
+        `Your WhatsApp line is now powered by Clarion Autonomous Intelligence.\n\n` +
+        `Starting now, your phone delivers data packages for MTN, Airtel & Glo automatically.\n\n` +
+        `Your contacts text DATA.\n` +
+        `Clarion handles payment, delivery & support in 3 seconds.\n` +
+        `You keep the profit without lifting a finger.\n\n` +
+        `Engine Status:\n` +
+        `• Bot Mode: 24/7 Autonomous 🟢\n` +
+        `• Earning Power: Tier 1 (1X)\n` +
+        `• Sponsor: ${sponsorDisplayName}\n\n` +
+        `📢 Auto-Status:\n` +
+        `Active · Posts data deals 3x daily to bring you automatic sales.\n\n` +
+        `📱 Live Mobile Dashboard (Zero Password):\n` +
+        `👉 https://hub.clarion.ng/p/${cleanPhone}\n` +
+        `_Tap to manage status frequency, track profit & view orders._\n\n` +
+        `Key Commands:\n` +
+        `• BALANCE — Check earnings & float\n` +
+        `• BUY — Order wholesale data for yourself\n` +
+        `• DASHBOARD — Open live console\n` +
+        `• KEYWORDS — Full command directory\n\n` +
+        `Chat normally with friends. The bot only activates when data keywords are sent.\n\n` +
+        `Welcome to effortless earnings. ✦`;
 
       try {
         await this.motherSock.sendMessage(phoneJid, { text: referralGuide });
@@ -581,15 +675,19 @@ class SessionManager {
         logger.error('Failed to send Referral Partner Guide:', err.message);
       }
 
-      // Notify the Parent Proxy
+      // Notify the Parent Proxy / Mentor
       if (fullUser.parentId) {
         const parentJid = fullUser.parentId.includes('@') ? fullUser.parentId : `${fullUser.parentId}@s.whatsapp.net`;
-        const parentAlert = `🎉 *PARTNER ACTIVATION CONFIRMED!*\n` +
-          `━━━━━━━━━━━━━━━\n\n` +
-          `Partner *${partnerName}* (+${cleanPhone}) has successfully scanned and is now *ONLINE* under your Store! ⚡\n\n` +
-          `• *Your Share:* 65% Cash (credited to your withdrawable wallet on every sale)\n` +
-          `• *Partner Share:* 35% Data Fuel (free data redemption)\n` +
-          `• *Management:* Reply *SQUAD* anytime to view all your active partners and live sales, or reply *SETSPLIT ${cleanPhone} [Percent]* to customize their share.`;
+        const parentAlert = `✦ Clarion OS\n` +
+          `━━━━━━━━━━━━━━\n` +
+          `🎉 PARTNER ACTIVATION CONFIRMED ⚡\n\n` +
+          `Partner *${partnerName}* (+${cleanPhone}) has successfully linked their WhatsApp terminal!\n\n` +
+          `✦ Operational Mode: Autonomous 24/7\n` +
+          `✦ Multiplier Level: Tier 1 (1X Base Power)\n` +
+          `✦ Profit Protection: Net profits shared with zero revenue leakage\n` +
+          `📱 *Inspect Live Node on Dashboard:*\n` +
+          `👉 https://hub.clarion.ng/p/${cleanPhone}\n\n` +
+          `✦ Management: Reply *SQUAD* anytime to inspect your live network.`;
 
         try {
           await this.motherSock.sendMessage(parentJid, { text: parentAlert });
