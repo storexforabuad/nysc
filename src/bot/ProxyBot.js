@@ -465,9 +465,27 @@ export const handleProxyMessage = async (sock, msg, user) => {
           }
         }
 
-        // 2. Insufficient wallet balance: Generate Paystack Invoice
+        // 2. Insufficient wallet balance: Generate Paystack Invoice with Concurrency Stamp
         const securityFee = calculatePaystackFee(plan.sellPrice);
-        const totalToTransfer = plan.sellPrice;
+        let totalToTransfer = plan.sellPrice;
+
+        if (db.ledger) {
+          try {
+            const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+            const recentOrdersSnap = await db.ledger
+              .where('status', '==', 'AWAITING_PAYMENT')
+              .where('createdAt', '>=', thirtyMinsAgo)
+              .get();
+            const activeAmounts = new Set();
+            recentOrdersSnap.forEach(d => {
+              const amt = d.data().amount;
+              if (amt) activeAmounts.add(amt);
+            });
+            while (activeAmounts.has(totalToTransfer)) {
+              totalToTransfer += 1; // Unique Naira stamp (+₦1, +₦2) prevents shared-account collisions
+            }
+          } catch (e) { }
+        }
 
         if (db.ledger) {
           await db.ledger.doc(orderRef).set({
@@ -503,20 +521,43 @@ export const handleProxyMessage = async (sock, msg, user) => {
           }
         }
 
+        let onlinePaymentUrl = '';
+        try {
+          const init = await paystack.initializeTransaction({
+            email: `${actionableJid.split('@')[0]}@clarionhub.ng`,
+            amountNaira: totalToTransfer,
+            reference: orderRef,
+            metadata: {
+              userId: user.uid,
+              orderRef,
+              type: 'DATA_PURCHASE',
+              targetPhone,
+              planCode: plan.code
+            }
+          });
+          if (init.success) onlinePaymentUrl = init.authorizationUrl;
+        } catch (e) { }
+
         const bankName = dvaInfo?.bankName || 'Wema Bank / Titan Paystack';
         const accountNumber = dvaInfo?.accountNumber || '0123456789';
         const accountName = dvaInfo?.accountName || user.brandName || ('Clarion - ' + (user.verifiedName || user.name || 'Store'));
 
-        const invoiceText = `💳 *PAYMENT INVOICE #${orderRef.slice(-6)}*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━\n` +
+        let invoiceText = `💳 *PAYMENT INVOICE #${orderRef.slice(-6)}*\n` +
+          `──────────────\n` +
           `📱 *Recipient:* ${targetPhone} (${plan.network.toUpperCase()})\n` +
           `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
           `💰 *Total Due:* *₦${totalToTransfer.toLocaleString()}* (Exact Amount)\n\n` +
-          `🏦 *Bank:* ${bankName}\n` +
-          `🔢 *Account Number:* \`${accountNumber}\`\n` +
-          `👤 *Account Name:* ${accountName}\n` +
-          `━━━━━━━━━━━━━━━━━━━━━\n` +
-          `⚡ *Transfer exactly ₦${totalToTransfer.toLocaleString()} to the account above.*\n` +
+          `🏦 *Transfer to Dedicated Account:*\n` +
+          `Bank: *${bankName}*\n` +
+          `Account Number: *\`${accountNumber}\`*\n` +
+          `Account Name: *${accountName}*\n` +
+          `──────────────\n`;
+
+        if (onlinePaymentUrl) {
+          invoiceText += `\n👉 *Or Pay with Card:*\n${onlinePaymentUrl}\n\n`;
+        }
+
+        invoiceText += `⚡ *Transfer exactly ₦${totalToTransfer.toLocaleString()} to the account above.*\n` +
           `Your data bundle will be credited automatically in 15 seconds once payment is detected!\n\n` +
           `⏳ _Account expires in 30 minutes._\n` +
           `· Reply *CANCEL* to abort order`;

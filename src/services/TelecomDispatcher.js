@@ -19,8 +19,8 @@ export const MASTER_DATA_CATALOG = [
     sellPrice: 100,
     primaryProvider: 'husmodata',
     husmoId: 403,
-    peyflexCode: 'M100MBS',
-    peyflexNetwork: 'mtn_data_share'
+    peyflexCode: 'M110MBS',          // corrected: matches Peyflex mtn_gifting_data catalog
+    peyflexNetwork: 'mtn_gifting_data' // corrected: 110MB lives under gifting, not share
   },
   {
     serial: 2,

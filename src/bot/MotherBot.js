@@ -3300,23 +3300,44 @@ export const handleMotherMessage = async (sock, msg) => {
       // ── FUND / TOPUP command ────────────────────────────────
       else if (command.toLowerCase().startsWith('fund') || command.toLowerCase().startsWith('topup')) {
         const amountStr = command.split(/\s+/)[1];
-        const amount = parseFloat(amountStr);
-        if (!amount || isNaN(amount) || amount < 100) {
+        const fundAmount = parseFloat(amountStr);
+        if (!fundAmount || isNaN(fundAmount) || fundAmount < 100) {
           return sock.sendMessage(from, {
             text: '💳 *Top Up Clarion Wallet*\n\nPlease specify an amount of at least ₦100.\nExample: *FUND 2000*'
           });
         }
 
+        const securityFee = calculatePaystackFee(fundAmount);
+        const totalToTransfer = fundAmount + securityFee;
         const fundRef = `WALLET_FUND_${Date.now()}`;
+
+        if (db.ledger) {
+          await db.ledger.doc(fundRef).set({
+            type: 'PENDING_WALLET_FUND',
+            orderType: 'wallet_fund',
+            userId: from,
+            buyerPhone: from,
+            fundAmount,
+            securityFee,
+            amount: totalToTransfer,
+            status: 'AWAITING_PAYMENT',
+            createdAt: new Date().toISOString()
+          }).catch(e => logger.warn(`Ledger write failed for MotherBot wallet fund order: ${e.message}`));
+        }
+
         let payUrl = '';
         try {
           const init = await paystack.initializeTransaction({
             email: `${from.split('@')[0]}@clarionhub.ng`,
-            amountNaira: amount,
+            amountNaira: totalToTransfer,
             reference: fundRef,
             metadata: {
               userId: from,
-              purpose: 'WALLET_FUNDING'
+              orderRef: fundRef,
+              type: 'WALLET_FUND',
+              purpose: 'WALLET_FUNDING',
+              fundAmount,
+              securityFee
             }
           });
           if (init.success) payUrl = init.authorizationUrl;
@@ -3325,11 +3346,21 @@ export const handleMotherMessage = async (sock, msg) => {
         }
 
         const bankInfo = userData.virtualAccount || CENTRAL_HUB_ACCOUNT;
-        let msg = `💳 *Fund Clarion Wallet: ₦${amount.toLocaleString()}*\n──────────────\n`;
+        let msg = `💳 *Fund Clarion Wallet*\n` +
+          `──────────────\n` +
+          `💰 *Credit Amount:* ₦${fundAmount.toLocaleString()}\n` +
+          `🛡️ *Paystack Fee:* ₦${securityFee.toLocaleString()}\n` +
+          `💵 *Total to Transfer / Pay:* *₦${totalToTransfer.toLocaleString()}*\n`;
+
         if (payUrl) {
           msg += `\n👉 *Pay Online (Card / USSD / Instant Transfer):*\n${payUrl}\n`;
         }
-        msg += `\n🏦 *Or Transfer to Your Dedicated Account:*\nBank: *${bankInfo.bankName}*\nAccount: *\`${bankInfo.accountNumber}\`*\nName: *${bankInfo.accountName || 'Clarion Digital Hub'}*\n\n⚡ _Your wallet will be credited automatically upon confirmation._`;
+        msg += `\n🏦 *Or Transfer to Your Dedicated Account:*\n` +
+          `Bank: *${bankInfo.bankName}*\n` +
+          `Account: *\`${bankInfo.accountNumber}\`*\n` +
+          `Name: *${bankInfo.accountName || 'Clarion Digital Hub'}*\n` +
+          `Amount: *₦${totalToTransfer.toLocaleString()}* (Exact Amount)\n\n` +
+          `⚡ _Your wallet will be credited with ₦${fundAmount.toLocaleString()} automatically upon confirmation._`;
 
         return sock.sendMessage(from, { text: msg });
       }
@@ -3975,15 +4006,36 @@ export const handleMotherMessage = async (sock, msg) => {
 
         if (balance >= finalDebit) {
           await sock.sendMessage(from, { text: `⏳ *Dispensing Data...*\nDeducting ₦${finalDebit.toLocaleString()} from your Clarion Wallet.` });
+          let debitRecordId = null;
           try {
-            await wallet.recordPurchaseDebit(from, finalDebit, `Data: ${plan.name} to ${targetPhone}`, { code: plan.code, planName: plan.name, targetPhone });
+            // 1. Write the debit record (tentative)
+            debitRecordId = await wallet.recordPurchaseDebit(from, finalDebit, `Data: ${plan.name} to ${targetPhone}`, { code: plan.code, planName: plan.name, targetPhone });
+
+            // 2. Attempt dispense — if this throws, we roll back below
             await telecomDispatcher.dispenseData(targetPhone, plan.code);
+
+            // 3. Both succeeded — confirm to user
             const newBal = (balance - finalDebit).toFixed(2);
             return sock.sendMessage(from, {
               text: `✅ *Data Vended Successfully!*\n\n📱 *Recipient:* ${targetPhone}\n📦 *Plan:* ${plan.name}\n💰 *Amount Deducted:* ₦${finalDebit.toLocaleString()}\n💳 *Paid via:* Clarion Wallet\n🪙 *Remaining Balance:* ₦${newBal}`
             });
           } catch (err) {
             logger.error('Error dispensing data from MotherBot:', err.message);
+
+            // Rollback: reverse the debit if it was already written to Firestore
+            if (debitRecordId) {
+              await wallet.recordPurchaseReversal(
+                from, finalDebit,
+                `Reversal: dispense failed for ${plan.name} to ${targetPhone}`,
+                { code: plan.code, originalDebitId: debitRecordId, reason: err.message }
+              );
+              logger.warn(`[MOTHERBOT] Reversed ₦${finalDebit} debit (id: ${debitRecordId}) after dispense failure.`);
+              return sock.sendMessage(from, {
+                text: `❌ *Data vending failed.*\n\n${err.message}\n\n💳 Your wallet has been fully refunded. Balance restored to ₦${balance.toFixed(2)}.`
+              });
+            }
+
+            // Debit was never written — truthful message
             return sock.sendMessage(from, { text: `❌ Data vending failed: ${err.message}. Your balance was not deducted.` });
           }
         } else {

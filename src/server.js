@@ -66,6 +66,7 @@ process.on('unhandledRejection', (reason) => {
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json());
 
   // Apply API rate limiter globally to /api routes
@@ -873,9 +874,9 @@ async function startServer() {
           processedAt: new Date().toISOString(),
           amount: Body.amount,
           virtualAccountNumber: Body.virtual_account_number || null,
-          channel: payload.channel || 'virtual-account',
+          channel: channel || 'virtual-account',
           event: Event,
-          rawPayload: payload
+          rawPayload: rawPayload || null
         }).catch(err => logger.warn(`Failed to persist processed transaction ${TransactionRef}:`, err.message));
       }
     }
@@ -1068,23 +1069,94 @@ async function startServer() {
           }
         }
 
-        let ledgerSnapshot = await db.ledger
-          .where('status', '==', 'AWAITING_PAYMENT')
-          .where('amount', '==', Body.amount)
-          .limit(1)
-          .get();
+        let matchedDoc = null;
 
-        if (ledgerSnapshot.empty) {
-          ledgerSnapshot = await db.ledger
-            .where('type', '==', 'PENDING_DATA')
+        // 1. Try matching by direct TransactionRef / orderId
+        if (TransactionRef && db.ledger) {
+          try {
+            const directDoc = await db.ledger.doc(TransactionRef).get();
+            if (directDoc.exists && (directDoc.data().status === 'AWAITING_PAYMENT' || directDoc.data().status === 'PENDING_DATA')) {
+              matchedDoc = directDoc;
+            }
+          } catch (e) { }
+        }
+
+        // 2. Try matching by exact amount in AWAITING_PAYMENT
+        if (!matchedDoc && db.ledger) {
+          let ledgerSnapshot = await db.ledger
+            .where('status', '==', 'AWAITING_PAYMENT')
             .where('amount', '==', Body.amount)
             .limit(1)
             .get();
+
+          if (ledgerSnapshot.empty) {
+            ledgerSnapshot = await db.ledger
+              .where('type', '==', 'PENDING_DATA')
+              .where('amount', '==', Body.amount)
+              .limit(1)
+              .get();
+          }
+
+          if (!ledgerSnapshot.empty) {
+            matchedDoc = ledgerSnapshot.docs[0];
+          }
         }
 
-        if (!ledgerSnapshot.empty) {
-          const order = ledgerSnapshot.docs[0].data();
-          const orderId = ledgerSnapshot.docs[0].id;
+        // 3. Concurrency / Discrepancy Matching (Near-match, Overpayment, Underpayment on Shared Virtual Account)
+        if (!matchedDoc && virtualAccountNo && db.users) {
+          try {
+            const userSnap = await db.users.where('virtualAccount.accountNumber', '==', virtualAccountNo).limit(1).get();
+            if (!userSnap.empty) {
+              const pId = userSnap.docs[0].id;
+              const pendingSnap = await db.ledger
+                .where('userId', '==', pId)
+                .where('status', '==', 'AWAITING_PAYMENT')
+                .get();
+
+              if (!pendingSnap.empty) {
+                const candidate = pendingSnap.docs[0];
+                const candData = candidate.data();
+
+                if (Body.amount > candData.amount) {
+                  // Overpayment: fulfill and credit excess change to customer wallet
+                  matchedDoc = candidate;
+                  matchedDoc.isOverpayment = true;
+                  matchedDoc.excessChange = +(Body.amount - candData.amount).toFixed(2);
+                } else if (Body.amount < candData.amount) {
+                  // Underpayment: deposit received funds into wallet and alert user
+                  const shortfall = +(candData.amount - Body.amount).toFixed(2);
+                  const cleanCustomer = candData.buyerPhone.includes('@') ? candData.buyerPhone : `${candData.buyerPhone}@s.whatsapp.net`;
+
+                  if (db.users && candData.userId) {
+                    try {
+                      await db.users.doc(candData.userId).collection('contacts').doc(cleanCustomer).set({
+                        walletBalance: admin.firestore.FieldValue.increment(Body.amount)
+                      }, { merge: true });
+                    } catch (e) { }
+                  }
+
+                  const partialMsg = `⚠️ *PARTIAL PAYMENT RECEIVED*\n` +
+                    `──────────────\n` +
+                    `💰 *Amount Received:* ₦${Body.amount.toLocaleString()}\n` +
+                    `📦 *Required Amount:* ₦${candData.amount.toLocaleString()}\n` +
+                    `⏳ *Remaining Balance Needed:* ₦${shortfall.toLocaleString()}\n\n` +
+                    `💡 Your payment of *₦${Body.amount.toLocaleString()}* has been safely credited to your in-chat Clarion Wallet.\n\n` +
+                    `👉 Transfer the remaining *₦${shortfall.toLocaleString()}* to complete delivery, or reply *DATA* to choose a package within your balance!`;
+
+                  await sessionManager.sendProxyCustomerMessage(candData.userId, cleanCustomer, partialMsg);
+                  logger.info(`Handled underpayment of ₦${Body.amount} for order ${candidate.id}`);
+                  return;
+                }
+              }
+            }
+          } catch (err) {
+            logger.warn(`Error in discrepancy order lookup: ${err.message}`);
+          }
+        }
+
+        if (matchedDoc) {
+          const order = matchedDoc.data();
+          const orderId = matchedDoc.id;
           const destinationJid = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
 
           // 1. Move to DISPENSING to prevent double-processing and confirm receipt
@@ -1093,10 +1165,11 @@ async function startServer() {
             updatedAt: new Date().toISOString()
           });
 
-          if (sessionManager.motherSock) {
-            await sessionManager.motherSock.sendMessage(destinationJid, {
-              text: `⏳ *Payment Received!*\n\nYour payment of *₦${order.amount.toLocaleString()}* has been confirmed. Fulfilling your order now.\n\n_If there is a slight network delay, please be patient._`
-            }).catch(() => { });
+          const ackMsg = `⏳ *Payment Received!*\n\nYour payment of *₦${order.amount.toLocaleString()}* has been confirmed. Fulfilling your order now.\n\n_If there is a slight network delay, please be patient._`;
+          if (order.userId && order.userId !== 'HUB') {
+            await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, ackMsg).catch(() => { });
+          } else if (sessionManager.motherSock) {
+            await sessionManager.motherSock.sendMessage(destinationJid, { text: ackMsg }).catch(() => { });
           }
 
           try {
@@ -1106,6 +1179,24 @@ async function startServer() {
               const fundAmount = Number(order.fundAmount || order.amount);
               const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
               let newBalance = fundAmount;
+
+              if (db.ledger) {
+                await db.ledger.doc(orderId).set({
+                  type: 'WALLET_DEPOSIT',
+                  userId: order.userId,
+                  amount: fundAmount,
+                  settlement: {
+                    coMemberShare: fundAmount,
+                    systemShare: 0,
+                    cdsShare: 0
+                  },
+                  status: 'COMPLETED',
+                  squadTransactionRef: TransactionRef,
+                  paystackTransactionRef: TransactionRef,
+                  updatedAt: new Date().toISOString()
+                }, { merge: true });
+              }
+
               if (db.users && order.userId) {
                 try {
                   const contactRef = db.users.doc(order.userId).collection('contacts').doc(cleanCustomer);
@@ -1120,11 +1211,9 @@ async function startServer() {
                 }
               }
 
-              await db.ledger.doc(orderId).update({
-                status: 'COMPLETED',
-                squadTransactionRef: TransactionRef,
-                updatedAt: new Date().toISOString()
-              });
+              if (order.userId && order.userId !== 'HUB') {
+                newBalance = await wallet.getBalance(order.userId).catch(() => newBalance);
+              }
 
               const fundSuccessMsg = `💳 *WALLET FUNDED SUCCESSFULLY!* ⚡\n` +
                 `──────────────\n` +
@@ -1134,7 +1223,12 @@ async function startServer() {
                 `Your funds are 100% secured and ready! You can now purchase data with *ZERO security fees* anytime.\n\n` +
                 `👉 Reply *DATA* to view data packages.`;
 
-              await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, fundSuccessMsg);
+              if (sessionManager.motherSock && (destinationJid === order.userId || destinationJid.includes(order.userId.split('@')[0]))) {
+                await sessionManager.motherSock.sendMessage(destinationJid, { text: fundSuccessMsg }).catch(() => { });
+              } else {
+                await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, fundSuccessMsg);
+              }
+
               logger.info(`Customer wallet funded for ${order.buyerPhone}: ₦${fundAmount}`);
               return;
             } else if (order.type === 'PENDING_AIRTIME' || order.orderType === 'airtime') {
@@ -1231,6 +1325,21 @@ async function startServer() {
             //   logger.warn(`Receipt image send failed for order ${orderId}: ${sendErr.message}`);
             // }
 
+            if (matchedDoc?.isOverpayment && matchedDoc?.excessChange > 0) {
+              const cleanCustomer = order.buyerPhone.includes('@') ? order.buyerPhone : `${order.buyerPhone}@s.whatsapp.net`;
+              if (db.users && order.userId) {
+                try {
+                  await db.users.doc(order.userId).collection('contacts').doc(cleanCustomer).set({
+                    walletBalance: admin.firestore.FieldValue.increment(matchedDoc.excessChange)
+                  }, { merge: true });
+                } catch (e) { }
+              }
+            }
+
+            const changeNote = (matchedDoc?.isOverpayment && matchedDoc?.excessChange > 0)
+              ? `\n\n🎁 *Excess Change Deposited:*\n₦${matchedDoc.excessChange.toLocaleString()} change has been safely credited to your in-chat Clarion Wallet for future orders!`
+              : '';
+
             const walletTip = isFirstPurchase
               ? `\n\n💡 *Smart Tip:* Reply *FUND* anytime to load your Clarion Wallet for 1-click instant vending 24/7 — no need to open your banking app each time!`
               : `\n\n· Reply *DATA* for your next order`;
@@ -1243,7 +1352,7 @@ async function startServer() {
               `📦 *Plan:* ${fulfillmentResult?.planDetails?.name || 'Data Package'}\n` +
               `📱 *Recipient:* ${recipientDisplay}\n` +
               `💰 *Total Paid:* ₦${order.amount.toLocaleString()}\n\n` +
-              `💚 *Thank you!* A portion of your purchase directly funds grassroots Community Development projects. 🇳🇬${walletTip}`;
+              `💚 *Thank you!* A portion of your purchase directly funds grassroots Community Development projects. 🇳🇬${changeNote}${walletTip}`;
 
             await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, dataReceiptMsg);
             logger.info(`Order ${orderId} vended and settled successfully.`);
@@ -1285,6 +1394,7 @@ async function startServer() {
                 userId: matchedUserId,
                 amount: Body.amount,
                 squadTransactionRef: TransactionRef,
+                paystackTransactionRef: TransactionRef,
                 settlement: {
                   coMemberShare: Body.amount,
                   systemShare: 0,
@@ -1298,12 +1408,14 @@ async function startServer() {
             const partnerPhone = (matchedUser.phoneNumber || matchedUserId.split('@')[0]).replace(/[^0-9]/g, '');
             const isSame = checkIsSameNumber(matchedUserId, partnerPhone);
             const userJid = matchedUserId.includes('@') ? matchedUserId : `${matchedUserId}@s.whatsapp.net`;
+            const currentBal = await wallet.getBalance(matchedUserId).catch(() => Body.amount);
 
             if (sessionManager.motherSock) {
               await sessionManager.motherSock.sendMessage(userJid, {
-                text: `💰 *PROMO FUEL LOADED!* 🚀\n\n` +
-                  `Your wallet has been credited with *₦${Body.amount.toLocaleString()}*.\n\n` +
-                  `🎨 Generating your custom *Launch Giveaway Poster* now...`
+                text: `💰 *WALLET FUNDED SUCCESSFULLY!* ⚡\n\n` +
+                  `Your wallet has been credited with *₦${Body.amount.toLocaleString()}*.\n` +
+                  `💵 *Current Balance:* ₦${currentBal.toLocaleString()}\n\n` +
+                  `👉 Reply *DATA* to purchase high-speed data at wholesale rates!`
               }).catch(() => { });
 
               try {

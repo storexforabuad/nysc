@@ -1016,7 +1016,12 @@ class WalletService {
             let totalEarned = 0;
             completedSnap.forEach(doc => {
                 const data = doc.data();
+                // Referral/proxy profit share
                 totalEarned += data.settlement?.coMemberShare || 0;
+                // Wallet top-up deposits (super-parent funded wallet)
+                if (data.type === 'WALLET_DEPOSIT') {
+                    totalEarned += data.amount || 0;
+                }
             });
 
             // Sum all withdrawals, bank update fees, and purchase debits for this user
@@ -1033,6 +1038,8 @@ class WalletService {
                     totalDebits += data.amount || WITHDRAWAL_FEES.BANK_UPDATE_FEE;
                 } else if ((data.type === 'PURCHASE_DEBIT' || data.type === 'SELF_PURCHASE_DEBIT' || data.type === 'SUBSCRIPTION_DEBIT') && data.status === 'SUCCESS') {
                     totalDebits += data.amount || 0;
+                } else if (data.type === 'PURCHASE_REVERSAL' && data.status === 'SUCCESS') {
+                    totalDebits -= data.amount || 0; // Reversal cancels a prior debit
                 }
             });
 
@@ -1185,6 +1192,31 @@ class WalletService {
             return ref.id;
         } catch (err) {
             logger.error(`Error recording purchase debit for ${userId}:`, err.message);
+            return null;
+        }
+    }
+
+    /**
+     * Reverse a failed purchase debit. Creates a PURCHASE_REVERSAL credit
+     * that cancels out the debit in getBalance() computation.
+     */
+    async recordPurchaseReversal(userId, amount, description = 'Purchase reversal', metadata = {}) {
+        if (!db.ledger) return null;
+        try {
+            const ref = db.ledger.doc();
+            await ref.set({
+                type: 'PURCHASE_REVERSAL',
+                userId,
+                amount,
+                description,
+                status: 'SUCCESS',
+                metadata,
+                createdAt: new Date().toISOString()
+            });
+            logger.info(`[WALLET] Reversal of ₦${amount} recorded for ${userId}: ${ref.id}`);
+            return ref.id;
+        } catch (err) {
+            logger.error(`Error recording purchase reversal for ${userId}:`, err.message);
             return null;
         }
     }
