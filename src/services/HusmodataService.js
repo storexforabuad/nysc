@@ -13,11 +13,11 @@ class HusmodataService {
         'Authorization': `Token ${this.token}`,
         'Content-Type': 'application/json'
       },
-      timeout: 12000
+      timeout: 25000
     });
 
     const breakerOptions = {
-      timeout: 10000,
+      timeout: 25000,
       errorThresholdPercentage: 50,
       resetTimeout: 30000
     };

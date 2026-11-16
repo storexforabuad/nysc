@@ -6,7 +6,7 @@ import paystack from '../services/PaystackService.js';
 import wallet, { SUBSCRIPTION_PLANS, BOT_MODES, WITHDRAWAL_FEES, isSuperParent, SUPER_PARENT_PHONE, getMultiplierTier, MULTIPLIER_TIERS, calculateDynamicSquadCapacity } from '../services/WalletService.js';
 import sessionManager, { handleOnboardingWizardInput } from './SessionManager.js';
 import broadcastQueue from '../services/BroadcastQueue.js';
-import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT, pendingSuperParentDecisions } from './MotherBot.js';
+import { handleMilestoneCheck, CENTRAL_HUB_ACCOUNT, pendingSuperParentDecisions, mockManualOrders } from './MotherBot.js';
 import { detectNetwork } from '../utils/networkUtils.js';
 import { getThursdayReference } from '../utils/dateHelpers.js';
 import { matchBank } from '../utils/bankUtils.js';
@@ -37,6 +37,114 @@ const awaitingDownTierConfirmMap = new Map();
 
 // ── In-memory tracking for Two-Step NIBSS BANK Account Confirmation ──
 const awaitingBankConfirmMap = new Map();
+
+// ── In-memory tracking for active displayed menus (Apple Vibe 1-tap indexed replies) ──
+const userActiveMenuMap = new Map();
+
+// ── In-memory tracking for dual-option order choices (Direct Order Transfer vs Float Top-Up) ──
+const awaitingOrderChoiceMap = new Map();
+
+// ── Cache & Helper: resolve whether a sender is a Child Proxy / Downline of this Proxy ──
+const childProxyCache = new Map();
+const CHILD_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function resolveChildProxyDoc(senderJid, proxyUser) {
+  if (!db.users || !senderJid || !proxyUser) return null;
+  const now = Date.now();
+  const cached = childProxyCache.get(senderJid);
+  if (cached && now - cached.timestamp < CHILD_CACHE_TTL_MS) {
+    return cached.doc;
+  }
+
+  try {
+    const stripped = String(senderJid).replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    const tenDigit = stripped.length === 13 ? '0' + stripped.slice(3) : stripped.length === 10 ? '0' + stripped : stripped;
+    const intlDigit = stripped.length === 11 ? '234' + stripped.slice(1) : stripped.length === 10 ? '234' + stripped : stripped;
+
+    const parentIdentifiers = [
+      proxyUser.uid,
+      proxyUser.phoneJid,
+      proxyUser.phoneNumber,
+      '2347032905036',
+      '2347032905036@s.whatsapp.net',
+      '259794569039973@lid',
+      '07032905036'
+    ].filter(Boolean);
+
+    let childDoc = null;
+    let docId = null;
+
+    // Direct lookup by senderJid
+    const directSnap = await db.users.doc(senderJid).get();
+    if (directSnap.exists) {
+      childDoc = directSnap.data();
+      docId = directSnap.id;
+    }
+
+    // Lookup by bare phone
+    if (!childDoc && stripped) {
+      const strippedSnap = await db.users.doc(stripped).get();
+      if (strippedSnap.exists) {
+        childDoc = strippedSnap.data();
+        docId = strippedSnap.id;
+      }
+    }
+
+    // Lookup by phoneNumber field
+    if (!childDoc && stripped) {
+      const phoneSnap = await db.users.where('phoneNumber', 'in', [stripped, tenDigit, intlDigit]).limit(1).get();
+      if (!phoneSnap.empty) {
+        childDoc = phoneSnap.docs[0].data();
+        docId = phoneSnap.docs[0].id;
+      }
+    }
+
+    if (childDoc) {
+      const isChildRole = childDoc.role === 'CHILD_PROXY' || childDoc.role === 'REFERRAL';
+      const isLinkedToParent = parentIdentifiers.includes(childDoc.parentId) || parentIdentifiers.includes(childDoc.mentorId);
+      if (isChildRole || isLinkedToParent) {
+        const result = { ...childDoc, docId: docId || senderJid };
+        childProxyCache.set(senderJid, { doc: result, timestamp: now });
+        return result;
+      }
+    }
+
+    childProxyCache.set(senderJid, { doc: null, timestamp: now });
+    return null;
+  } catch (e) {
+    logger.warn(`[resolveChildProxyDoc] Failed for sender "${senderJid}": ${e.message}`);
+    return null;
+  }
+}
+
+// ── Helper: resolve a parentId (JID or bare phone or UID) to a Firestore user document ──
+async function resolveParentDoc(parentKey) {
+  if (!db.users || !parentKey) return null;
+  try {
+    // Strip @s.whatsapp.net to get phone/uid
+    const stripped = String(parentKey).replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    // Try direct doc lookup (UID-keyed)
+    const directSnap = await db.users.doc(parentKey).get();
+    if (directSnap.exists) return directSnap.data();
+    // Try stripped version (bare phone as UID)
+    if (stripped !== parentKey) {
+      const strippedSnap = await db.users.doc(stripped).get();
+      if (strippedSnap.exists) return strippedSnap.data();
+    }
+    // Query by phoneNumber field (phone stored as 10-digit, 11-digit, or 13-digit international)
+    const tenDigit = stripped.length === 13 ? '0' + stripped.slice(3) : stripped.length === 12 ? '0' + stripped.slice(2) : stripped;
+    const intlDigit = stripped.length === 11 ? '234' + stripped.slice(1) : stripped.length === 10 ? '234' + stripped : stripped;
+    const phoneSnap = await db.users.where('phoneNumber', 'in', [stripped, tenDigit, intlDigit]).limit(1).get();
+    if (!phoneSnap.empty) return phoneSnap.docs[0].data();
+    // Query by uid field
+    const uidSnap = await db.users.where('uid', 'in', [parentKey, stripped]).limit(1).get();
+    if (!uidSnap.empty) return uidSnap.docs[0].data();
+    return null;
+  } catch (e) {
+    logger.warn(`[resolveParentDoc] Failed for key "${parentKey}": ${e.message}`);
+    return null;
+  }
+}
 
 // ── Inbound message rate limiter: 5 messages per 10 seconds per contact ──
 const messageLimiter = new RateLimiterMemory({ points: 5, duration: 10 });
@@ -97,7 +205,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
   if (!text && !contactMsg) return;
 
   const command = text.toLowerCase().trim();
-  const cleanCommand = command.replace(/^\./, '');
+  let cleanCommand = command.replace(/^\./, '');
 
   // Handle global opt-out
   if (command === 'stop') {
@@ -130,6 +238,16 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const userSessionKey = `${user.uid}_${actionableJid}`;
     const contactsUid = user.contactsUid || user.phoneJid || user.uid;
 
+    // ── Resolve whether caller is a Child Proxy / Downline of this Proxy ──
+    const childProxyUser = !isSelfChat ? await resolveChildProxyDoc(actionableJid, user) : null;
+    const isChildProxy = !!childProxyUser;
+    let childWalletBalance = 0;
+    let childTier = null;
+    if (isChildProxy) {
+      childWalletBalance = await wallet.getBalance(childProxyUser.docId || childProxyUser.uid || actionableJid).catch(() => 0);
+      childTier = wallet.getMultiplierTier(childWalletBalance);
+    }
+
     // ── Universal CANCEL / EXIT ──
     if (command === 'cancel' || command === 'exit') {
       awaitingRecipientMap.delete(userSessionKey);
@@ -137,6 +255,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       awaitingConfirmMap.delete(userSessionKey);
       awaitingGiftMap.delete(userSessionKey);
       awaitingFundMap.delete(userSessionKey);
+      awaitingOrderChoiceMap.delete(userSessionKey);
 
       if (db.ledger && actionableJid) {
         try {
@@ -189,7 +308,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
           return sock.sendMessage(from, {
             text: `✦ Clarion OS\n` +
-              `━━━━━━━━━━━━━━\n` +
+              `──────────────\n` +
               `🔑 Activation Code Ready!\n\n` +
               `Forward this 8-digit code to ${mentorPairing.candidateName} (+${mentorPairing.candidatePhone}):\n\n` +
               `👉 *${code}*\n\n` +
@@ -236,7 +355,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
                 await sock.sendMessage(from, {
                   image: qrBuffer,
                   caption: `✦ Clarion OS\n` +
-                    `━━━━━━━━━━━━━━\n` +
+                    `──────────────\n` +
                     `📸 *ACTIVATION QR READY FOR ${mentorPairing.candidateName.toUpperCase()}* ⚡\n\n` +
                     `1. Open WhatsApp on *+${mentorPairing.candidatePhone}*\n` +
                     `2. Go to *Settings > Linked Devices > Link a Device*\n` +
@@ -275,11 +394,11 @@ export const handleProxyMessage = async (sock, msg, user) => {
         const p = mismatchState.plan;
         return sock.sendMessage(from, {
           text: `🔍 *Please confirm your order details:*\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `📦 *Package:* ${p.network.toUpperCase()} ${p.name} (${p.validity})\n` +
             `📱 *Recipient:* ${mismatchState.recipientPhone} (Ported to ${p.network.toUpperCase()})\n` +
             `💰 *Amount:* ₦${p.sellPrice.toLocaleString()}\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Reply *1* to CONFIRM & GET PAYMENT INVOICE\n` +
             `Reply *2* to CHANGE RECIPIENT NUMBER\n` +
             `· Reply *CANCEL* to abort`
@@ -322,7 +441,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         return sock.sendMessage(from, {
           text: `✅ *BANK ACCOUNT LINKED SUCCESSFULLY!* 🏦\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Your personal NUBAN account has been permanently verified with NIBSS:\n\n` +
             `👤 *Account Name:* ${bankConfirmState.accountName}\n` +
             `🏦 *Bank:* ${bankConfirmState.bankName}\n` +
@@ -361,12 +480,119 @@ export const handleProxyMessage = async (sock, msg, user) => {
         awaitingConfirmMap.delete(userSessionKey);
         return sock.sendMessage(from, {
           text: `✦ Clarion OS\n` +
-            `━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `🛡️ *PURCHASE CANCELLED — MULTIPLIER PROTECTED*\n\n` +
             `Your *${downTierState.currentTier.name} (${downTierState.currentTier.multiplier} Multiplier)* remains fully active! 👑\n` +
             `Your wallet float was not debited (Balance: ₦${downTierState.buyerWallet.toLocaleString()}).\n\n` +
             `💡 *Pro-Tip:* Reply *FUND 1000* to add a safety buffer before buying data.`
         });
+      }
+    }
+
+    // ── Interactive State Gate: Insufficient Float Choice (1 = Direct Order Transfer, 2 = Top Up Float) ──
+    const choiceOrder = awaitingOrderChoiceMap.get(userSessionKey);
+    if (choiceOrder && (cleanCommand === '1' || cleanCommand === '2')) {
+      awaitingOrderChoiceMap.delete(userSessionKey);
+
+      let dvaInfo = user.virtualAccount;
+      if ((!dvaInfo || !dvaInfo.accountNumber) && (user.parentId || user.mentorId)) {
+        const parentKey = user.parentId || user.mentorId;
+        try {
+          const pData = await resolveParentDoc(parentKey);
+          if (pData) {
+            dvaInfo = pData.virtualAccount || pData.bankDetails || (pData.accountNumber ? {
+              bankName: pData.bankName || 'HabariPay (GTCO)',
+              accountNumber: pData.accountNumber,
+              accountName: pData.brandName || pData.verifiedName || 'Parent Store'
+            } : null);
+          }
+        } catch (pErr) { }
+      }
+      if (!dvaInfo || !dvaInfo.accountNumber) {
+        dvaInfo = CENTRAL_HUB_ACCOUNT;
+      }
+
+      const bankName = dvaInfo.bankName || 'Wema Bank';
+      const accountNumber = dvaInfo.accountNumber || '9819092390';
+      const accountName = dvaInfo.accountName || user.brandName || user.verifiedName || 'Clarion Store';
+
+      if (cleanCommand === '1') {
+        // Direct 1-Off Order: Register in manualOrders / ledger for server.js webhook auto-dispense
+        const orderId = 'ORD-' + Date.now().toString().slice(-6);
+        const orderRef = `CLARION_${Date.now()}`;
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
+
+        const manualOrderData = {
+          orderId,
+          orderRef,
+          partnerId: user.uid,
+          buyerPhone: actionableJid,
+          targetPhone: choiceOrder.recipientPhone,
+          amount: choiceOrder.debitAmount,
+          planCode: choiceOrder.plan.code,
+          planName: choiceOrder.plan.name,
+          baseCost: choiceOrder.plan.baseCost || Math.round(choiceOrder.debitAmount * 0.9),
+          status: 'PENDING_PAYMENT',
+          createdAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString()
+        };
+
+        if (db.users) {
+          try {
+            await db.users.doc(user.uid).collection('manualOrders').doc(orderId).set(manualOrderData);
+          } catch (e) { }
+        }
+        mockManualOrders.set(orderId, manualOrderData);
+
+        if (db.ledger) {
+          await db.ledger.doc(orderRef).set({
+            type: 'PENDING_DATA',
+            userId: user.uid,
+            buyerPhone: actionableJid,
+            recipientPhone: choiceOrder.recipientPhone,
+            code: choiceOrder.plan.code,
+            amount: choiceOrder.debitAmount,
+            baseCost: choiceOrder.plan.baseCost,
+            status: 'AWAITING_PAYMENT',
+            createdAt: now.toISOString()
+          }).catch(() => {});
+        }
+
+        const invoiceMsg = `✦ Clarion OS\n` +
+          `──────────────\n` +
+          `💳 *INSTANT ORDER INVOICE* ⚡\n\n` +
+          `📦 *Package:* ${choiceOrder.plan.network.toUpperCase()} ${choiceOrder.plan.name} (${choiceOrder.plan.validity})\n` +
+          `📱 *Recipient:* ${choiceOrder.recipientPhone}\n` +
+          `💰 *Exact Amount to Transfer:* *₦${choiceOrder.debitAmount.toLocaleString()}*\n\n` +
+          `🏦 *Bank:* ${bankName}\n` +
+          `🔢 *Account Number:* \`${accountNumber}\`\n` +
+          `👤 *Account Name:* ${accountName}\n\n` +
+          `⏱️ *Expires in:* 30 minutes\n` +
+          `──────────────\n` +
+          `💡 *Instructions:*\n` +
+          `Transfer the *EXACT* amount (*₦${choiceOrder.debitAmount.toLocaleString()}*) above.\n` +
+          `The moment your transfer arrives, our automated engine will vend the data package to ${choiceOrder.recipientPhone} in 3 seconds!`;
+
+        return sock.sendMessage(from, { text: invoiceMsg });
+      }
+
+      if (cleanCommand === '2') {
+        const topUpMsg = `✦ Clarion OS\n` +
+          `──────────────\n` +
+          `💼 *TOP UP CLARION FLOAT* ⚡\n\n` +
+          `Transfer any amount to your collection account to increase your float and boost your earning power:\n\n` +
+          `🏦 *Bank:* ${bankName}\n` +
+          `🔢 *Account Number:* \`${accountNumber}\`\n` +
+          `👤 *Account Name:* ${accountName}\n\n` +
+          `──────────────\n` +
+          `💡 *Multiplier Roadmap:*\n` +
+          `• Tier 2 (₦1,000 float): 2X Earning Power\n` +
+          `• Tier 3 (₦3,000 float): 3X Earning Power\n` +
+          `• Tier 4 (₦6,000 float): 4X Earning Power\n\n` +
+          `Your float balance updates automatically the moment you transfer!`;
+
+        return sock.sendMessage(from, { text: topUpMsg });
       }
     }
 
@@ -379,8 +605,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
         const plan = confirmState.plan;
         const targetPhone = confirmState.recipientPhone;
 
-        let walletBalance = 0;
-        if (db.users && actionableJid) {
+        let walletBalance = isChildProxy ? childWalletBalance : 0;
+        if (!isChildProxy && db.users && actionableJid) {
           try {
             const customerDoc = await db.users.doc(contactsUid).collection('contacts').doc(actionableJid).get();
             if (customerDoc.exists) walletBalance = customerDoc.data().walletBalance || 0;
@@ -403,7 +629,10 @@ export const handleProxyMessage = async (sock, msg, user) => {
             text: `💳 *Wallet Vending Proceeding*${discountNotice}Deducting ₦${debitAmount.toLocaleString()} from your Clarion Wallet. Dispensing data...`
           });
 
-          if (db.users) {
+          if (isChildProxy) {
+            const childTargetUid = childProxyUser.docId || childProxyUser.uid || actionableJid;
+            await wallet.recordPurchaseDebit(childTargetUid, debitAmount, `Data: ${plan.name} to ${targetPhone}`, { code: plan.code, planName: plan.name, targetPhone }).catch(() => {});
+          } else if (db.users) {
             await db.users.doc(contactsUid).collection('contacts').doc(actionableJid).set({
               walletBalance: admin.firestore.FieldValue.increment(-debitAmount),
               hasPurchased: true,
@@ -443,7 +672,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             }
 
             return sock.sendMessage(from, {
-              text: `✅ *DATA DELIVERED!*\n━━━━━━━━━━━━━━━━━━━━━\n\n` +
+              text: `✅ *DATA DELIVERED!*\n──────────────\n\n` +
                 `📦 *Plan:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
                 `📱 *Recipient:* ${targetPhone}\n` +
                 `💳 *Wallet Deducted:* ₦${plan.sellPrice.toLocaleString()}\n\n` +
@@ -460,7 +689,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               });
             }
             return sock.sendMessage(from, {
-              text: `⚠️ *DELIVERY DELAY DETECTED*\n━━━━━━━━━━━━━━━━━━━━━\n\nYour payment of *₦${plan.sellPrice.toLocaleString()}* is confirmed. ✅\n\nTelecom network servers are experiencing a brief delay. Our automated engine is retrying right now in the background.\n\n_You do not need to resend payment. Your funds are 100% safe._`
+              text: `⚠️ *DELIVERY DELAY DETECTED*\n──────────────\n\nYour payment of *₦${plan.sellPrice.toLocaleString()}* is confirmed. ✅\n\nTelecom network servers are experiencing a brief delay. Our automated engine is retrying right now in the background.\n\n_You do not need to resend payment. Your funds are 100% safe._`
             });
           }
         }
@@ -507,6 +736,24 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
 
         let dvaInfo = user.virtualAccount;
+
+        // If child proxy has no dedicated virtual account, inherit parent proxy's account details
+        if ((!dvaInfo || !dvaInfo.accountNumber) && (user.parentId || user.mentorId)) {
+          const parentKey = user.parentId || user.mentorId;
+          try {
+            const pData = await resolveParentDoc(parentKey);
+            if (pData) {
+              dvaInfo = pData.virtualAccount || pData.bankDetails || (pData.accountNumber ? {
+                bankName: pData.bankName || 'HabariPay (GTCO)',
+                accountNumber: pData.accountNumber,
+                accountName: pData.brandName || pData.verifiedName || 'Parent Store'
+              } : null);
+            }
+          } catch (pErr) {
+            logger.warn(`Failed to resolve parent bank details for ${user.uid}: ${pErr.message}`);
+          }
+        }
+
         if (!dvaInfo || !dvaInfo.accountNumber) {
           try {
             const cleanPhone = actionableJid.split('@')[0];
@@ -611,7 +858,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
             return sock.sendMessage(from, {
               text: `⚠️ *Network Mismatch Detected!*\n` +
-                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `You selected an *${plan.network.toUpperCase()}* plan (${plan.name} — ₦${plan.sellPrice.toLocaleString()}),\n` +
                 `but *${capturedPhone}* appears to be an *${phoneNet.toUpperCase()}* line!\n\n` +
                 `1️⃣ Reply *1* if this number is PORTED to ${plan.network.toUpperCase()} (proceed)\n` +
@@ -643,16 +890,16 @@ export const handleProxyMessage = async (sock, msg, user) => {
           if (isWalletPay) {
             return sock.sendMessage(from, {
               text: `🎁 *CLARION WHOLESALE ORDER QUOTATION* ⚡\n` +
-                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
                 `📱 *Recipient:* ${capturedPhone} (${(phoneNet || plan.network).toUpperCase()})\n\n` +
                 `💰 *Standard Retail:* ₦${plan.sellPrice.toLocaleString()}\n` +
                 `⭐ *Your Status:* ${wholesaleInfo.tierName}\n` +
                 `🎉 *${wholesaleInfo.multiplier} Wholesale Savings:* -₦${wholesaleInfo.discountAmount.toFixed(2)}\n` +
-                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `💵 *Final Price:* ₦${wholesaleInfo.discountedPrice.toLocaleString()} (Debited from Wallet)\n` +
                 `💼 *Available Wallet Balance:* ₦${buyerWallet.toLocaleString()}\n\n` +
-                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `Reply *1* to CONFIRM & VEND INSTANTLY\n` +
                 `Reply *2* to CHANGE RECIPIENT NUMBER\n` +
                 `· Reply *CANCEL* to abort`
@@ -661,11 +908,11 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
           return sock.sendMessage(from, {
             text: `🔍 *Please confirm your order details:*\n` +
-              `━━━━━━━━━━━━━━━━━━━━━\n` +
+              `──────────────\n` +
               `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
               `📱 *Recipient:* ${capturedPhone} (${(phoneNet || plan.network).toUpperCase()})\n` +
               `💰 *Amount:* ₦${plan.sellPrice.toLocaleString()}\n\n` +
-              `━━━━━━━━━━━━━━━━━━━━━\n` +
+              `──────────────\n` +
               `Reply *1* to CONFIRM & GET PAYMENT INVOICE\n` +
               `Reply *2* to CHANGE RECIPIENT NUMBER\n` +
               `· Reply *CANCEL* to abort`
@@ -676,14 +923,30 @@ export const handleProxyMessage = async (sock, msg, user) => {
         const net = detectNetwork(capturedPhone);
         const netLabel = net ? net.toUpperCase() : 'Telecom';
 
+        // Hot Deal resolution for recipient network
+        let hotDealText = '1GB — ₦290 only!';
+        let hotDealPlanCode = 'M1GB1D';
+        if (net === 'glo') {
+          hotDealText = '1GB — ₦390 only!';
+          hotDealPlanCode = 'G1GB1';
+        } else if (net === 'airtel') {
+          hotDealText = '600MB — ₦290 only!';
+          hotDealPlanCode = 'A600MB';
+        }
+
+        const hotDealPlan = telecomDispatcher.findPlan(hotDealPlanCode);
+
         awaitingGiftMap.set(userSessionKey, {
           recipientPhone: capturedPhone,
           name: 'Contact',
           network: net,
+          plan: hotDealPlan,
           timestamp: Date.now()
         });
 
         if (net === '9mobile' || net === 't2mobile') {
+          await sock.sendPresenceUpdate('composing', from).catch(() => {});
+          await new Promise(r => setTimeout(r, 800));
           return sock.sendMessage(from, {
             text: `🎁 *Want to send data to ${capturedPhone}?* ⚡\n\n` +
               `Clarion AI is currently optimizing affordable data packages for *${netLabel}*. 🔧\n\n` +
@@ -693,39 +956,22 @@ export const handleProxyMessage = async (sock, msg, user) => {
           });
         }
 
-        let planRowsText = '';
-        try {
-          const netPlans = await telecomDispatcher.getAvailablePlans(net);
-          if (netPlans.length > 0) {
-            const groups = {};
-            for (const p of netPlans) {
-              const cat = p.durationCategory || '🗓️ Other Plans';
-              if (!groups[cat]) groups[cat] = [];
-              groups[cat].push(p);
-            }
-            for (const cat of Object.keys(groups)) {
-              planRowsText += `\n${cat}\n`;
-              groups[cat].forEach(p => {
-                planRowsText += `• *${p.name}* (${p.validity}) — *₦${p.sellPrice.toLocaleString()}*\n`;
-                planRowsText += `  👉 Reply *BUY ${p.code}*\n`;
-              });
-            }
-          }
-        } catch (e) {
-          logger.warn(`Failed to fetch plans for raw phone display: ${e.message}`);
-        }
+        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await new Promise(r => setTimeout(r, 800));
 
-        if (planRowsText) {
-          return sock.sendMessage(from, {
-            text: `🎁 *Want to send data to ${capturedPhone}?* ⚡\n\n` +
-              `📶 *${netLabel}* detected for this number!\n` +
-              `Here are the verified packages available right now:\n` +
-              planRowsText +
-              `\n━━━━━━━━━━━━━━━━━━━━━\n` +
-              `👉 Reply *BUY [code]* to send to ${capturedPhone}\n` +
-              `_If you were just sharing this number for a regular chat, feel free to ignore this note! 😊_`
-          });
-        }
+        return sock.sendMessage(from, {
+          text: `📲 *Contact Received:* ${capturedPhone}\n` +
+            `📶 Network Detected: *${netLabel}*\n\n` +
+            `🔥 *TODAY'S HOT DEAL:*\n` +
+            `⚡ ${netLabel} ${hotDealText}\n\n` +
+            `What would you like to send to this number?\n` +
+            `1️⃣ Send Hot Deal (${hotDealText})\n` +
+            `2️⃣ Choose a data budget (e.g. reply *DATA 500* or *DATA 1000*)\n\n` +
+            `──────────────\n` +
+            `👉 *Reply 1 to send Hot Deal instantly*\n` +
+            `_(Or reply with your budget, e.g. DATA 1000)_\n` +
+            `_(Just sharing for normal chat? Feel free to ignore! 😊)_`
+        });
       }
     }
 
@@ -821,7 +1067,22 @@ export const handleProxyMessage = async (sock, msg, user) => {
           }, { merge: true }).catch(() => { });
         }
 
-        const storeName = user.brandName || user.franchiseName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+        // Squad-aware branding: Include parent proxy squad name if this is a child proxy
+        let squadAttribution = user.brandName || user.franchiseName || ('Clarion AI - ' + (user.verifiedName || user.name || 'Store'));
+        if (user.parentId || user.mentorId) {
+          const parentKey = user.parentId || user.mentorId;
+          try {
+            const pData = await resolveParentDoc(parentKey);
+            if (pData) {
+              const parentBrand = pData.brandName || pData.franchiseName || pData.verifiedName || 'Musty Data';
+              squadAttribution = `Clarion AI — ${parentBrand} Squad`;
+            }
+          } catch (e) {
+            squadAttribution = 'Clarion AI — Musty Data Squad';
+          }
+        }
+
+        const storeName = squadAttribution;
         logger.info(`[FIRST-TOUCH] Sending welcome greeting to new contact ${from} via store: ${storeName}`);
 
         // Natural typing delay (1.2–2.0s)
@@ -830,8 +1091,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         await sock.sendMessage(from, {
           text: `👋 *Quick note!* My line is powered by *${storeName}*. ⚡\n\n` +
-            `Get instant, affordable MTN & Glo data delivered automatically 24/7 — starting at just *₦400 per GIG*!\n\n` +
-            `👉 Reply *DATA* or *DATA 500* to view plans for your budget!\n\n` +
+            `Get instant, affordable MTN, Airtel & Glo data delivered automatically in 3 seconds — starting at just *₦290 per GIG*!\n\n` +
+            `👉 Reply *DATA* to view today's hot deals or *DATA 500* for budget plans!\n\n` +
             `💚 _A portion of every purchase funds Community Development projects._ 🇳🇬\n\n` +
             `_You can keep chatting with me normally — the AI bot only responds when you use keywords._\n` +
             `_Have a great day! 😊_`
@@ -933,13 +1194,13 @@ export const handleProxyMessage = async (sock, msg, user) => {
     if (command === 'info story' || command === 'story' || command === 'saed') {
       return sock.sendMessage(from, {
         text: `📖 *THE CLARION JOURNEY: FROM SAED TO A.I.*\n` +
-          `━━━━━━━━━━━━━━━\n\n` +
+          `──────────────\n\n` +
           `In NYSC orientation camp, the SAED program introduces Corps Members to recharge card printing. But in today's smartphone world, manual paper vouchers require heavy machine investments and paper waste.\n\n` +
           `We asked a bold question:\n` +
           `_Why can't every Nigerian Corps Member and youth operate an automated cloud telecom network right on WhatsApp without capital barrier?_\n\n` +
           `Clarion was engineered from Jigawa State as a national service innovation:\n` +
           `1️⃣ *Zero Capital Barrier:* Any youth can launch an automated AI storefront.\n` +
-          `2️⃣ *Wholesale Affordability:* Direct telecom pipelines starting at ₦400/GB.\n` +
+          `2️⃣ *Wholesale Affordability:* Direct telecom pipelines starting at ₦290/GB.\n` +
           `3️⃣ *Built-in Giving Back:* A portion of every transaction quietly funds grassroots CDS community projects in underserved areas.\n\n` +
           `To our customers and NYSC family: Thank you for building Nigeria with us! 🇳🇬\n\n` +
           `— *MGL*\n` +
@@ -960,14 +1221,14 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       return sock.sendMessage(from, {
         text: `🇳🇬 *ABOUT CLARION A.I. STOREFRONT*\n` +
-          `━━━━━━━━━━━━━━\n\n` +
+          `──────────────\n\n` +
           `🏪 *Store Operator:* ${operatorName} ${operatorBadge}\n` +
           `⚡ *Platform:* Clarion A.I. (NYSC SAED Digital Enterprise)\n\n` +
           `💡 *Our Mission & Heritage:*\n` +
-          `Inspired by the NYSC SAED recharge card production initiative, Clarion modernizes physical voucher printing into a 24/7 cloud AI storefront — delivering high-speed MTN & Glo data at wholesale rates from just ₦400/GB.\n\n` +
+          `Inspired by the NYSC SAED recharge card production initiative, Clarion modernizes physical voucher printing into a 24/7 cloud AI storefront — delivering high-speed MTN, Airtel & Glo data at wholesale rates from just ₦290/GB.\n\n` +
           `💚 *Grassroots Impact (CDS):*\n` +
           `Every purchase on this line directly co-funds local NYSC Community Development projects (school renovations, health supplies, and youth digital skills).\n\n` +
-          `━━━━━━━━━━━━━━\n` +
+          `──────────────\n` +
           `👨‍💻 *Lead Architect:*\n` +
           `*MGL*, Founder & Lead Architect\n` +
           `Serving Corps Member, Jigawa State \`[JG/26A/2535]\` 🇳🇬\n\n` +
@@ -1011,7 +1272,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       const ledgerBalance = await wallet.getBalance(partnerUid);
       const effectiveBalance = Math.max(contactBalance, ledgerBalance);
       const tier = wallet.getMultiplierTier(effectiveBalance);
-      const userPhone = (user.phoneNumber || (isOwner ? (user.phoneNumber || from.split('@')[0]) : actionableJid.split('@')[0])).replace(/\D/g, '');
+      const userPhone = String(isOwner ? (user.phoneNumber || from.split('@')[0]) : (actionableJid || from).split('@')[0]).replace(/\D/g, '');
 
       let nextTierMsg = '';
       if (tier.nextThreshold) {
@@ -1028,7 +1289,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       return sock.sendMessage(from, {
         text: `🛡️ *CLARION WALLET & MULTIPLIER STATUS* 📈\n` +
-          `━━━━━━━━━━━━━━━━━━━━━\n` +
+          `──────────────\n` +
           `💼 *Available Balance:* ₦${effectiveBalance.toLocaleString()}\n` +
           `⭐ *Current Status:* Tier ${tier.level} (${tier.multiplier} Multiplier Active)\n` +
           nextTierMsg +
@@ -1094,7 +1355,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         });
 
         let menuText = `⚡ *Clarion Data Fuel Dispenser*\n` +
-          `━━━━━━━━━━━━━━━\n\n` +
+          `──────────────\n\n` +
           `💰 Your Earned Data Fuel: *₦${dataFuelBalance.toLocaleString()}*\n` +
           `📱 Destination: *${targetPhone} (${network.toUpperCase()})*\n\n` +
           `Reply with a number to redeem your earned data:\n`;
@@ -1189,7 +1450,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         // Notify Chinedu (Suggester)
         await sock.sendMessage(from, {
           text: `✦ Clarion OS\n` +
-            `━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Candidate Submitted! 👥\n\n` +
             `${candidateName} (+${candidatePhone}) has been forwarded to Super Parent Mustapha Lawal Gambo for review.\n\n` +
             `Once approved, you will be alerted when pairing begins. 🚀`
@@ -1207,7 +1468,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         pendingSuperParentDecisions.set('2347032905036@s.whatsapp.net', decisionData);
 
         const superParentNotice = `✦ Clarion OS\n` +
-          `━━━━━━━━━━━━━━\n` +
+          `──────────────\n` +
           `💡 New Partner Recommendation\n\n` +
           `Child Proxy ${suggesterName} (+${cleanSuggesterPhone}) has suggested a new partner:\n` +
           `👤 Candidate: ${candidateName} (+${candidatePhone})\n\n` +
@@ -1240,7 +1501,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           if (activeUngraduated.length >= dynamicCapacity.capacity) {
             return sock.sendMessage(from, {
               text: `👥 *SQUAD CAPACITY REACHED (${dynamicCapacity.capacity} Slot${dynamicCapacity.capacity === 1 ? '' : 's'})*\n` +
-                `━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `You have ${activeUngraduated.length} of ${dynamicCapacity.capacity} active partner${dynamicCapacity.capacity === 1 ? '' : 's'}.\n\n` +
                 `📈 *To unlock your next slot:*\n` +
                 `${dynamicCapacity.nextMilestone}\n\n` +
@@ -1303,7 +1564,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
               await sock.sendMessage(from, {
                 image: qrBuffer,
                 caption: `✦ Clarion OS\n` +
-                  `━━━━━━━━━━━━━━\n` +
+                  `──────────────\n` +
                   `📸 *ACTIVATION PAIRING READY FOR ${candidateName.toUpperCase()}* ⚡\n\n` +
                   `Candidate: ${candidateName} (+${candidatePhone})\n` +
                   `Linked Sponsor: ${isMasterSuper ? 'Super Parent 07032905036' : (user.name || 'Store Sponsor')}\n\n` +
@@ -1357,7 +1618,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         return sock.sendMessage(from, {
           text: `🔢 *REMOTE PAIRING CODE FOR +${targetPhone}* ⚡\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Forward this message directly to your partner on WhatsApp:\n\n` +
             `*Official Clarion Activation Code:*\n` +
             `👉 \`${code}\`\n\n` +
@@ -1380,6 +1641,22 @@ export const handleProxyMessage = async (sock, msg, user) => {
     const bankMatch = command.match(bankRegex);
 
     if (bankMatch) {
+      // Tier 1 Incubation Gate: Child Proxies cannot bind bank accounts until reaching Tier 2 (2X Power / ₦1,000 float)
+      const targetPartnerUid = isOwner ? user.uid : actionableJid;
+      const partnerBal = await wallet.getBalance(targetPartnerUid).catch(() => 0);
+      const partnerTier = wallet.getMultiplierTier(partnerBal);
+
+      if (user.role === 'CHILD_PROXY' && partnerTier.level < 2) {
+        return sock.sendMessage(from, {
+          text: `🔒 *Bank Linking Locked (Tier 1 Incubation)* 🛡️\n` +
+            `──────────────\n` +
+            `Your franchise is currently at *Tier 1 (1X Base Power)* with float ₦${partnerBal.toLocaleString()}.\n\n` +
+            `To unlock personal NUBAN bank linking & Thursday cashouts:\n` +
+            `👉 Reach *Tier 2 (2X Power)* by building a wallet float of *₦1,000* or more.\n\n` +
+            `💡 Reply *FUND 1000* to top up your float and activate 2X earning power immediately!`
+        });
+      }
+
       const acctNum = bankMatch[1];
       const bankNameInput = bankMatch[2];
 
@@ -1437,11 +1714,11 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         return sock.sendMessage(from, {
           text: `🔍 *PLEASE CONFIRM YOUR BANK ACCOUNT:*\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `🏦 *Bank:* ${matchedBank.name}\n` +
             `🔢 *Account Number:* ${acctNum}\n` +
             `👤 *Account Name:* ${resolvedName} ✅\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Reply *1* to CONFIRM & LINK THIS ACCOUNT\n` +
             `Reply *2* to ENTER A DIFFERENT ACCOUNT\n` +
             `· Reply *CANCEL* to abort`
@@ -1468,7 +1745,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       if (!isThursday) {
         return sock.sendMessage(from, {
           text: `🗓️ *CLARION CASHOUT WINDOW NOTICE* 💳\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Withdrawals are processed exclusively every *THURSDAY*!\n\n` +
             `💰 *Your current withdrawable earnings:* ₦${balance.toLocaleString()}\n` +
             `📈 *Your funds are currently active in your wallet, earning you up to 4X Multiplier power on every customer order!*\n\n` +
@@ -1484,7 +1761,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       if (balance < WITHDRAWAL_FEES.MIN_WITHDRAWAL) {
         return sock.sendMessage(from, {
           text: `🔒 *CASHOUT LOCKED (TIER 1 BASE STATE)*\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `Your current earnings balance is *₦${balance.toLocaleString()}*.\n\n` +
             `Bank cashouts unlock at *Tier 2 (₦2,000)* to activate your 2X Multiplier.\n\n` +
             `💡 *You can use your wallet balance anytime to BUY or GIFT data 24/7!*\n` +
@@ -1506,7 +1783,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       if (!bank || !bank.verified) {
         return sock.sendMessage(from, {
           text: `🏦 *LINK YOUR BANK ACCOUNT FIRST*\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `To withdraw your earnings, please connect your verified personal bank account.\n\n` +
             `👉 Reply: *BANK [10-Digit Account Number] [Bank Name]*\n` +
             `Example: *BANK 0123456789 GTBank*`
@@ -1518,7 +1795,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
       if (!rawArg) {
         return sock.sendMessage(from, {
           text: `💸 *CLARION THURSDAY CASHOUT* 🚀\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `💰 *Available Balance:* ₦${balance.toLocaleString()}\n` +
             `🏦 *Destination Bank:* ${bank.bankName} (${bank.accountNumber})\n` +
             `👤 *Account Name:* ${bank.accountName}\n` +
@@ -1576,7 +1853,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         return sock.sendMessage(from, {
           text: `✅ *CASHOUT SUCCESSFUL!* 💸\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `💰 *Gross Amount Debited:* ₦${requestedAmount.toLocaleString()}\n` +
             `🛡️ *Fee Deducted:* ₦${WITHDRAWAL_FEES.TOTAL.toFixed(2)} (Paystack ₦50 + Clarion ₦50)\n` +
             `💵 *Net Disbursed to Bank:* ₦${netPayout.toLocaleString()}\n\n` +
@@ -1635,7 +1912,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       return sock.sendMessage(from, {
         text: `📊 *Your Partner Performance & Rank*\n` +
-          `━━━━━━━━━━━━━━━\n\n` +
+          `──────────────\n\n` +
           `${rankEmoji} *Store Rank:* *#${myRank} of ${totalPartners} Partners*\n` +
           `⭐ *Promotion Score:* *${myScore.toLocaleString()} pts*\n\n` +
           `📦 *Completed Orders:* ${userMetrics.totalOrders || 0}\n` +
@@ -1681,15 +1958,15 @@ export const handleProxyMessage = async (sock, msg, user) => {
         userBalance = await wallet.getBalance(user.uid);
       } catch (e) { }
       const currentTier = getMultiplierTier(userBalance);
-      const userPhone = (user.phoneNumber || (isOwner ? (user.phoneNumber || from.split('@')[0]) : actionableJid.split('@')[0])).replace(/\D/g, '');
+      const userPhone = String(isOwner ? (user.phoneNumber || from.split('@')[0]) : (actionableJid || from).split('@')[0]).replace(/\D/g, '');
 
       const storeHelpText = `✦ Clarion Store OS · Command Directory\n` +
-        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `──────────────\n` +
         `Welcome to your franchise command center. Your AI bot runs 24/7 in autonomous mode.\n\n` +
         `🛍️ *VENDING & CATALOG*\n` +
-        `• *DATA* — Browse the live data package catalog\n` +
+        `• *DATA* — Browse the live data package catalog & order\n` +
         `• *DATA [budget]* — Filter plans (e.g. *DATA 1000* or *DATA 2500*)\n` +
-        `• *BUY [code]* — Vend for yourself or gift someone at wholesale\n` +
+        `• *BUY [code]* — Vend with direct plan code (e.g. *BUY M1GB1D*)\n` +
         `• *MTN* / *GLO* / *AIRTEL* — Quick-filter plans by telecom network\n\n` +
         `💳 *WALLET & EARNINGS*\n` +
         `• *BALANCE* — View active wallet float, Multiplier status & yield\n` +
@@ -1705,7 +1982,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         `• *DASHBOARD* / *STATUS* — Mobile terminal console & live auto-status timer\n` +
         `• *BACKUP CONTACTS* — Export all customer leads as .vcf to phone\n` +
         `• *TIPS* — View top pro-tips to increase daily customer orders\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `──────────────\n` +
         `⭐ *Your Status:* ${currentTier.name} (${currentTier.multiplier} Power)\n` +
         `📱 *Open Live Mobile Dashboard (Zero Password):*\n` +
         `👉 https://hub.clarion.ng/p/${userPhone}\n\n` +
@@ -1765,7 +2042,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
 
         let msgText = `✦ Clarion OS\n` +
-          `━━━━━━━━━━━━━━\n` +
+          `──────────────\n` +
           `Clarion Squad Command · Tier 4\n\n` +
           `👤 Leader: ${user.name || 'You'}\n` +
           `⭐ Multiplier: 4X Quad Power\n` +
@@ -1829,7 +2106,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
           msgText += `\n`;
         }
 
-        msgText += `━━━━━━━━━━━━━━\n` +
+        msgText += `──────────────\n` +
           `👉 Reply *SUGGEST [Phone] [Name]* to bind a partner.\n` +
           `👉 Reply *PAIRCODE [Phone]* to generate a remote 8-digit activation code.`;
 
@@ -1846,7 +2123,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         return sock.sendMessage(from, {
           text: `✦ Clarion Squad Network · Level 3\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `🔥 *You are 1 step away from Squad Leadership!*\n` +
             `Active Earning Power: *Tier 3 (3X Multiplier)*\n\n` +
             `🔒 *Squad Unlock Status:*\n` +
@@ -1868,7 +2145,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
         return sock.sendMessage(from, {
           text: `✦ Clarion Squad Network · Level 2\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `🎉 *Thursday Cashouts: UNLOCKED* ✅\n` +
             `Active Earning Power: *Tier 2 (2X Multiplier)*\n\n` +
             `You are halfway to becoming a Squad Leader!\n\n` +
@@ -1891,7 +2168,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       return sock.sendMessage(from, {
         text: `✦ Clarion Squad Network · Level 1\n` +
-          `━━━━━━━━━━━━━━━━━━━━━\n` +
+          `──────────────\n` +
           `Build a passive sales downline with up to 5 child proxy bots.\n\n` +
           `*How Squad Works:*\n` +
           `You sponsor up to 5 partners. Clarion deploys an automated 24/7 AI bot on their WhatsApp lines. You earn a passive 30% override on every data bundle their bots sell—forever.\n\n` +
@@ -1977,19 +2254,71 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       // Default (STATUS, DASHBOARD, APP, LINK): Node Status + Live Mobile Dashboard Link
-      const userPhone = (user.phoneNumber || (isOwner ? (user.phoneNumber || from.split('@')[0]) : actionableJid.split('@')[0])).replace(/\D/g, '');
-      const proxyBalance = await wallet.getBalance(user.uid).catch(() => 0);
-      const tier = getMultiplierTier(proxyBalance);
+      let callerPhone = null;
+      let callerBalance = 0;
+      let callerTier = null;
+      let callerOperatorName = 'Partner';
+      let isRegisteredPartner = false;
+
+      if (isOwner) {
+        // The store owner is querying their own terminal
+        isRegisteredPartner = true;
+        callerPhone = String(user.phoneNumber || user.phone || from || '').replace(/\D/g, '');
+        callerBalance = await wallet.getBalance(user.uid).catch(() => 0);
+        callerTier = getMultiplierTier(callerBalance);
+        callerOperatorName = user.name || user.brandName || user.franchiseName || 'Partner';
+      } else {
+        // An external contact (squad member or customer) messaged this store
+        const senderRaw = actionableJid || from;
+        const strippedSender = String(senderRaw).replace(/\D/g, '');
+        const senderPhoneTen = strippedSender.length === 13 ? '0' + strippedSender.slice(3) : strippedSender.length === 12 ? '0' + strippedSender.slice(2) : strippedSender;
+        const senderPhoneIntl = strippedSender.length === 11 ? '234' + strippedSender.slice(1) : strippedSender.length === 10 ? '234' + strippedSender : strippedSender;
+
+        // Check if the sender is a registered partner or child proxy in Firestore
+        let senderDoc = null;
+        if (db.users) {
+          try {
+            const directSnap = await db.users.doc(senderRaw).get().catch(() => null);
+            if (directSnap && directSnap.exists) {
+              senderDoc = directSnap.data();
+            } else {
+              const qSnap = await db.users.where('phoneNumber', 'in', [strippedSender, senderPhoneTen, senderPhoneIntl]).limit(1).get().catch(() => null);
+              if (qSnap && !qSnap.empty) senderDoc = qSnap.docs[0].data();
+            }
+          } catch (e) {
+            logger.warn(`Failed to resolve sender partner doc for ${senderRaw}: ${e.message}`);
+          }
+        }
+
+        if (senderDoc && (senderDoc.role === 'CHILD_PROXY' || senderDoc.state === 'COMPLETED' || senderDoc.virtualAccount)) {
+          isRegisteredPartner = true;
+          callerPhone = String(senderDoc.phoneNumber || senderPhoneIntl).replace(/\D/g, '');
+          callerBalance = await wallet.getBalance(senderDoc.uid || senderRaw).catch(() => 0);
+          callerTier = getMultiplierTier(callerBalance);
+          callerOperatorName = senderDoc.name || senderDoc.brandName || senderDoc.franchiseName || 'Partner';
+        }
+      }
+
+      if (!isRegisteredPartner) {
+        // Regular customers should not see internal terminal node status or dashboard links
+        return sock.sendMessage(from, {
+          text: `👋 *Welcome!* This store is powered by Clarion Autonomous Telecom. ⚡\n\n` +
+            `👉 Reply *DATA* to view all discounted packages for your line\n` +
+            `👉 Reply *CARD* to purchase recharge cards & airtime\n\n` +
+            `_You can also chat normally with the store owner anytime! 😊_`
+        });
+      }
+
       const currentFreq = user.statusFrequency || 3;
       const isDev = process.env.NODE_ENV !== 'production';
-      const dashboardUrl = isDev ? `http://localhost:3000/p/${userPhone}` : `https://hub.clarion.ng/p/${userPhone}`;
+      const dashboardUrl = isDev ? `http://localhost:3000/p/${callerPhone}` : `https://hub.clarion.ng/p/${callerPhone}`;
 
       return sock.sendMessage(from, {
         text: `✦ Clarion Store OS · Node Status\n` +
-          `━━━━━━━━━━━━━━\n` +
-          `👤 Operator: ${user.name || user.franchiseName || 'Partner'}\n` +
-          `⭐ Active Status: ${tier.name} (${tier.multiplier} Power)\n` +
-          `💼 Wallet Float: ₦${proxyBalance.toLocaleString()}\n` +
+          `──────────────\n` +
+          `👤 Operator: ${callerOperatorName}\n` +
+          `⭐ Active Status: ${callerTier.name} (${callerTier.multiplier} Power)\n` +
+          `💼 Wallet Float: ₦${callerBalance.toLocaleString()}\n` +
           `🟢 24/7 Autonomous Bot: ${user.botMode === 'manual' ? 'MANUAL' : 'ACTIVE'}\n` +
           `📢 Auto-Status: ${currentFreq} posts/day (Change with STATUS 1, 2, or 3)\n\n` +
           `📱 *Open Live Mobile Dashboard (Zero Password):*\n` +
@@ -2109,7 +2438,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
           await promotedSock.sendMessage(childJid, {
             text: `🎓 *CONGRATULATIONS CORPS MEMBER!* 🇳🇬\n` +
-              `━━━━━━━━━━━━━━━\n\n` +
+              `──────────────\n\n` +
               `You have officially graduated to a *Full Clarion Parent Store*!\n\n` +
               `✨ *Your Upgraded Privileges:*\n` +
               `• 💰 *100% Cash Earnings* — No longer limited to Data Fuel!\n` +
@@ -2533,10 +2862,10 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
       }
 
-      // Check for recently shared contact card if no targetPhone in command
-      if (!targetPhone) {
+      // Check for recently shared external contact card if no targetPhone in command (ignore 'Self' entries)
+      if (!targetPhone && command !== 'data' && command !== '.data') {
         const cachedGift = awaitingGiftMap.get(userSessionKey);
-        if (cachedGift && Date.now() - cachedGift.timestamp < 5 * 60 * 1000) {
+        if (cachedGift && cachedGift.name !== 'Self' && Date.now() - cachedGift.timestamp < 5 * 60 * 1000) {
           targetPhone = cachedGift.recipientPhone;
         }
       }
@@ -2553,6 +2882,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       // Only 9mobile / T2 remains unsupported
       if (detectedNet === '9mobile' || detectedNet === 't2mobile') {
+        await sock.sendPresenceUpdate('composing', from).catch(() => {});
         return sock.sendMessage(from, {
           text: `⚡ Clarion AI checked all available servers and is currently optimizing affordable data packages for *T2 Mobile* (formerly 9mobile). 🔧\n\n` +
             `In the meantime, you can get affordable packages for *MTN, Glo & Airtel*:\n` +
@@ -2561,13 +2891,96 @@ export const handleProxyMessage = async (sock, msg, user) => {
         });
       }
 
-      // Step 1: Scanning indicator
+      // ── PROGRESSIVE DISCLOSURE: Standalone DATA (No Budget, No Target Phone) -> Show Hot Deal Hub ──
+      const isPlainData = !targetPrice && !targetPhone && (command === 'data' || command === '.data');
+      if (isPlainData) {
+        if (isChildProxy) {
+          let hotDealCode = 'M1GB1D';
+          if (detectedNet === 'glo') hotDealCode = 'G1GB1';
+          else if (detectedNet === 'airtel') hotDealCode = 'A600MB';
+
+          const hotPlan = telecomDispatcher.findPlan(hotDealCode);
+          const wsHot = wallet.getWholesalePrice(hotPlan, childWalletBalance);
+          const hotCost = wsHot.discountedPrice;
+
+          awaitingGiftMap.set(userSessionKey, {
+            recipientPhone: callerPhone.startsWith('0') ? callerPhone : ('0' + callerPhone.slice(-10)),
+            name: 'Self',
+            network: detectedNet,
+            plan: hotPlan,
+            timestamp: Date.now()
+          });
+
+          const maskedCaller = callerPhone.length >= 10 ? callerPhone.slice(0, 4) + '••••' + callerPhone.slice(-2) : callerPhone;
+          const hubText = `✦ Clarion OS · Wholesale Terminal ⚡\n` +
+            `──────────────\n` +
+            `📶 *${netLabel} DATA PACKAGES* ⚡\n` +
+            `Line detected: ${maskedCaller} (${netLabel})\n` +
+            `⭐ *Wholesale Status:* Partner Node (${childTier.name} — ${childTier.multiplier} Power)\n` +
+            `💰 *Clarion Float:* ₦${childWalletBalance.toLocaleString()} (Instant 1-click debit)\n\n` +
+            `🔥 *TODAY'S WHOLESALE HOT DEAL:*\n` +
+            `⚡ *${netLabel} ${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()}* (Wholesale rate)\n\n` +
+            `What would you like to do?\n` +
+            `1️⃣ Vend Hot Deal (${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} instant 1-click debit)\n` +
+            `2️⃣ Browse wholesale packages (e.g. reply *DATA 500* or *DATA 1000*)\n` +
+            `3️⃣ Gift / Vend to another phone (share contact or phone number)\n\n` +
+            `──────────────\n` +
+            `👉 *Reply 1 to vend Hot Deal instantly to your line*\n` +
+            `_(Or reply with your budget, e.g. DATA 1000)_`;
+
+          await sock.sendPresenceUpdate('composing', from).catch(() => {});
+          return sock.sendMessage(from, { text: hubText });
+        }
+
+        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await sock.sendMessage(from, {
+          text: `🔍 _Searching for today's best verified ${netLabel} deals..._`
+        });
+        await new Promise(r => setTimeout(r, 800));
+
+        let hotDealName = '1GB — ₦290 only!';
+        let hotDealCode = 'M1GB1D';
+        if (detectedNet === 'glo') {
+          hotDealName = '1GB — ₦390 only!';
+          hotDealCode = 'G1GB1';
+        } else if (detectedNet === 'airtel') {
+          hotDealName = '600MB — ₦290 only!';
+          hotDealCode = 'A600MB';
+        }
+
+        const hotPlan = telecomDispatcher.findPlan(hotDealCode);
+        awaitingGiftMap.set(userSessionKey, {
+          recipientPhone: callerPhone.startsWith('0') ? callerPhone : ('0' + callerPhone.slice(-10)),
+          name: 'Self',
+          network: detectedNet,
+          plan: hotPlan,
+          timestamp: Date.now()
+        });
+
+        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        return sock.sendMessage(from, {
+          text: `✨ *Welcome to Clarion AI!* 🇳🇬\n` +
+            `Affordable data & community utilities delivered in 3 seconds.\n\n` +
+            `🔥 *HOT DEAL OF TODAY:*\n` +
+            `⚡ *${netLabel} ${hotDealName}*\n\n` +
+            `What would you like to do?\n` +
+            `1️⃣ Grab today's Hot Deal (${hotDealName})\n` +
+            `2️⃣ Browse data for your budget (e.g. reply *DATA 500* or *DATA 1000*)\n` +
+            `3️⃣ Gift data to family or a friend (share contact or phone number)\n\n` +
+            `──────────────\n` +
+            `👉 *Reply 1 to order Hot Deal instantly*\n` +
+            `_(Or reply with your budget, e.g. DATA 1000)_`
+        });
+      }
+
+      // Step 1: Scanning indicator for budget search
       const budgetText = targetPrice ? ` around ₦${targetPrice.toLocaleString()}` : '';
+      await sock.sendPresenceUpdate('composing', from).catch(() => {});
       await sock.sendMessage(from, {
         text: `🔍 _Searching for the best verified ${netLabel} plans${budgetText}..._`
       });
 
-      await new Promise(r => setTimeout(r, 1200));
+      await new Promise(r => setTimeout(r, 1000));
 
       const netPlans = await telecomDispatcher.getAvailablePlans(detectedNet);
 
@@ -2591,8 +3004,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
 
       // Check if caller is partner/semi-parent or customer with wallet balance to determine pricing & status badge
-      let callerWallet = 0;
-      if (db.users && actionableJid) {
+      let callerWallet = isChildProxy ? childWalletBalance : 0;
+      if (!isChildProxy && db.users && actionableJid) {
         try {
           const cDoc = await db.users.doc(contactsUid).collection('contacts').doc(actionableJid).get();
           if (cDoc.exists) callerWallet = cDoc.data().walletBalance || 0;
@@ -2603,12 +3016,22 @@ export const handleProxyMessage = async (sock, msg, user) => {
         } catch (e) { }
       }
 
-      const isProxyOwnerOrPartner = (actionableJid === user.uid) || callerWallet > 0;
-      const callerTier = wallet.getMultiplierTier(callerWallet);
+      // Only recognized downline child proxies messaging their parent bot receive wholesale pricing.
+      // Super Parent, Proxy Owners, and all customers messaging child bots receive standard retail catalog pricing.
+      const isWholesaleBuyer = isChildProxy;
+      const callerTier = isChildProxy ? childTier : wallet.getMultiplierTier(callerWallet);
+
+      // Cache active menu list for 1-tap numbered indexing (1, 2, 3...)
+      userActiveMenuMap.set(userSessionKey, {
+        plans: filteredPlans,
+        targetPhone: targetPhone || callerPhone,
+        detectedNet,
+        timestamp: Date.now()
+      });
 
       // Format Header
       let menuText = `✦ Clarion OS\n` +
-        `━━━━━━━━━━━━━━\n`;
+        `──────────────\n`;
 
       if (targetPrice) {
         menuText += `📶 *${netLabel} PACKAGES NEAR ₦${targetPrice.toLocaleString()}* ⚡\n`;
@@ -2623,69 +3046,62 @@ export const handleProxyMessage = async (sock, msg, user) => {
         menuText += `Line detected: ${masked} (${netLabel})\n`;
       }
 
-      if (isProxyOwnerOrPartner && callerTier.level > 1) {
+      if (isChildProxy) {
+        menuText += `⭐ *Wholesale Status:* Partner Node (${callerTier.name} — ${callerTier.multiplier} Power)\n`;
+        menuText += `💰 *Clarion Float:* ₦${callerWallet.toLocaleString()} (Instant 1-click debit)\n`;
+      } else if (isWholesaleBuyer && callerTier.level > 1) {
         menuText += `⭐ *Your Active Discount:* ${callerTier.name} (${callerTier.multiplier} Power)\n`;
       }
-      if (callerWallet > 0) {
+      if (isChildProxy && callerWallet > 0) {
         menuText += `💰 *Clarion Float:* ₦${callerWallet.toLocaleString()} (Instant 1-click debit)\n`;
       }
 
-      // Group by durationCategory
-      const groups = {};
-      for (const p of filteredPlans) {
-        const cat = p.durationCategory || '🗓️ *Other Plans:*';
-        if (!groups[cat]) groups[cat] = [];
-        groups[cat].push(p);
-      }
-
+      let planIndex = 1;
       let hasDegraded = false;
-      for (const cat of Object.keys(groups)) {
-        menuText += `\n${cat}\n`;
-        groups[cat].forEach(p => {
-          const isDegraded = telecomDispatcher.isPlanDegraded(p.code);
-          const wholesaleInfo = isProxyOwnerOrPartner && callerWallet > 0
-            ? wallet.getWholesalePrice(p, callerWallet)
-            : null;
-          const displayPrice = wholesaleInfo ? wholesaleInfo.discountedPrice : p.sellPrice;
+      menuText += `\n`;
 
-          if (isDegraded) {
-            hasDegraded = true;
-            menuText += `• ${p.name} (${p.validity}) — ₦${displayPrice.toLocaleString()}\n` +
-              `  ➔ [Temporarily Paused] 🟡\n`;
-          } else {
-            menuText += `• ${p.name} (${p.validity}) — ₦${displayPrice.toLocaleString()}\n` +
-              `  ➔ Reply *BUY ${p.code}*\n`;
-          }
-        });
-      }
+      filteredPlans.forEach(p => {
+        const isDegraded = telecomDispatcher.isPlanDegraded(p.code);
+        const wholesaleInfo = isWholesaleBuyer
+          ? wallet.getWholesalePrice(p, callerWallet)
+          : null;
+        const displayPrice = wholesaleInfo ? wholesaleInfo.discountedPrice : p.sellPrice;
+        const indexEmoji = planIndex <= 10 ? `${planIndex}️⃣` : `${planIndex}.`;
+
+        if (isDegraded) {
+          hasDegraded = true;
+          menuText += `${indexEmoji} *${p.name}* (${p.validity}) — ₦${displayPrice.toLocaleString()} [Paused 🟡]\n`;
+        } else {
+          menuText += `${indexEmoji} *${p.name}* (${p.validity}) — *₦${displayPrice.toLocaleString()}*\n`;
+        }
+        planIndex++;
+      });
 
       if (hasDegraded) {
-        menuText += `\n💡 *Note:* Packages marked [Temporarily Paused] are undergoing brief gateway optimization.\nAll active packages deliver in 3 seconds! ⚡\n`;
+        menuText += `\n💡 *Note:* Packages marked [Paused] are undergoing brief telecom gateway updates.\n`;
       }
 
-      // Format Footer with Cross-Network Browsing
-      menuText += `\n━━━━━━━━━━━━━━\n`;
+      // Format Footer with 1-Tap purchase and Cross-Network Browsing
+      menuText += `\n──────────────\n` +
+        `👉 *Reply with just the NUMBER (e.g. 1) to order for this line*\n` +
+        `🎁 *To gift someone:* Reply number + phone (e.g. *1 08012345678*)\n\n`;
+
       const priceSuffix = targetPrice ? ` ${targetPrice}` : '';
       if (detectedNet === 'airtel') {
-        menuText += `🔄 *Not buying for this Airtel line?*\n` +
-          `Reply *MTN*${priceSuffix} or *GLO*${priceSuffix} to browse other networks.\n` +
-          `👉 Reply *BUY [code]* (e.g. *BUY A1GB*) to begin order.`;
+        menuText += `🔄 *Not Airtel?* Reply *MTN*${priceSuffix} or *GLO*${priceSuffix} to switch networks.`;
       } else if (detectedNet === 'mtn') {
-        menuText += `🔄 *Looking for other networks?*\n` +
-          `Reply *AIRTEL*${priceSuffix} or *GLO*${priceSuffix} to browse other networks.\n` +
-          `👉 Reply *BUY [code]* (e.g. *BUY M1GB*) to begin order.`;
+        menuText += `🔄 *Not MTN?* Reply *AIRTEL*${priceSuffix} or *GLO*${priceSuffix} to switch networks.`;
       } else {
-        // Glo
-        menuText += `🔄 *Looking for other networks?*\n` +
-          `Reply *MTN*${priceSuffix} or *AIRTEL*${priceSuffix} to browse other networks.\n` +
-          `👉 Reply *BUY [code]* (e.g. *BUY G1GB*) to begin order.`;
+        menuText += `🔄 *Not Glo?* Reply *MTN*${priceSuffix} or *AIRTEL*${priceSuffix} to switch networks.`;
       }
 
+      await sock.sendPresenceUpdate('composing', from).catch(() => {});
       return sock.sendMessage(from, { text: menuText });
     }
 
-    // ── Handle BUY Order Initiation (Two-Step Recipient Flow) ──
-    if (command.startsWith('buy ') || command === 'buy') {
+    // ── Handle BUY Order Initiation & Bare Digit 1-Tap Index Selection ──
+    const isBareNumberOrder = /^\s*(\d{1,2})(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}))?\s*$/.test(command);
+    if (command.startsWith('buy ') || command === 'buy' || isBareNumberOrder) {
       const debounceKey = `${from}_buy`;
       const lastBuy = buyDebounce.get(debounceKey);
       if (lastBuy && Date.now() - lastBuy < BUY_DEBOUNCE_MS) {
@@ -2693,15 +3109,44 @@ export const handleProxyMessage = async (sock, msg, user) => {
       }
       buyDebounce.set(debounceKey, Date.now());
 
-      const buyParts = command.trim().split(/\s+/);
-      const codeOrSerial = buyParts[1];
+      let codeOrSerial = null;
+      let explicitPhone = null;
+
+      if (isBareNumberOrder) {
+        const bareMatch = command.match(/^\s*(\d{1,2})(?:\s+(0\d{10}|[1-9]\d{9}|\+?234\d{10}))?\s*$/);
+        const selectedIndex = parseInt(bareMatch[1], 10);
+        explicitPhone = bareMatch[2] ? bareMatch[2].replace(/\D/g, '') : null;
+
+        const activeMenu = userActiveMenuMap.get(userSessionKey);
+        const cachedGift = awaitingGiftMap.get(userSessionKey);
+
+        if (activeMenu && Array.isArray(activeMenu.plans) && selectedIndex >= 1 && selectedIndex <= activeMenu.plans.length) {
+          codeOrSerial = activeMenu.plans[selectedIndex - 1].code;
+          if (!explicitPhone && activeMenu.targetPhone) {
+            explicitPhone = activeMenu.targetPhone;
+          }
+        } else if (selectedIndex === 1 && cachedGift && cachedGift.plan) {
+          // 1-Tap Hot Deal selection from Hot Deal prompt
+          codeOrSerial = cachedGift.plan.code;
+          if (!explicitPhone && cachedGift.recipientPhone) {
+            explicitPhone = cachedGift.recipientPhone;
+          }
+        } else {
+          codeOrSerial = String(selectedIndex);
+        }
+      } else {
+        const buyParts = command.trim().split(/\s+/);
+        codeOrSerial = buyParts[1];
+        explicitPhone = buyParts[2] ? buyParts[2].replace(/\D/g, '') : null;
+      }
+
       if (!codeOrSerial) {
-        return sock.sendMessage(from, { text: '💡 Reply *BUY [code]* to order (e.g. *BUY A10GB* or *BUY 1*). Reply *DATA* to view all packages!' });
+        return sock.sendMessage(from, { text: '💡 Reply with the plan number (e.g. *1*) or *BUY [code]*. Reply *DATA* to view today\'s deals!' });
       }
 
       const plan = telecomDispatcher.findPlan(codeOrSerial);
       if (!plan) {
-        return sock.sendMessage(from, { text: '❌ Invalid plan code or serial. Type *DATA* to view available packages.' });
+        return sock.sendMessage(from, { text: '❌ Invalid plan selection. Type *DATA* to view available packages.' });
       }
 
       // Check Circuit Breaker upfront before taking payment
@@ -2710,7 +3155,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
         let altText = alternatives.map((a, i) => `${i + 1}️⃣ *${a.network.toUpperCase()} ${a.name}* (${a.validity}) — ₦${a.sellPrice.toLocaleString()} (Reply *BUY ${a.code}*)`).join('\n');
         return sock.sendMessage(from, {
           text: `🟡 *TEMPORARY GATEWAY NOTICE* ⚡\n` +
-            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `The *${plan.network.toUpperCase()} ${plan.name}* package is currently undergoing brief telecom server maintenance.\n\n` +
             `To guarantee zero delay with your money, orders for this plan are temporarily paused.\n\n` +
             `✨ *Instant Alternatives Delivering Right Now:*\n${altText}\n\n` +
@@ -2718,7 +3163,6 @@ export const handleProxyMessage = async (sock, msg, user) => {
         });
       }
 
-      let explicitPhone = buyParts[2] ? buyParts[2].replace(/\D/g, '') : null;
       if (explicitPhone) {
         if (explicitPhone.startsWith('234') && explicitPhone.length === 13) explicitPhone = '0' + explicitPhone.slice(3);
         if (explicitPhone.length === 10) explicitPhone = '0' + explicitPhone;
@@ -2757,7 +3201,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
           return sock.sendMessage(from, {
             text: `⚠️ *Network Mismatch Detected!*\n` +
-              `━━━━━━━━━━━━━━\n` +
+              `──────────────\n` +
               `You selected an *${plan.network.toUpperCase()}* plan (${plan.name} — ₦${plan.sellPrice.toLocaleString()}),\n` +
               `but *${explicitPhone}* appears to be an *${phoneNet.toUpperCase()}* line!\n\n` +
               `1️⃣ Reply *1* if this number is PORTED to ${plan.network.toUpperCase()} (proceed)\n` +
@@ -2766,8 +3210,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
           });
         }
 
-        let buyerWallet = 0;
-        if (db.users && actionableJid) {
+        let buyerWallet = isChildProxy ? childWalletBalance : 0;
+        if (!isChildProxy && db.users && actionableJid) {
           try {
             const customerDoc = await db.users.doc(contactsUid).collection('contacts').doc(actionableJid).get();
             if (customerDoc.exists) buyerWallet = customerDoc.data().walletBalance || 0;
@@ -2775,8 +3219,8 @@ export const handleProxyMessage = async (sock, msg, user) => {
         }
 
         const wholesaleInfo = wallet.getWholesalePrice(plan, buyerWallet);
-        const debitAmount = wholesaleInfo.discountedPrice;
-        const isWalletPay = buyerWallet >= debitAmount;
+        const debitAmount = isChildProxy ? wholesaleInfo.discountedPrice : plan.sellPrice;
+        const isWalletPay = isChildProxy && buyerWallet >= debitAmount;
 
         // ── Down-Tier Warning Calculation for In-Wallet Debit ──
         let willDropTier = false;
@@ -2820,7 +3264,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
             const remainingBalance = Math.max(0, buyerWallet - debitAmount);
             return sock.sendMessage(from, {
               text: `✦ Clarion OS\n` +
-                `━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `⚠️ *MULTIPLIER DOWN-TIER WARNING!*\n\n` +
                 `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
                 `💵 *Discounted Price:* ₦${debitAmount.toLocaleString()}\n` +
@@ -2831,7 +3275,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
                 `✨ *What this affects:*\n` +
                 `• Your vending profit cut drops from ${(currentTier.rate * 100)}% to ${(projectedTier.rate * 100)}%.\n` +
                 `• Your personal discount drops to ${projectedTier.multiplier}.\n\n` +
-                `━━━━━━━━━━━━━━\n` +
+                `──────────────\n` +
                 `1️⃣ Reply *1* to PROCEED ANYWAY\n` +
                 `2️⃣ Reply *2* to CANCEL & KEEP YOUR ${currentTier.multiplier} MULTIPLIER\n` +
                 `· Reply *CANCEL* to exit`
@@ -2840,7 +3284,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
           return sock.sendMessage(from, {
             text: `✦ Clarion OS\n` +
-              `━━━━━━━━━━━━━━\n` +
+              `──────────────\n` +
               `🎁 *WHOLESALE ORDER QUOTATION* ⚡\n\n` +
               `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
               `📱 *Recipient:* ${explicitPhone} (${(phoneNet || plan.network).toUpperCase()})\n` +
@@ -2849,21 +3293,53 @@ export const handleProxyMessage = async (sock, msg, user) => {
               `🎉 *${wholesaleInfo.multiplier} Savings:* -₦${wholesaleInfo.discountAmount.toFixed(2)}\n\n` +
               `💵 *Final Price:* ₦${debitAmount.toLocaleString()} (From Clarion Wallet)\n` +
               `💼 *Available Float:* ₦${buyerWallet.toLocaleString()}\n\n` +
-              `━━━━━━━━━━━━━━\n` +
+              `──────────────\n` +
               `1️⃣ Reply *1* to CONFIRM & VEND INSTANTLY\n` +
               `2️⃣ Reply *2* to CHANGE RECIPIENT NUMBER\n` +
               `· Reply *CANCEL* to abort`
           });
         }
 
+        if (isChildProxy && !isWalletPay) {
+          awaitingOrderChoiceMap.set(userSessionKey, {
+            plan,
+            recipientPhone: explicitPhone,
+            recipientNetwork: phoneNet || plan.network,
+            wholesaleInfo,
+            debitAmount,
+            buyerWallet,
+            childProxyUser,
+            timestamp: Date.now()
+          });
+
+          const shortfall = (debitAmount - buyerWallet).toFixed(2);
+          return sock.sendMessage(from, {
+            text: `✦ Clarion OS\n` +
+              `──────────────\n` +
+              `⚠️ *INSUFFICIENT CLARION FLOAT*\n\n` +
+              `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
+              `💵 *Wholesale Price:* ₦${debitAmount.toLocaleString()}\n` +
+              `💼 *Current Float:* ₦${buyerWallet.toFixed(2)} (Shortfall: ₦${Number(shortfall).toLocaleString()})\n\n` +
+              `How would you like to complete this order?\n\n` +
+              `1️⃣ *Direct Transfer for this Order (₦${debitAmount.toLocaleString()})*\n` +
+              `   Transfer exact ₦${debitAmount.toLocaleString()} to your dedicated account.\n` +
+              `   ⚡ *Auto-dispenses to ${explicitPhone} instantly upon payment!*\n\n` +
+              `2️⃣ *Top Up Clarion Float (₦1,000+)*\n` +
+              `   Fund your wallet to preserve your wholesale status and enable 1-click ordering.\n` +
+              `──────────────\n` +
+              `👉 *Reply 1 or 2 to proceed*\n` +
+              `_(Or reply CANCEL to abort)_`
+          });
+        }
+
         return sock.sendMessage(from, {
           text: `✦ Clarion OS\n` +
-            `━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `🔍 *ORDER CONFIRMATION*\n\n` +
             `📦 *Package:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity})\n` +
             `📱 *Recipient:* ${explicitPhone} (${(phoneNet || plan.network).toUpperCase()})\n` +
             `💰 *Amount:* ₦${plan.sellPrice.toLocaleString()}\n\n` +
-            `━━━━━━━━━━━━━━\n` +
+            `──────────────\n` +
             `1️⃣ Reply *1* to CONFIRM & GET PAYMENT INVOICE\n` +
             `2️⃣ Reply *2* to CHANGE RECIPIENT NUMBER\n` +
             `· Reply *CANCEL* to abort`
@@ -2878,7 +3354,7 @@ export const handleProxyMessage = async (sock, msg, user) => {
 
       return sock.sendMessage(from, {
         text: `✦ Clarion OS\n` +
-          `━━━━━━━━━━━━━━\n` +
+          `──────────────\n` +
           `📦 *You selected:* ${plan.network.toUpperCase()} ${plan.name} (${plan.validity}) — ₦${plan.sellPrice.toLocaleString()}\n\n` +
           `📱 *Who should receive this data?*\n` +
           `👉 Reply with the 11-digit phone number (e.g. 08021234567)\n` +

@@ -112,10 +112,27 @@ export function calculateNetProfit(sellPrice, wholesaleCost) {
  * Calculates wholesale discount price using the dynamic 1X–4X Multiplier model.
  * Discount is taken strictly off Net Profit (P = S - C - F), ensuring Parent Proxy never sells below cost.
  */
-export function getWholesalePrice(plan, walletBalance) {
+export function getWholesalePrice(plan, walletBalance, userId = null) {
     const s = Number(plan.sellPrice) || 0;
     const c = Number(plan.baseCost || plan.wholesaleCost) || 0;
     const f = calculatePaystackFee(s);
+
+    // Super Parent buys strictly at Base Wholesale Cost + Paystack Fee (Zero platform profit markup)
+    if (userId && isSuperParent(userId)) {
+        const atCostPrice = +(c + calculatePaystackFee(c)).toFixed(2);
+        return {
+            retailPrice: s,
+            discountedPrice: atCostPrice,
+            discountAmount: +(s - atCostPrice).toFixed(2),
+            discountRate: 1.0,
+            level: 5,
+            multiplier: 'SUPER',
+            tierName: 'Super Parent (At-Cost)',
+            valueOf() { return this.discountedPrice; },
+            toString() { return String(this.discountedPrice); }
+        };
+    }
+
     const p = Math.max(0, +(s - c - f).toFixed(2));
     const tier = getMultiplierTier(walletBalance);
 

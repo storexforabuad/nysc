@@ -8,6 +8,13 @@ import { db } from '../services/firebase.js';
 import { handleProxyMessage } from './ProxyBot.js';
 import contactBackupService from '../services/ContactBackupService.js';
 
+// Silence raw libsignal cryptographic session dumps from polluting stdout
+const originalConsoleInfo = console.info;
+console.info = (...args) => {
+    if (typeof args[0] === 'string' && args[0].includes('Closing session:')) return;
+    originalConsoleInfo.apply(console, args);
+};
+
 const { user, baileysVersion, sessionsDir, pairingMode, isPairingCode, motherBotJid, motherBotLid } = workerData;
 if (motherBotJid) user.motherBotJid = motherBotJid;
 if (motherBotLid) user.motherBotLid = motherBotLid;
@@ -295,16 +302,38 @@ async function startWorker(isInitialBoot = true) {
         } else if (msg.type === 'notify_customer') {
             const { targetJid, message } = msg;
             try {
-                await sock.sendPresenceUpdate('composing', targetJid);
-                await new Promise(r => setTimeout(r, 1000));
+                // If socket is momentarily re-handshaking, wait up to 3 seconds
+                let waitAttempts = 0;
+                while ((!sock || sock.ws?.readyState !== 1) && waitAttempts < 10) {
+                    await new Promise(r => setTimeout(r, 300));
+                    waitAttempts++;
+                }
+
+                // Guard presence update so typing state blips don't prevent message delivery
+                try {
+                    await sock.sendPresenceUpdate('composing', targetJid);
+                    await new Promise(r => setTimeout(r, 600));
+                } catch (presenceErr) { }
+
                 await sock.sendMessage(targetJid, { text: message });
+                if (parentPort) {
+                    parentPort.postMessage({ type: 'notify_customer_ack', targetJid, success: true });
+                }
             } catch (e) {
                 logger.error(`[WORKER] Failed to send customer notification: ${e.message}`);
+                if (parentPort) {
+                    parentPort.postMessage({ type: 'notify_customer_ack', targetJid, success: false, error: e.message, message });
+                }
             }
         } else if (msg.type === 'notify_owner') {
             const { message } = msg;
             const ownerJid = user.phoneJid || user.uid;
             try {
+                let waitAttempts = 0;
+                while ((!sock || sock.ws?.readyState !== 1) && waitAttempts < 10) {
+                    await new Promise(r => setTimeout(r, 300));
+                    waitAttempts++;
+                }
                 await sock.sendMessage(ownerJid, { text: message });
             } catch (e) {
                 logger.error(`[WORKER] Failed to send owner alert: ${e.message}`);
@@ -332,7 +361,16 @@ async function startWorker(isInitialBoot = true) {
                     resolvedJids = [fallback];
                 }
 
-                await sock.sendMessage(statusJid, { text }, { statusJidList: resolvedJids });
+                // Use curated vibrant backgrounds (WhatsApp Emerald Green, Royal Navy, Deep Teal, Rich Amber) - Never boring black
+                const STATUS_COLORS = ['#075E54', '#1E3A8A', '#0F766E', '#1B4D3E', '#2563EB'];
+                const selectedBg = msg.backgroundColor || STATUS_COLORS[Math.floor(Math.random() * STATUS_COLORS.length)];
+                const selectedFont = msg.font !== undefined ? msg.font : 1;
+
+                await sock.sendMessage(
+                    statusJid,
+                    { text, backgroundColor: selectedBg, font: selectedFont },
+                    { backgroundColor: selectedBg, font: selectedFont, statusJidList: resolvedJids }
+                );
                 logger.info(`[WORKER] Posted text status for ${user.uid} (${resolvedJids.length} recipients)`);
                 parentPort.postMessage({ type: 'status_post_result', requestId, success: true, count: resolvedJids.length });
             } catch (e) {

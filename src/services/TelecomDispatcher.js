@@ -31,7 +31,7 @@ export const MASTER_DATA_CATALOG = [
     durationCategory: '⚡ *1-Day & 2-Day Plans:*',
     durationPriority: 1,
     baseCost: 260,
-    sellPrice: 400,
+    sellPrice: 290,
     primaryProvider: 'husmodata',
     husmoId: 495,
     peyflexCode: 'M1GBS',
@@ -290,7 +290,7 @@ export const MASTER_DATA_CATALOG = [
     durationCategory: '⚡ *2-Day & 3-Day Plans:*',
     durationPriority: 3,
     baseCost: 335,
-    sellPrice: 400,
+    sellPrice: 390,
     primaryProvider: 'husmodata',
     husmoId: 479,
     peyflexCode: 'G1GB1',
@@ -320,7 +320,7 @@ export const MASTER_DATA_CATALOG = [
     durationCategory: '⚡ *2-Day & 3-Day Plans:*',
     durationPriority: 3,
     baseCost: 1380,
-    sellPrice: 2000,
+    sellPrice: 1800,
     primaryProvider: 'peyflex',
     husmoId: null,
     peyflexCode: 'G5GB1',
@@ -365,7 +365,7 @@ export const MASTER_DATA_CATALOG = [
     durationCategory: '📅 *7-Day Plans:*',
     durationPriority: 7,
     baseCost: 1580,
-    sellPrice: 2000,
+    sellPrice: 1900,
     primaryProvider: 'peyflex',
     husmoId: null,
     peyflexCode: 'G5GB2',
@@ -459,7 +459,7 @@ export const MASTER_DATA_CATALOG = [
     durationCategory: '⚡ *2-Day Plans:*',
     durationPriority: 2,
     baseCost: 112,
-    sellPrice: 400,
+    sellPrice: 190,
     primaryProvider: 'husmodata',
     husmoId: 450,
     peyflexCode: null,
@@ -474,7 +474,7 @@ export const MASTER_DATA_CATALOG = [
     durationCategory: '⚡ *2-Day Plans:*',
     durationPriority: 2,
     baseCost: 213,
-    sellPrice: 400,
+    sellPrice: 290,
     primaryProvider: 'husmodata',
     husmoId: 451,
     peyflexCode: null,
@@ -862,6 +862,9 @@ class TelecomDispatcher {
             };
           } catch (peyflexErr) {
             logger.error(`[TELECOM-DISPATCHER] 🔴 Failover Peyflex also failed: ${peyflexErr.message}`);
+            if (peyflexErr.message && peyflexErr.message.includes('Insufficient wallet balance')) {
+              logger.error(`[TELECOM-DISPATCHER] 🚨 CRITICAL: Peyflex backup wallet is dry! Please fund Peyflex API account immediately.`);
+            }
             this.recordPlanFailure(plan.code, `Husmodata: ${husmoErr.message} | Peyflex: ${peyflexErr.message}`);
             throw new Error(`Dispatch failed across all providers: Husmodata (${husmoErr.message}) | Peyflex (${peyflexErr.message})`);
           }

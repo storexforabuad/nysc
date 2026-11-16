@@ -154,44 +154,44 @@ const sendPromoStatus = async () => {
 const STATUS_SCHEDULE = {
   // 0: Sunday
   0: {
-    morning: "✨ Happy Sunday! 🙏\n\nStay connected with loved ones and stream your favorite services with MTN & Glo data from ₦400/GB!\n\n👉 Reply *DATA* to order in seconds",
-    afternoon: "💚 Smart data that gives back 🇳🇬\n\nEvery purchase on this line funds grassroots community projects. Fast, reliable MTN & Glo from ₦400 per GIG.\n\n👉 Reply *DATA* to support & recharge",
-    evening: "🔋 Prepare for Monday with a loaded line! 🚀\n\nDon't start the new week with 0MB. Instant MTN & Glo data delivered automatically from just ₦400/GB!\n\n👉 Reply *DATA 500* or *DATA 1000* to recharge now"
+    morning: "✨ Happy Sunday! 🙏\n\nStay connected with loved ones and stream your favorite services with MTN, Airtel & Glo data from ₦290/GB!\n\n👉 Reply *DATA* to order in seconds",
+    afternoon: "💚 Smart data that gives back 🇳🇬\n\nEvery purchase on this line funds grassroots community projects. Fast, reliable MTN, Airtel & Glo from ₦290 per GIG.\n\n👉 Reply *DATA* to support & recharge",
+    evening: "🔋 Prepare for Monday with a loaded line! 🚀\n\nDon't start the new week with 0MB. Instant MTN, Airtel & Glo data delivered automatically from just ₦290/GB!\n\n👉 Reply *DATA 500* or *DATA 1000* to recharge now"
   },
   // 1: Monday (Evening has Sprinkles D: Why Fund Wallet & 1-Click Explained)
   1: {
-    morning: "⚡ New week, fresh gigabytes! 🚀\n\nDon't let your work or calls pause. Instant MTN & Glo data delivered in seconds — starting from just ₦400/GB!\n\n👉 Reply *DATA* to browse all plans",
+    morning: "⚡ New week, fresh gigabytes! 🚀\n\nDon't let your work or calls pause. Instant MTN, Airtel & Glo data delivered in seconds — starting from just ₦290/GB!\n\n👉 Reply *DATA* to browse all plans",
     afternoon: "📱 Data exhausted during morning hustle? ⏳\n\nNo need to open bank apps or wait around. Fast automated top-up right here on WhatsApp!\n\n👉 Reply *DATA 500* or *DATA 1000* for instant refill!",
-    evening: "💡 Why smart buyers load their Clarion Wallet ⚡\n\nTired of opening bank apps, network timeouts, or waiting for USSD? Load your wallet once and enjoy:\n\n1️⃣ Zero Bank Delays — No failed bank transfers or network pending\n2️⃣ True 1-Click Buying — Reply *BUY 1* and your data lands in 1 second flat!\n3️⃣ 100% Zero Extra Fees — No bank charges on every small recharge\n4️⃣ 24/7 Instant Vending — Works even at 2:00 AM when bank apps sleep 🌙\n\n👉 Reply *FUND 1000* or *FUND 2000* to load your balance\n👉 Reply *DATA* to view all plans and test 1-click vending! 🚀"
+    evening: "💡 Why smart buyers load their Clarion Wallet ⚡\n\nTired of opening bank apps, network timeouts, or waiting for USSD? Load your wallet once and enjoy:\n\n1️⃣ Zero Bank Delays — No failed bank transfers or network pending\n2️⃣ True 1-Click Buying — Reply with plan number (*1*) and your data lands in 1 second flat!\n3️⃣ 100% Zero Extra Fees — No bank charges on every small recharge\n4️⃣ 24/7 Instant Vending — Works even at 2:00 AM when bank apps sleep 🌙\n\n👉 Reply *FUND 1000* or *FUND 2000* to load your balance\n👉 Reply *DATA* to view all plans and test 1-click vending! 🚀"
   },
   // 2: Tuesday (Afternoon has Sprinkles C: Commands Cheat Sheet)
   2: {
-    morning: "⚡ Fast, reliable MTN & Glo data ready 24/7! 📶\n\nAutomated AI vending means you receive your data in seconds, day or night. Starting at just ₦400/GB.\n\n👉 Reply *DATA* to test our instant delivery!",
-    afternoon: "🤖 Quick Guide: How to use this 24/7 AI Storefront 🔑\n\nText any of these keywords in this chat anytime:\n\n• *DATA* — View all MTN & Glo plans (from ₦400/GB)\n• *DATA 500* — View plans closest to ₦500 budget\n• *FUND* — Load your Clarion Wallet for 1-click orders\n• *CANCEL* — Abort an ongoing order\n• *INFO* — See how purchases fund NYSC community projects\n\nTry it now — just reply *DATA* to test! ⚡",
-    evening: "💰 Stop overpaying for data! 📉\n\nGet verified 30-day MTN & Glo data packages starting at just ₦400 per GIG.\n\n👉 Reply *DATA 500* or *DATA 1000* to see what your budget gets you!"
+    morning: "⚡ Fast, reliable MTN, Airtel & Glo data ready 24/7! 📶\n\nAutomated AI vending means you receive your data in seconds, day or night. Starting at just ₦290/GB.\n\n👉 Reply *DATA* to test our instant delivery!",
+    afternoon: "🤖 Quick Guide: How to use this 24/7 AI Storefront 🔑\n\nText any of these keywords in this chat anytime:\n\n• *DATA* — View all plans & today's hot deal (from ₦290/GB)\n• *DATA 500* — View plans closest to ₦500 budget\n• *FUND* — Load your Clarion Wallet for 1-click orders\n• *CANCEL* — Abort an ongoing order\n• *INFO* — See how purchases fund NYSC community projects\n\nTry it now — just reply *DATA* to test! ⚡",
+    evening: "💰 Stop overpaying for data! 📉\n\nGet verified MTN, Airtel & Glo data packages starting at just ₦290 per GIG.\n\n👉 Reply *DATA 500* or *DATA 1000* to see what your budget gets you!"
   },
   // 3: Wednesday (Afternoon has Sprinkles A: Gift Data in 2 Ways)
   3: {
-    morning: "⚡ Midweek data check! 🔋\n\nAre your gigabytes running low? Top up your MTN or Glo line automatically — starting at just ₦400 per GIG!\n\n👉 Reply *DATA* to view all packages",
-    afternoon: "🎁 Surprise someone with data today! ⚡\n\nYou can easily send MTN & Glo data to friends, parents, or your MiFi in 2 easy ways:\n\n1️⃣ *By Command:* Reply with budget & number\n👉 *DATA 500 080XXXXXXXX* or *BUY 1 080XXXXXXXX*\n\n2️⃣ *By Contact Card:* Simply share the person's contact in this chat! 📲\n\nThe AI bot automatically detects the network and delivers the data in 15 seconds! 🚀",
-    evening: "🌙 Heavy browsing tonight? 🍿\n\nEnjoy affordable MTN & Glo monthly bundles from ₦400/GB. Stream, game & chat freely!\n\n👉 Reply *DATA* to grab yours right now"
+    morning: "⚡ Midweek data check! 🔋\n\nAre your gigabytes running low? Top up your MTN, Airtel or Glo line automatically — starting at just ₦290 per GIG!\n\n👉 Reply *DATA* to view all packages",
+    afternoon: "🎁 Surprise someone with data today! ⚡\n\nYou can easily send data to friends, parents, or your MiFi in 2 easy ways:\n\n1️⃣ *By Command:* Reply with budget & number\n👉 *DATA 500 080XXXXXXXX* or *1 080XXXXXXXX*\n\n2️⃣ *By Contact Card:* Simply share the person's contact in this chat! 📲\n\nThe AI bot automatically detects the network and delivers the data in 15 seconds! 🚀",
+    evening: "🌙 Heavy browsing tonight? 🍿\n\nEnjoy affordable MTN, Airtel & Glo monthly bundles from ₦290/GB. Stream, game & chat freely!\n\n👉 Reply *DATA* to grab yours right now"
   },
   // 4: Thursday (Afternoon has Sprinkles E: CDS Community Development Transparency)
   4: {
-    morning: "🔋 CDS Thursday Special! 🇳🇬\n\nMassive discounts on MTN & Glo data for everyone today — starting at just ₦400 per GIG!\n\n👉 Reply *DATA* to view today's CDS rates!",
-    afternoon: "🇳🇬 Empowering Communities, One Gigabyte at a Time 🏫\n\nWhenever you purchase data here:\n• You get verified, low-cost MTN & Glo data instantly\n• A portion of the proceeds is donated to grassroots NYSC CDS projects (schools, health, & youth skills)\n\n👉 Reply *INFO* to learn more, or reply *DATA* to support today! 💚",
-    evening: "⚡ Wrap up your Thursday with full connectivity! 📲\n\nAffordable MTN & Glo data that doesn't burn your pocket. Instant delivery from ₦400 per GIG.\n\n👉 Reply *DATA* to reload in seconds"
+    morning: "🔋 CDS Thursday Special! 🇳🇬\n\nMassive discounts on MTN, Airtel & Glo data for everyone today — starting at just ₦290 per GIG!\n\n👉 Reply *DATA* to view today's CDS rates!",
+    afternoon: "🇳🇬 Empowering Communities, One Gigabyte at a Time 🏫\n\nWhenever you purchase data here:\n• You get verified, low-cost MTN, Airtel & Glo data instantly\n• A portion of the proceeds is donated to grassroots NYSC CDS projects (schools, health, & youth skills)\n\n👉 Reply *INFO* to learn more, or reply *DATA* to support today! 💚",
+    evening: "⚡ Wrap up your Thursday with full connectivity! 📲\n\nAffordable MTN, Airtel & Glo data that doesn't burn your pocket. Instant delivery from ₦290 per GIG.\n\n👉 Reply *DATA* to reload in seconds"
   },
   // 5: Friday (Evening has Sprinkles F: Weekend Movie Prep & 1-Click Wallet Refill)
   5: {
-    morning: "🎉 Happy Friday! 🥳\n\nGet your weekend data locked in early. Affordable MTN & Glo bundles delivered instantly from just ₦400/GB!\n\n👉 Reply *DATA* to see our rates",
-    afternoon: "🚀 Friday afternoon data top-up! 🔋\n\nDon't let your connection drop before the weekend begins. Instant MTN & Glo top-ups from ₦400 per GIG!\n\n👉 Reply *DATA 500* or *DATA 1000* to recharge now",
-    evening: "🍿 Movie night or social weekend? 🎬\n\nDon't let bank app downtime pause your streaming tonight.\n\n💡 *Smart Weekend Tip:* Load your Clarion Wallet once:\n👉 Reply *FUND 1000* or *FUND 2000*\n👉 Any order you place vends automatically in 1 second — no banking app required! ⚡\n\nStream smoothly on MTN & Glo from just ₦400 per GIG. Reply *DATA* to connect! 🚀"
+    morning: "🎉 Happy Friday! 🥳\n\nGet your weekend data locked in early. Affordable MTN, Airtel & Glo bundles delivered instantly from just ₦290/GB!\n\n👉 Reply *DATA* to see our rates",
+    afternoon: "🚀 Friday afternoon data top-up! 🔋\n\nDon't let your connection drop before the weekend begins. Instant top-ups from ₦290 per GIG!\n\n👉 Reply *DATA 500* or *DATA 1000* to recharge now",
+    evening: "🍿 Movie night or social weekend? 🎬\n\nDon't let bank app downtime pause your streaming tonight.\n\n💡 *Smart Weekend Tip:* Load your Clarion Wallet once:\n👉 Reply *FUND 1000* or *FUND 2000*\n👉 Any order you place vends automatically in 1 second — no banking app required! ⚡\n\nStream smoothly from just ₦290 per GIG. Reply *DATA* to connect! 🚀"
   },
   // 6: Saturday (Evening has Sprinkles B: Data for MiFi, Router & 2nd SIM)
   6: {
-    morning: "⚡ Saturday morning data deals! ☕\n\nAffordable MTN & Glo data packages active 24/7 — starting from ₦400 per GIG!\n\n👉 Reply *DATA* to browse and order in seconds",
-    afternoon: "🏖️ Weekend chilling with high-speed data! 📲\n\nEnjoy smooth streaming, football, and social chats without breaking the bank. Instant MTN & Glo from ₦400/GB!\n\n👉 Reply *DATA* to pick your bundle in seconds",
+    morning: "⚡ Saturday morning data deals! ☕\n\nAffordable MTN, Airtel & Glo data packages active 24/7 — starting from ₦290 per GIG!\n\n👉 Reply *DATA* to browse and order in seconds",
+    afternoon: "🏖️ Weekend chilling with high-speed data! 📲\n\nEnjoy smooth streaming, football, and social chats without breaking the bank. Instant data from ₦290/GB!\n\n👉 Reply *DATA* to pick your bundle in seconds",
     evening: "📶 Need data on your WiFi router, MiFi, or 2nd phone? 🔌\n\nYou don't need to remove SIM cards or open other apps.\n\n👉 Simply reply:\n*DATA [budget] [router number]*\n_(e.g. DATA 1000 08051234567)_\n\nInstant delivery straight to your device 24/7! ⚡"
   }
 };
@@ -283,6 +283,55 @@ const sendDailyTextStatus = async () => {
   await sendScheduledSlotStatus('morning');
 };
 
+// ── Track B: General Nigerian Merchant Status Drops (2-Message Split) ──
+const GENERAL_MERCHANT_DROPS = {
+  morning: {
+    instruction: `☀️ *Good morning! 8:30 AM Status Drop*\n──────────────\nPeople scroll status while starting their day. Post the clean message below right now!`,
+    cleanText: (brand) => `⚡ MORNING DATA ALERT!\n──────────────\n${brand} 🚀\n\nNo data to start your day? No vex, I got you covered!\nData bundles starting from just ₦290!\n\n📦 MTN · AIRTEL · GLO\nDelivered straight to your line in seconds ⚡\nSend a DM now to recharge! 📲`
+  },
+  afternoon: {
+    instruction: `🌤️ *1:30 PM Status Drop — Lunch Break Rush*\n──────────────\nPeople are on their phones during lunch break. Post the text below on your status now!`,
+    cleanText: (brand) => `📡 MIDDAY DATA TOP-UP!\n──────────────\n${brand} ⚡\n\nLow data warning during break?\nGet pocket-friendly 1GB, 2GB & binge bundles instantly!\n\nHit me up with your network and number to sort you out immediately! 💪`
+  },
+  evening: {
+    instruction: `🌙 *7:30 PM — Evening Golden Hour*\n──────────────\nMost data sales happen between 7 PM – 10 PM. Post the text below to catch night owls and streamers!`,
+    cleanText: (brand) => `🌙 EVENING DATA SPECIAL!\n──────────────\n${brand} ⚡\n\nDon't let 0MB cut your night short.\nInstant MTN, Airtel & Glo data delivered 24/7!\n\nDM me your order right now to stay online all night! 🔥`
+  }
+};
+
+/**
+ * Dispatches 2-message status drops to all MANUAL_MERCHANT users
+ */
+export async function sendMerchantStatusDrops(slot = 'morning') {
+  if (!db || !db.users || !sessionManager.motherSock) return;
+
+  try {
+    const snap = await db.users.where('role', '==', 'MANUAL_MERCHANT').get();
+    if (snap.empty) return;
+
+    const drop = GENERAL_MERCHANT_DROPS[slot] || GENERAL_MERCHANT_DROPS.morning;
+
+    for (const doc of snap.docs) {
+      const u = doc.data();
+      const userJid = u.phoneJid || u.uid || `${u.phoneNumber}@s.whatsapp.net`;
+      if (!userJid || u.statusDropEnabled === false || u.noDrops === true) continue;
+
+      const brand = u.franchiseName || u.name || 'Clarion AI Store';
+
+      try {
+        // Message 1: Guide
+        await sessionManager.motherSock.sendMessage(userJid, { text: drop.instruction });
+        // Message 2: Clean Copy Text
+        await sessionManager.motherSock.sendMessage(userJid, { text: drop.cleanText(brand) });
+      } catch (err) {
+        logger.warn(`Failed to dispatch status drop to merchant ${userJid}: ${err.message}`);
+      }
+    }
+  } catch (e) {
+    logger.error(`Error in sendMerchantStatusDrops: ${e.message}`);
+  }
+}
+
 export function startStatusPostJob() {
   ensureMediaDirs();
 
@@ -290,18 +339,21 @@ export function startStatusPostJob() {
   cron.schedule('0 9 * * *', async () => {
     logger.info('Posting Slot 1 (9:00 AM) data text status.');
     await sendScheduledSlotStatus('morning');
+    await sendMerchantStatusDrops('morning');
   }, { timezone: 'Africa/Lagos' });
 
   // Slot 2: Afternoon 1:30 PM Lagos Time (Rotates Sprinkles Collection)
   cron.schedule('30 13 * * *', async () => {
     logger.info('Posting Slot 2 (1:30 PM) Sprinkles & Midday text status.');
     await sendScheduledSlotStatus('afternoon');
+    await sendMerchantStatusDrops('afternoon');
   }, { timezone: 'Africa/Lagos' });
 
   // Slot 3: Evening 7:30 PM Lagos Time
   cron.schedule('30 19 * * *', async () => {
     logger.info('Posting Slot 3 (7:30 PM) evening data text status.');
     await sendScheduledSlotStatus('evening');
+    await sendMerchantStatusDrops('evening');
   }, { timezone: 'Africa/Lagos' });
 
   logger.info(`Status post CRON jobs scheduled (3x Daily: 9:00 AM, 1:30 PM, 7:30 PM Lagos Time Active).`);

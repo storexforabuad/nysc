@@ -179,16 +179,19 @@ class SessionManager {
 
         if (db.users) {
           db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
-          if (ownerJid && ownerJid !== user.uid) {
+          // Only update ownerJid if it represents the user activating their own terminal (not a parent proxy)
+          if (ownerJid && ownerJid === user.uid) {
             db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
           }
-          if (user.contactsUid && user.contactsUid !== user.uid) {
+          if (user.contactsUid && user.contactsUid === user.uid) {
             db.users.doc(user.contactsUid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update contactsUid failed:`, e.message));
           }
         }
         worker.postMessage({ type: 'update_user', updates: { ...user, ...activationData, contactsUid: user.contactsUid } });
         if (this.motherSock) {
-          this._sendActivationSuccessMessages(ownerJid, user);
+          // If this is a child proxy/referral, always route the onboarding guide directly to the partner's phoneJid!
+          const targetRecipient = (user.role === 'CHILD_PROXY' || user.parentId) ? phoneJid : ownerJid;
+          this._sendActivationSuccessMessages(targetRecipient, user);
         }
       }
 
@@ -239,10 +242,11 @@ class SessionManager {
 
         if (db.users) {
           db.users.doc(user.uid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update failed:`, e.message));
-          if (ownerJid && ownerJid !== user.uid) {
+          // Only update ownerJid if it represents the user activating their own terminal (not a parent proxy)
+          if (ownerJid && ownerJid === user.uid) {
             db.users.doc(ownerJid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update owner failed:`, e.message));
           }
-          if (user.contactsUid && user.contactsUid !== user.uid) {
+          if (user.contactsUid && user.contactsUid === user.uid) {
             db.users.doc(user.contactsUid).set(activationData, { merge: true }).catch(e => logger.error(`DB Update contactsUid failed:`, e.message));
           }
         }
@@ -261,15 +265,29 @@ class SessionManager {
       }
 
       if (msg.type === 'contacts_synced') {
-        logger.info(`[SYNC] Contacts ready for ${user.uid}: ${msg.count} synced`);
+        const contactCount = Number(msg.count) || 0;
+        logger.info(`[SYNC] Contacts ready for ${user.uid}: ${contactCount} synced`);
         if (user._launchStatusTimer) {
           clearTimeout(user._launchStatusTimer);
           user._launchStatusTimer = null;
         }
-        // Small 2-second grace period for batch commit to settle in Firestore
-        setTimeout(() => {
-          this._triggerDay0LaunchStatus(user, worker);
-        }, 2000);
+
+        // ── Minimum Contact Threshold Gate (>= 15 contacts) ──
+        // Only trigger Day 0 launch status if at least 15 contacts have synced to avoid broadcasting to empty audience
+        if (contactCount >= 15 && !user.hasPostedLaunchStatus) {
+          setTimeout(() => {
+            this._triggerDay0LaunchStatus(user, worker);
+          }, 2000);
+        } else if (contactCount < 15) {
+          logger.info(`[SYNC] Contact count (${contactCount}) below threshold of 15 for ${user.uid}. Holding Day 0 launch status until audience populates.`);
+        }
+      }
+
+      if (msg.type === 'notify_customer_ack' && !msg.success && msg.message && this.motherSock) {
+        logger.warn(`[SessionManager] Proxy worker failed to deliver customer message to ${msg.targetJid}. Falling back to MotherBot.`);
+        this.motherSock.sendMessage(msg.targetJid, { text: msg.message }).catch(fbErr => {
+          logger.error(`[SessionManager] MotherBot fallback delivery failed to ${msg.targetJid}: ${fbErr.message}`);
+        });
       }
 
       if (msg.type === 'close') {
@@ -329,29 +347,34 @@ class SessionManager {
       const isReferral = latestUser.role === 'REFERRAL' || Boolean(latestUser.parentId);
 
       if (isReferral) {
-        let parentStoreName = 'Store';
+        let parentStoreName = 'Musty Data Squad';
         if (db.users && latestUser.parentId) {
           try {
             const parentDoc = await db.users.doc(latestUser.parentId).get();
             if (parentDoc.exists) {
               const pData = parentDoc.data();
-              parentStoreName = pData.brandName || pData.franchiseName || pData.verifiedName || 'Store';
+              parentStoreName = pData.brandName || pData.franchiseName || pData.verifiedName || 'Musty Data Squad';
             }
           } catch (e) { }
         }
 
-        launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion A.I - ${parentStoreName} ⚡\n\n` +
-          `Enjoy instant, affordable MTN, Airtel & Glo data delivered automatically 24/7 — starting at just ₦400 per GIG!\n\n` +
+        launchStatusText = `🚀 Exciting news! My line is now officially connected to Clarion AI — ${parentStoreName} ⚡\n\n` +
+          `Enjoy instant, affordable MTN, Airtel & Glo data delivered automatically 24/7 — starting at just ₦290 per GIG!\n\n` +
           `💚 Every purchase supports community development projects. 🇳🇬\n\n` +
           `👉 Try it out now — reply DATA to this status to view our special rates!`;
       } else {
-        launchStatusText = `🚀 Exciting news! My line is now officially powered by Clarion A.I. ⚡\n\n` +
-          `Get instant, affordable MTN, Airtel & Glo data delivered automatically in seconds — starting at just ₦400 per GIG!\n\n` +
+        launchStatusText = `🚀 Exciting news! My line is now officially powered by Clarion AI. ⚡\n\n` +
+          `Get instant, affordable MTN, Airtel & Glo data delivered automatically in seconds — starting at just ₦290 per GIG!\n\n` +
           `💚 Every purchase funds Community Development projects. 🇳🇬\n\n` +
           `👉 Try it out now — just reply DATA to this status to see all plans!`;
       }
 
-      worker.postMessage({ type: 'text_status', text: launchStatusText });
+      worker.postMessage({
+        type: 'text_status',
+        text: launchStatusText,
+        backgroundColor: '#075E54', // Rich WhatsApp Emerald Green
+        font: 1
+      });
       user.hasPostedLaunchStatus = true;
       if (db.users) {
         await db.users.doc(user.uid).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
@@ -642,7 +665,34 @@ class SessionManager {
       const cleanPhone = phoneJid.split('@')[0].replace(/\D/g, '');
       const partnerName = fullUser.name || info.partnerName || 'Partner';
       const isSuper = fullUser.parentId && (fullUser.parentId.includes('7032905036') || fullUser.parentId.includes('8119772223'));
-      const sponsorDisplayName = isSuper ? 'Mustapha Lawal Gambo (07032905036)' : (fullUser.sponsorName || 'Store Sponsor');
+
+      // Dynamically resolve sponsor display name from Firestore using parent's brand/name
+      let sponsorDisplayName = 'Musty Data Squad';
+      if (isSuper) {
+        sponsorDisplayName = 'Mustapha Lawal Gambo (07032905036)';
+      } else if (fullUser.sponsorName) {
+        sponsorDisplayName = fullUser.sponsorName;
+      } else if (fullUser.parentId && db && db.users) {
+        try {
+          const pKey = fullUser.parentId;
+          const stripped = pKey.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          // Try direct UID lookup first, then phone-based query
+          let pData = null;
+          const directSnap = await db.users.doc(pKey).get().catch(() => null);
+          if (directSnap && directSnap.exists) {
+            pData = directSnap.data();
+          } else {
+            const tenDigit = stripped.length === 13 ? '0' + stripped.slice(3) : stripped.length === 12 ? '0' + stripped.slice(2) : stripped;
+            const qSnap = await db.users.where('phoneNumber', 'in', [stripped, tenDigit]).limit(1).get().catch(() => null);
+            if (qSnap && !qSnap.empty) pData = qSnap.docs[0].data();
+          }
+          if (pData) {
+            sponsorDisplayName = pData.brandName || pData.verifiedName || pData.name || 'Store Sponsor';
+          }
+        } catch (e) {
+          logger.warn('Failed to resolve sponsor display name:', e.message);
+        }
+      }
 
       const referralGuide = `✦ Clarion OS\n` +
         `━━━━━━━━━━━━━━\n` +
@@ -663,16 +713,30 @@ class SessionManager {
         `_Tap to manage status frequency, track profit & view orders._\n\n` +
         `Key Commands:\n` +
         `• BALANCE — Check earnings & float\n` +
-        `• BUY — Order wholesale data for yourself\n` +
+        `• DATA — View catalog & order data packages\n` +
         `• DASHBOARD — Open live console\n` +
         `• KEYWORDS — Full command directory\n\n` +
         `Chat normally with friends. The bot only activates when data keywords are sent.\n\n` +
         `Welcome to effortless earnings. ✦`;
 
-      try {
-        await this.motherSock.sendMessage(phoneJid, { text: referralGuide });
-      } catch (err) {
-        logger.error('Failed to send Referral Partner Guide:', err.message);
+      // ── Dispatch welcome guide: Prefer Parent's ProxyBot line for personal onboarding, fallback to MotherBot ──
+      let sentViaParentProxy = false;
+      if (fullUser.parentId) {
+        const parentJid = fullUser.parentId.includes('@') ? fullUser.parentId : `${fullUser.parentId}@s.whatsapp.net`;
+        try {
+          const sent = await this.sendProxyCustomerMessage(parentJid, phoneJid, referralGuide);
+          if (sent) sentViaParentProxy = true;
+        } catch (e) {
+          logger.warn(`Failed to dispatch referral guide via parent proxy ${parentJid}: ${e.message}`);
+        }
+      }
+
+      if (!sentViaParentProxy) {
+        try {
+          await this.motherSock.sendMessage(phoneJid, { text: referralGuide });
+        } catch (err) {
+          logger.error('Failed to send Referral Partner Guide via MotherBot:', err.message);
+        }
       }
 
       // Notify the Parent Proxy / Mentor
@@ -780,7 +844,7 @@ class SessionManager {
     } else if (remainingClaims === 1) {
       text = `⚡ *LAST FREE DATA GRANT!* 🏃‍♂️\n──────────────\n\nOnly *1 FREE GRANT LEFT* for *${sizeMb}MB Data* on *${brandName}*!\n\n👉 Message right now & reply *PROMO* to grab the final slot!`;
     } else {
-      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN & Glo data delivered automatically 24/7 — starting at just ₦400 per GIG.\n👉 Reply *DATA 500* or *DATA 1000* to view budget plans.`;
+      text = `🎉 *GIVEAWAY 100% CLAIMED!* 🏁\n──────────────\n\nAll *${totalClaims} free data grants* for *${brandName}* have been claimed and delivered in seconds! ⚡\n\nMissed out? Don't worry!\n\n👉 Reply *DATA* anytime to buy affordable MTN, Airtel & Glo data delivered automatically 24/7 — starting at just ₦290 per GIG.\n👉 Reply *DATA 500* or *DATA 1000* to view budget plans.`;
     }
 
     try {
@@ -791,32 +855,6 @@ class SessionManager {
       logger.error(`[PROMO-STATUS] Failed to dispatch promo status for ${uid}: ${e.message}`);
       return false;
     }
-  }
-
-  updateWorkerUser(userOrUid, updates) {
-    const uid = typeof userOrUid === 'string' ? userOrUid : (userOrUid?.uid || userOrUid?.phoneJid);
-    const sessionKey = (typeof userOrUid === 'object' && userOrUid?.phoneJid) ? userOrUid.phoneJid : uid;
-
-    if (mockUserStore && typeof mockUserStore.has === 'function') {
-      if (sessionKey && mockUserStore.has(sessionKey)) {
-        Object.assign(mockUserStore.get(sessionKey), updates);
-      }
-      if (uid && mockUserStore.has(uid)) {
-        Object.assign(mockUserStore.get(uid), updates);
-      }
-    }
-
-    const worker = this.sessions.get(sessionKey) || this.sessions.get(uid);
-    if (worker && typeof worker.postMessage === 'function') {
-      try {
-        worker.postMessage({ type: 'update_user', updates });
-        logger.info(`[IPC] Dispatched update_user to worker for ${uid}`);
-        return true;
-      } catch (e) {
-        logger.error(`[IPC] Failed to update worker user for ${uid}: ${e.message}`);
-      }
-    }
-    return false;
   }
 }
 
@@ -1057,7 +1095,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
       `──────────────\n` +
       `_⚡ 3 of 3 free grants remaining_`
       : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is officially live!\n\n` +
-      `Get instant, affordable MTN & Glo data delivered automatically in seconds — starting at just ₦400 per GIG! ⚡\n\n` +
+      `Get instant, affordable MTN, Airtel & Glo data delivered automatically in seconds — starting at just ₦290 per GIG! ⚡\n\n` +
       `💚 Every purchase helps co-fund local NYSC Community Development (CDS) projects. 🇳🇬\n\n` +
       `👉 Just reply *DATA* or *DATA 1000* to this chat to view all available packages!`;
 
@@ -1079,7 +1117,7 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
     if (['approve', 'post', 'yes', 'ok', '1'].includes(text)) {
       const statusText = fullUser.pendingStatusText || (fullUser.promoActive
         ? `🎉 *LAUNCH GIVEAWAY IS LIVE!* ⚡\nMy 24/7 automated data store (*${info.storeName}*) is live! Reply *PROMO* to claim 500MB free data now!`
-        : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is live! Reply *DATA* for instant MTN & Glo data from ₦400/GB!`);
+        : `🚀 *Big news!* My 24/7 automated data store (*${info.storeName}*) is live! Reply *DATA* for instant MTN, Airtel & Glo data from ₦290/GB!`);
 
       try {
         const cleanPhone = String(fullUser.phoneNumber || fullUser.phone || fullUser.uid || from || '').replace(/[^0-9]/g, '');
@@ -1109,14 +1147,33 @@ export async function handleOnboardingWizardInput(sock, from, user, rawText) {
         }
 
         if (worker && typeof worker.postMessage === 'function') {
-          // Brief warm-up delay so the worker socket is fully established before posting
-          await new Promise(r => setTimeout(r, 1200));
-          worker.postMessage({ type: 'text_status', text: statusText });
-          if (db.users) {
-            await db.users.doc(fullUser.uid || from).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
+          // Check if launch status was already posted by contacts_synced to prevent duplicate
+          let alreadyPosted = fullUser.hasPostedLaunchStatus;
+          if (!alreadyPosted && db.users) {
+            try {
+              const uSnap = await db.users.doc(fullUser.uid || from).get();
+              if (uSnap.exists && uSnap.data().hasPostedLaunchStatus) alreadyPosted = true;
+            } catch (e) { }
           }
-          logger.info(`[AUTO-STATUS] Dispatched launch status to worker for ${fullUser.uid || from}`);
-          await sock.sendMessage(from, { text: `✅ *Launch announcement posted to your WhatsApp Status!* 🚀` });
+
+          if (alreadyPosted) {
+            logger.info(`[AUTO-STATUS] Launch status already posted for ${fullUser.uid || from}. Skipping duplicate.`);
+            await sock.sendMessage(from, { text: `✅ *Auto-status posting active!* 🚀\nYour scheduled statuses will broadcast daily at 9:00 AM.` });
+          } else {
+            // Brief warm-up delay so the worker socket is fully established before posting
+            await new Promise(r => setTimeout(r, 1200));
+            worker.postMessage({
+              type: 'text_status',
+              text: statusText,
+              backgroundColor: '#075E54', // Rich WhatsApp Emerald Green
+              font: 1
+            });
+            if (db.users) {
+              await db.users.doc(fullUser.uid || from).set({ hasPostedLaunchStatus: true }, { merge: true }).catch(() => { });
+            }
+            logger.info(`[AUTO-STATUS] Dispatched launch status to worker for ${fullUser.uid || from}`);
+            await sock.sendMessage(from, { text: `✅ *Launch announcement posted to your WhatsApp Status!* 🚀` });
+          }
         } else {
           logger.warn(`[AUTO-STATUS] No active worker found for user ${fullUser.uid || from}. Posting will occur via daily schedule.`);
           await sock.sendMessage(from, { text: `✅ *Auto-status posting activated!* 🚀\nYour scheduled statuses will broadcast daily at 9:00 AM.` });

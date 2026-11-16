@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
+import MerchantDashboard from '../merchant/MerchantDashboard';
 import { 
   MessageSquare, 
   Zap, 
@@ -91,6 +92,13 @@ interface DashboardPayload {
     glo: string;
   };
   botWhatsAppPhone: string;
+  whatsappContact?: {
+    phoneNumber: string;
+    label: string;
+    targetType: 'MOTHER_BOT' | 'PARENT_PROXY';
+    defaultText: string;
+    buttonLabel: string;
+  };
 }
 
 export default function ProxyDashboard() {
@@ -202,10 +210,17 @@ export default function ProxyDashboard() {
     );
   }
 
-  const { user, statusSchedule, squad, gateways, botWhatsAppPhone } = data;
+  const { user, statusSchedule, squad, gateways, botWhatsAppPhone, whatsappContact } = data;
+
+  if (user.role === 'MANUAL_MERCHANT') {
+    return <MerchantDashboard data={data} onRefresh={() => fetchDashboard(false)} />;
+  }
+
   const isThursday = new Date().getDay() === 4;
-  const botNumber = botWhatsAppPhone || '2347032905036';
-  const whatsappChatUrl = `https://wa.me/${botNumber}?text=MENU`;
+  const chatPhone = whatsappContact?.phoneNumber || botWhatsAppPhone || '2347032905036';
+  const chatText = whatsappContact?.defaultText || 'MENU';
+  const chatButtonLabel = whatsappContact?.buttonLabel || 'Back to WhatsApp Chat';
+  const whatsappChatUrl = `https://wa.me/${chatPhone}?text=${encodeURIComponent(chatText)}`;
 
   return (
     <div className="min-h-screen bg-[#09090B] text-zinc-100 font-display flex flex-col pb-28 selection:bg-accent selection:text-black scanline">
@@ -623,7 +638,7 @@ export default function ProxyDashboard() {
           className="w-full flex items-center justify-center gap-2.5 py-3.5 bg-accent text-black font-mono font-bold text-xs md:text-sm uppercase tracking-wider rounded-none hover:bg-white transition-all shadow-lg shadow-accent/20 active:scale-[0.98]"
         >
           <MessageSquare size={18} className="fill-black" />
-          <span>Back to WhatsApp Chat</span>
+          <span>{chatButtonLabel}</span>
         </a>
       </footer>
     </div>

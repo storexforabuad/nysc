@@ -16,6 +16,7 @@ import { startWalletYieldReportJob } from './jobs/walletYieldReportJob.js';
 import { startStatusPostJob } from './jobs/statusPostJob.js';
 import { startSubscriptionReminderJob } from './jobs/SubscriptionReminderJob.js';
 import { startThursdayPromotionJob } from './jobs/thursdayPromotionJob.js';
+import { initDailyMerchantReportJob } from './jobs/dailyMerchantReportJob.js';
 import ReceiptGenerator from './services/ReceiptGenerator.js';
 import PriceCardGenerator from './services/PriceCardGenerator.js';
 import CaptionService from './services/CaptionService.js';
@@ -27,6 +28,13 @@ import jwt from 'jsonwebtoken';
 import { CENTRAL_HUB_ACCOUNT, handleMilestoneCheck, checkIsSameNumber, mockManualOrders } from './bot/MotherBot.js';
 import networkRecoveryNotifier from './services/NetworkRecoveryNotifier.js';
 import contactBackupService from './services/ContactBackupService.js';
+
+// Silence raw libsignal cryptographic session dumps from polluting stdout
+const originalConsoleInfo = console.info;
+console.info = (...args) => {
+  if (typeof args[0] === 'string' && args[0].includes('Closing session:')) return;
+  originalConsoleInfo.apply(console, args);
+};
 
 // ── HTTP Rate Limiters ──
 const webhookLimiter = rateLimit({
@@ -601,7 +609,8 @@ async function startServer() {
         }
 
         // ── LID / Phone JID Reconciliation (bind verified bankDetails from LID doc if missing) ──
-        if (userData && (!userData.bankDetails || !userData.bankDetails.accountNumber)) {
+        // Child Proxies never inherit parent bank accounts via LID reconciliation
+        if (userData && userData.role !== 'CHILD_PROXY' && (!userData.bankDetails || !userData.bankDetails.accountNumber)) {
           try {
             // Check if there is an LID document or another document linked to this phone
             const phoneVariants = [cleanDigits, intlDigits, '0' + intlDigits.slice(3), jid];
@@ -673,7 +682,15 @@ async function startServer() {
         try {
           let sSnap;
           if (isMasterSuper) {
-            sSnap = await db.users.where('parentId', 'in', [matchedUid, '2347032905036@s.whatsapp.net', '07032905036']).get().catch(() => null);
+            const superParentIds = [
+              matchedUid,
+              '2347032905036@s.whatsapp.net',
+              '2347032905036',
+              '07032905036',
+              '259794569039973@lid',
+              '2348119772223@s.whatsapp.net'
+            ];
+            sSnap = await db.users.where('parentId', 'in', superParentIds).get().catch(() => null);
           } else {
             sSnap = await db.users.where('parentId', '==', matchedUid).get().catch(() => null);
           }
@@ -718,11 +735,61 @@ async function startServer() {
         };
       }
 
+      const [mtnPlans, gloPlans, airtelPlans] = await Promise.all([
+        telecomDispatcher.getAvailablePlans('mtn').catch(() => []),
+        telecomDispatcher.getAvailablePlans('glo').catch(() => []),
+        telecomDispatcher.getAvailablePlans('airtel').catch(() => [])
+      ]);
+
+      // Context-Aware WhatsApp Contact Target
+      let whatsappContact = {
+        phoneNumber: process.env.MOTHER_BOT_PHONE || '2348119772223',
+        label: 'MotherBot AI Coach',
+        targetType: 'MOTHER_BOT',
+        defaultText: 'MENU',
+        buttonLabel: 'WHATSAPP CHAT'
+      };
+
+      if (userData.role === 'MANUAL_MERCHANT') {
+        whatsappContact = {
+          phoneNumber: process.env.MOTHER_BOT_PHONE || '2348119772223',
+          label: 'MotherBot AI Coach',
+          targetType: 'MOTHER_BOT',
+          defaultText: 'DATA',
+          buttonLabel: 'WHATSAPP CHAT'
+        };
+      } else if (userData.role === 'CHILD_PROXY') {
+        let parentPhone = '2347032905036';
+        const rawParent = userData.parentId || userData.parentPhone;
+        if (rawParent) {
+          const cleanParent = String(rawParent).replace(/[^0-9]/g, '');
+          if (cleanParent.length >= 10) {
+            parentPhone = cleanParent.startsWith('0') ? '234' + cleanParent.slice(1) : cleanParent;
+          }
+        }
+        whatsappContact = {
+          phoneNumber: parentPhone,
+          label: 'Parent Proxy Mentor',
+          targetType: 'PARENT_PROXY',
+          defaultText: 'Hello Mentor, I have an inquiry about my franchise node',
+          buttonLabel: 'CONTACT MENTOR'
+        };
+      } else if (isMasterSuper || userData.role === 'SUPER_PARENT') {
+        whatsappContact = {
+          phoneNumber: process.env.MOTHER_BOT_PHONE || '2348119772223',
+          label: 'MotherBot Master Terminal',
+          targetType: 'MOTHER_BOT',
+          defaultText: 'MENU',
+          buttonLabel: 'MOTHERBOT TERMINAL'
+        };
+      }
+
       res.json({
         success: true,
         user: {
           uid: matchedUid,
-          name: userData.name || (isMasterSuper ? 'Mustapha Lawal Gambo' : 'Clarion Partner'),
+          name: userData.franchiseName || userData.name || (isMasterSuper ? 'Mustapha Lawal Gambo' : 'Clarion Partner'),
+          franchiseName: userData.franchiseName || userData.brandName || userData.name || null,
           phoneNumber: cleanDigits,
           role: userData.role || (isMasterSuper ? 'SUPER_PARENT' : 'CHILD_PROXY'),
           isSuperParent: isMasterSuper,
@@ -735,6 +802,12 @@ async function startServer() {
           bankDetails: maskedBank,
           metrics: userData.metrics || { totalOrders: 0, totalRevenueNaira: 0, totalProfitNaira: 0 }
         },
+        plans: {
+          mtn: mtnPlans,
+          glo: gloPlans,
+          airtel: airtelPlans
+        },
+        whatsappContact,
         statusSchedule: schedule,
         squad: {
           activeCount,
@@ -750,7 +823,7 @@ async function startServer() {
           airtel: telecomDispatcher.isNetworkDegraded('airtel') ? 'DEGRADED' : 'HEALTHY',
           glo: telecomDispatcher.isNetworkDegraded('glo') ? 'DEGRADED' : 'HEALTHY'
         },
-        botWhatsAppPhone: '2347032905036'
+        botWhatsAppPhone: whatsappContact.phoneNumber
       });
     } catch (err) {
       logger.error('Error fetching proxy dashboard:', err);
@@ -954,7 +1027,7 @@ async function startServer() {
               matchedPartnerId = manualOrder.partnerId;
             }
           } catch (cgErr) {
-            logger.warn('Could not query collectionGroup manualOrders:', cgErr.message);
+            logger.debug('Could not query collectionGroup manualOrders:', cgErr.message);
           }
         }
 
@@ -1357,6 +1430,41 @@ async function startServer() {
             await sessionManager.sendProxyCustomerMessage(order.userId, destinationJid, dataReceiptMsg);
             logger.info(`Order ${orderId} vended and settled successfully.`);
 
+            // ── Dedicated Gift Recipient Surprise Notification ──
+            const cleanBuyer = (order.buyerPhone || '').replace(/\D/g, '');
+            const cleanRecip = (order.recipientPhone || '').replace(/\D/g, '');
+            const isGift = cleanRecip && cleanRecip.length >= 10 && cleanRecip !== cleanBuyer;
+
+            if (isGift) {
+              const formattedRecip = cleanRecip.startsWith('234') && cleanRecip.length === 13 ? '0' + cleanRecip.slice(3) : cleanRecip;
+              const recipientJid = (formattedRecip.startsWith('0') ? '234' + formattedRecip.slice(1) : formattedRecip) + '@s.whatsapp.net';
+              const maskedRecip = formattedRecip.length >= 10 ? formattedRecip.slice(0, 4) + '••••' + formattedRecip.slice(-3) : formattedRecip;
+
+              const formattedBuyer = cleanBuyer.startsWith('234') && cleanBuyer.length === 13 ? '0' + cleanBuyer.slice(3) : cleanBuyer;
+              const senderDisplay = order.isAnonymous
+                ? 'A thoughtful friend (Anonymous)'
+                : (formattedBuyer.length >= 10 ? formattedBuyer.slice(0, 4) + '••••' + formattedBuyer.slice(-3) : formattedBuyer);
+
+              const sellerName = userData?.franchiseName || userData?.verifiedName || userData?.brandName || (order.userId ? order.userId.split('@')[0] : 'Clarion AI Store');
+              const planName = fulfillmentResult?.planDetails?.name || order.planName || 'Data Package';
+
+              const giftReceiptMsg = `🎁 *YOU RECEIVED A DATA GIFT!*\n` +
+                `──────────────\n` +
+                `📦 *Package:* ${planName}\n` +
+                `📱 *Delivered to:* ${maskedRecip}\n` +
+                `👤 *From:* ${senderDisplay}\n` +
+                `✨ *Sent via:* Clarion A.I - ${sellerName}\n\n` +
+                `💚 *Did you know?*\n` +
+                `This data gift was powered by Clarion A.I (NYSC SAED Project) — where everyday data top-ups directly support grassroots Community Development projects across Nigeria. 🇳🇬\n` +
+                `──────────────\n` +
+                `💡 *Need cheap data or want to gift a friend too?*\n` +
+                `Just reply *DATA* anytime to check bundles and send gifts in 20 seconds! ⚡`;
+
+              await sessionManager.sendProxyCustomerMessage(order.userId, recipientJid, giftReceiptMsg).catch(err => {
+                logger.warn(`Failed to dispatch gift receipt to recipient ${recipientJid}: ${err.message}`);
+              });
+            }
+
           } catch (dispenseError) {
             // 4. FAILED DISPENSE (Will be picked up by RetryQueue)
             logger.error(`Dispense failed for order ${orderId}: ${dispenseError.message}`);
@@ -1570,6 +1678,7 @@ async function startServer() {
           startStatusPostJob();
           startSubscriptionReminderJob();
           startThursdayPromotionJob();
+          initDailyMerchantReportJob();
           broadcastQueue.start();
 
           // Wire up RetryQueue customer notification callback to Proxy Workers

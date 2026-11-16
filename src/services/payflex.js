@@ -264,7 +264,7 @@ export const ACTIVE_APPROVED_PLANS = {
   },
   'glo_data:G5GB1': {
     name: '5GB',
-    sellPrice: 2000,
+    sellPrice: 1800,
     officialPrice: 2000,
     basePrice: 1380,
     durationCategory: '⚡ *3-Day Plans:*',
@@ -288,7 +288,7 @@ export const ACTIVE_APPROVED_PLANS = {
   },
   'glo_data:G5GB2': {
     name: '5GB',
-    sellPrice: 2000,
+    sellPrice: 1900,
     officialPrice: 2000,
     basePrice: 1580,
     durationCategory: '📅 *7-Day Plans:*',
