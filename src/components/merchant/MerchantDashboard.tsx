@@ -116,26 +116,33 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     setTimeout(() => setCopiedKey(null), 2500);
   };
 
-  // Status Drops Templates
-  const morningDrop = `🌅 Good morning! Low on mobile data today? 🚀\n\n` +
-    `Get ultra-fast, cheap data delivered straight to your line in 30 seconds!\n\n` +
-    `📦 MTN 1GB — ₦850\n` +
-    `📦 Airtel 1GB — ₦400\n` +
-    `📦 Glo 1GB — ₦460\n\n` +
-    `⚡ Message ${brandName} right here with your desired network to recharge!`;
+  // Conversational AI Coach WhatsApp Status Drops (Extracted from 7-Day Auto Status Matrix)
+  const morningDrop = `🌅 Morning Hustle & Good Vibes! 🚀\n\n` +
+    `Don't let finished data pause your calls, work, or morning scroll!\n` +
+    `Fast, reliable data for MTN, Airtel & Glo delivered in 30 seconds.\n\n` +
+    `⚡ From quick daily bundles (₦290) to full monthly packages.\n\n` +
+    `📲 Message ${brandName} right here with your network to top up sharp-sharp!`;
 
-  const afternoonDrop = `⚡ Mid-Day Data Recharge! 🚀\n\n` +
-    `Don't let slow or finished data ruin your afternoon tasks.\n` +
-    `We have instant bundles for MTN, Glo & Airtel.\n\n` +
-    `📲 WhatsApp me with the bundle you need and get credited in seconds!\n` +
+  const communityDrop = `💚 Smart Data That Gives Back 🇳🇬\n\n` +
+    `Did you know? Every time you buy data or pay bills through ${brandName}:\n` +
+    `• You get verified, ultra-cheap data in seconds\n` +
+    `• A portion of every purchase quietly supports grassroots community projects & youth development in underserved local areas!\n\n` +
+    `Fast data that empowers our community. 🏫✨\n` +
+    `📲 Reply to this status anytime with your network & budget to support!`;
+
+  const middayGiftingDrop = `🎁 Need data on your second phone, MiFi, or for a friend? ⚡\n\n` +
+    `You don't need to leave WhatsApp or stress over bank apps.\n` +
+    `Surprise someone or refill your WiFi in seconds:\n\n` +
+    `1️⃣ Send the phone number & network here\n` +
+    `2️⃣ Pick your bundle (Starting from ₦290)\n` +
+    `3️⃣ Instant credit in under 30 seconds!\n\n` +
+    `📲 DM ${brandName} now with the line you want to top up! 🚀`;
+
+  const eveningDrop = `🍿 Movie night, TikTok chill, or catching matches tonight? 🎬\n\n` +
+    `Don't let "0MB remaining" cut your stream right when things get interesting!\n` +
+    `Heavy night bundles & monthly plans ready 24/7 on MTN, Airtel & Glo.\n\n` +
+    `📲 Reply to this status with what you need and stay connected all night! 🔥\n` +
     `— ${brandName}`;
-
-  const eveningDrop = `🌙 Evening Streaming & Night Bundles! 🔥\n\n` +
-    `Wrapping up the day? Catch your favorite shows and feeds without data fear!\n\n` +
-    `📦 MTN 3.2GB (2 Days) — ₦1,000\n` +
-    `📦 Glo 2.5GB (2 Days) — ₦690\n` +
-    `📦 Airtel 2GB (30 Days) — ₦1,200\n\n` +
-    `Reply to this status to top up instantly with ${brandName}! ⚡`;
 
   // Price cards are generated dynamically from live plans in formatPriceCardText()
   // Plan counts for display
@@ -310,39 +317,68 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
-              className="mt-4 p-4 bg-zinc-950 border border-zinc-800 rounded-none text-xs font-mono space-y-2"
+              className="mt-4 p-4 bg-zinc-950 border border-zinc-800 rounded-none text-xs font-mono space-y-3"
             >
-              <p className="text-accent font-bold uppercase tracking-wider">🏦 Central Hub Payment Details</p>
-              <div className="space-y-1 text-zinc-300">
-                <div className="flex justify-between">
+              <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                <p className="text-accent font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <CreditCard size={14} />
+                  <span>Central Hub Payment Details</span>
+                </p>
+                <span className="text-[10px] text-zinc-500 font-bold">INSTANT FLOAT CREDIT</span>
+              </div>
+
+              <div className="space-y-2 text-zinc-300">
+                <div className="flex justify-between items-center">
                   <span className="text-zinc-500">Bank:</span>
                   <span className="font-bold text-white">Wema Bank</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-zinc-500">Account:</span>
+                  <span className="text-zinc-500">Account Number:</span>
                   <div className="flex items-center gap-1.5">
                     <span className="font-bold text-white text-sm">9819092390</span>
                     <button
                       onClick={() => copyToClipboard('9819092390', 'acct')}
-                      className="p-1 hover:text-accent transition-colors"
+                      className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 transition-colors"
                       title="Copy Account Number"
                     >
-                      {copiedKey === 'acct' ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                      {copiedKey === 'acct' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                     </button>
                   </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Name:</span>
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-500">Account Name:</span>
                   <span className="text-zinc-300">Clarion AI - Musty Data</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Narration:</span>
-                  <span className="text-amber-400 font-bold">{user.phoneNumber} topup</span>
+
+                {/* Highlighted Copyable Narration Row */}
+                <div className="flex justify-between items-center p-2.5 bg-amber-500/10 border border-amber-500/30 my-1">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-amber-400 block tracking-wider">
+                      Transfer Narration / Ref:
+                    </span>
+                    <span className="font-bold text-white text-xs">{user.phoneNumber} topup</span>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(`${user.phoneNumber} topup`, 'narration')}
+                    className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'narration' ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                    <span>{copiedKey === 'narration' ? 'COPIED' : 'COPY REF'}</span>
+                  </button>
                 </div>
               </div>
-              <p className="text-[10px] text-zinc-400 pt-1 border-t border-zinc-900">
-                After transfer, send <span className="text-accent font-bold">FUNDED ₦[amount]</span> to MotherBot on WhatsApp.
-              </p>
+
+              {/* Step-by-Step Instructions & Warning */}
+              <div className="p-2.5 bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-300 space-y-1">
+                <p className="text-white font-bold flex items-center gap-1 text-[11px]">
+                  ⚡ <span>How to Top Up Your Float:</span>
+                </p>
+                <p>1️⃣ Transfer desired float (e.g. ₦2,000 for Tier 2) to Wema Bank above.</p>
+                <p className="text-amber-300">
+                  2️⃣ <span className="font-bold underline">IMPORTANT:</span> Paste <span className="text-white font-bold">{user.phoneNumber} topup</span> in bank remarks/narration so your payment matches automatically!
+                </p>
+                <p>3️⃣ After transfer, send <span className="text-accent font-bold">FUNDED ₦[amount]</span> on WhatsApp to notify MotherBot.</p>
+              </div>
             </motion.div>
           )}
         </section>
@@ -365,11 +401,11 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                 <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5 font-mono">
-                      🌅 08:30 AM · Morning Kickoff
+                      🌅 08:30 AM · Morning Hustle
                     </span>
                     <button
                       onClick={() => copyToClipboard(morningDrop, 'drop_morning')}
-                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
                     >
                       {copiedKey === 'drop_morning' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                       <span>{copiedKey === 'drop_morning' ? 'COPIED' : 'COPY'}</span>
@@ -380,22 +416,41 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                   </pre>
                 </div>
 
-                {/* Afternoon Drop */}
-                <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
+                {/* Community Impact Drop (Clean Whitelabel - NO NYSC) */}
+                <div className="p-3 bg-zinc-950/70 border border-emerald-900/40 space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5 font-mono">
-                      ⚡ 01:30 PM · Mid-Day Power Recharge
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 font-mono">
+                      💚 Community Impact · Giving Back
                     </span>
                     <button
-                      onClick={() => copyToClipboard(afternoonDrop, 'drop_afternoon')}
-                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
+                      onClick={() => copyToClipboard(communityDrop, 'drop_community')}
+                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
                     >
-                      {copiedKey === 'drop_afternoon' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                      <span>{copiedKey === 'drop_afternoon' ? 'COPIED' : 'COPY'}</span>
+                      {copiedKey === 'drop_community' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedKey === 'drop_community' ? 'COPIED' : 'COPY'}</span>
                     </button>
                   </div>
                   <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">
-                    {afternoonDrop}
+                    {communityDrop}
+                  </pre>
+                </div>
+
+                {/* Midday Gifting Drop */}
+                <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5 font-mono">
+                      🎁 01:30 PM · Data Gifting & MiFi Refill
+                    </span>
+                    <button
+                      onClick={() => copyToClipboard(middayGiftingDrop, 'drop_midday')}
+                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
+                    >
+                      {copiedKey === 'drop_midday' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedKey === 'drop_midday' ? 'COPIED' : 'COPY'}</span>
+                    </button>
+                  </div>
+                  <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">
+                    {middayGiftingDrop}
                   </pre>
                 </div>
 
@@ -407,7 +462,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     </span>
                     <button
                       onClick={() => copyToClipboard(eveningDrop, 'drop_evening')}
-                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
                     >
                       {copiedKey === 'drop_evening' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                       <span>{copiedKey === 'drop_evening' ? 'COPIED' : 'COPY'}</span>
