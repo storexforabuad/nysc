@@ -467,7 +467,7 @@ export const handleMotherMessage = async (sock, msg) => {
               userDoc = candidate;
               userRef = candidate.ref;
               // Persist the LID on their account so all future lookups are instant
-              await userRef.set({ lidUid: from, phoneJid: candidate.id }, { merge: true }).catch(() => { });
+              await userRef.set({ lidUid: from, phoneJid: candidate.id }, { merge: true }).catch(() => {});
             }
           }
         }
@@ -2442,15 +2442,15 @@ export const handleMotherMessage = async (sock, msg) => {
 
       let promptBody = isFloatUser
         ? `🔥 *TODAY'S WHOLESALE HOT DEAL:*\n` +
-        `⚡ *${netLabel} ${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()}* (At-cost wholesale)\n\n` +
-        `What would you like to send to this number?\n` +
-        `1️⃣ *Send Hot Deal* (${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} instant debit)\n` +
-        `2️⃣ *Choose a data budget* (₦500, ₦1,000, ₦2,000)`
+          `⚡ *${netLabel} ${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()}* (At-cost wholesale)\n\n` +
+          `What would you like to send to this number?\n` +
+          `1️⃣ *Send Hot Deal* (${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} instant debit)\n` +
+          `2️⃣ *Choose a data budget* (₦500, ₦1,000, ₦2,000)`
         : `🔥 *TODAY'S HOT DEAL:*\n` +
-        `⚡ *${netLabel} ${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} only!*\n\n` +
-        `What would you like to send to this number?\n` +
-        `1️⃣ *Send Hot Deal* (${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} only!)\n` +
-        `2️⃣ *Choose a data budget* (₦500, ₦1,000, ₦2,000)`;
+          `⚡ *${netLabel} ${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} only!*\n\n` +
+          `What would you like to send to this number?\n` +
+          `1️⃣ *Send Hot Deal* (${hotPlan?.name || '1GB'} — ₦${hotCost.toLocaleString()} only!)\n` +
+          `2️⃣ *Choose a data budget* (₦500, ₦1,000, ₦2,000)`;
 
       const contactText = `📲 *Contact Received:* ${cleanPhone}\n` +
         `📶 *Network Detected:* ${netLabel}\n` +
@@ -2499,7 +2499,7 @@ export const handleMotherMessage = async (sock, msg) => {
               parentId: SUPER_PARENT_JID,
               mentorId: dec.suggesterJid,
               delegatedTo: dec.suggesterJid
-            }, { merge: true }).catch(() => { });
+            }, { merge: true }).catch(() => {});
           }
 
           // Register delegation on ProxyBot's pending map
@@ -2662,7 +2662,7 @@ export const handleMotherMessage = async (sock, msg) => {
           await saveUser({ ...userData, state: STATES.COMPLETED, activeContact: null });
           return sock.sendMessage(from, { text: '❌ Action cancelled.' });
         }
-
+        
         const serialNum = parseInt(cleanCommand, 10);
         let selectedPlan = null;
         if (!isNaN(serialNum)) {
@@ -2722,7 +2722,7 @@ export const handleMotherMessage = async (sock, msg) => {
           try {
             const recipientPhone = userData.activeContact.split('@')[0];
             const planCode = selectedPlan.code || selectedPlan.serial.toString();
-
+            
             // Fulfill through TelecomDispatcher for full failover & tracking
             const vendResult = await telecomDispatcher.vendData(planCode, recipientPhone, userData.uid || from);
             if (!vendResult.success) {
@@ -4611,7 +4611,7 @@ export const handleMotherMessage = async (sock, msg) => {
                 totalSales: (userData.totalSales || 0) + 1,
                 totalEarnings: (userData.totalEarnings || 0) + netProfit,
                 lastSaleAt: new Date().toISOString()
-              }, { merge: true }).catch(() => { });
+              }, { merge: true }).catch(() => {});
             }
 
             // Dual receipt: Send Customer Delivery Notice
@@ -4626,7 +4626,7 @@ export const handleMotherMessage = async (sock, msg) => {
               `──────────────\n` +
               `💡 Need more cheap data? Save this contact and WhatsApp anytime! ⚡`;
 
-            sock.sendMessage(recipientJid, { text: custNotice }).catch(() => { });
+            sock.sendMessage(recipientJid, { text: custNotice }).catch(() => {});
 
             // Send Merchant Profit Receipt
             const newBal = (balance - finalDebit).toFixed(2);
@@ -4650,7 +4650,7 @@ export const handleMotherMessage = async (sock, msg) => {
                 from, finalDebit,
                 `Reversal: dispense failed for ${selectedPlan.name} to ${targetPhone}`,
                 { code: selectedPlan.code, originalDebitId: debitRecordId, reason: err.message }
-              ).catch(() => { });
+              ).catch(() => {});
             }
             return sock.sendMessage(from, {
               text: `❌ *Data vending failed.*\n${err.message}\n\n💳 Wallet refunded. Balance restored to ₦${balance.toFixed(2)}.`
