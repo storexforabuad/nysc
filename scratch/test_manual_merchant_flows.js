@@ -36,10 +36,10 @@ describe('Manual Merchant & Direct AI Coach Flow Tests', () => {
     assert.strictEqual(wsTier1.multiplier, '1X');
     assert.ok(wsTier1.discountedPrice <= mtn1gb.sellPrice);
 
-    // Tier 4 (₦6,000+ wallet balance)
-    const wsTier4 = wallet.getWholesalePrice(mtn1gb, 6000);
-    assert.strictEqual(wsTier4.multiplier, '4X');
-    assert.ok(wsTier4.discountedPrice < wsTier1.discountedPrice, 'Tier 4 price must be cheaper than Tier 1');
+    // Tier 6 (₦10,000+ wallet balance)
+    const wsTier6 = wallet.getWholesalePrice(mtn1gb, 10000);
+    assert.strictEqual(wsTier6.multiplier, '4X');
+    assert.ok(wsTier6.discountedPrice < wsTier1.discountedPrice, 'Tier 6 VIP price must be cheaper than Tier 1');
   });
 
   it('3. 2-Message Price Card & Budget Queries regex', () => {
@@ -193,17 +193,17 @@ describe('Manual Merchant & Direct AI Coach Flow Tests', () => {
     assert.strictEqual(t1.level, 1);
     assert.strictEqual(t1.multiplier, '1X');
 
-    // Tier 2: ₦2,500
+    // Tier 2: ₦2,500 (1.5X)
     const t2 = wallet.getMultiplierTier(2500);
     assert.strictEqual(t2.level, 2);
-    assert.strictEqual(t2.multiplier, '2X');
+    assert.strictEqual(t2.multiplier, '1.5X');
     assert.ok(t2.neededToNext > 0);
 
-    // Tier 4 MAX: ₦7,500
-    const t4 = wallet.getMultiplierTier(7500);
-    assert.strictEqual(t4.level, 4);
-    assert.strictEqual(t4.multiplier, '4X');
-    assert.strictEqual(t4.neededToNext, 0);
+    // Tier 6 MAX VIP: ₦10,500 (4X)
+    const t6 = wallet.getMultiplierTier(10500);
+    assert.strictEqual(t6.level, 6);
+    assert.strictEqual(t6.multiplier, '4X');
+    assert.strictEqual(t6.neededToNext, 0);
   });
 
 });

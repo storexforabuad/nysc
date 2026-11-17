@@ -19,6 +19,9 @@ const { user, baileysVersion, sessionsDir, pairingMode, isPairingCode, motherBot
 if (motherBotJid) user.motherBotJid = motherBotJid;
 if (motherBotLid) user.motherBotLid = motherBotLid;
 
+// Global socket reference for IPC message handling (prevents duplicate listeners on reconnect)
+let currentSock = null;
+
 async function startWorker(isInitialBoot = true) {
     const sessionKey = user.phoneJid || user.uid;
     const authPath = path.join(sessionsDir, `proxy_${sessionKey}`);
@@ -48,6 +51,7 @@ async function startWorker(isInitialBoot = true) {
     }
 
     const sock = socketFunction(config);
+    currentSock = sock;
     let hasEverConnected = false;
     let hasRunHistorySync = false;
 
@@ -131,8 +135,8 @@ async function startWorker(isInitialBoot = true) {
                             phone: cleanPhone,
                             pushName,
                             lastSeen: new Date().toISOString()
-                        }, { merge: true }).catch(() => {});
-                    } catch (e) {}
+                        }, { merge: true }).catch(() => { });
+                    } catch (e) { }
                 }
             }
             await handleProxyMessage(sock, msg, user);
@@ -244,9 +248,21 @@ async function startWorker(isInitialBoot = true) {
             logger.warn(`Failed to sync WhatsApp contacts for ${user.uid}: ${e.message}`);
         }
     });
+}
 
-    // Handle incoming IPC messages (like broadcast jobs)
+// ── Top-Level IPC Message Dispatcher (Registered ONCE to prevent listener leaks on socket reconnect) ──
+if (parentPort) {
+    if (typeof parentPort.setMaxListeners === 'function') {
+        parentPort.setMaxListeners(50);
+    }
+
     parentPort.on('message', async (msg) => {
+        const sock = currentSock;
+        if (!sock && msg.type !== 'update_user') {
+            logger.warn(`[WORKER] Received IPC message '${msg.type}' but currentSock is not ready.`);
+            return;
+        }
+
         if (msg.type === 'broadcast') {
             const { targetJid, detectedNetwork, finalMessage, imagePaths } = msg;
             const randomDelay = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.floor(Math.random() * (maxMs - minMs))));
@@ -382,7 +398,7 @@ async function startWorker(isInitialBoot = true) {
             try {
                 const storeName = user.brandName || user.franchiseName || ('Clarion - ' + (user.verifiedName || user.name || 'Store'));
                 const result = await contactBackupService.executeBackup(user.uid, sock, storeName);
-                
+
                 // If requesterJid provided, dispatch .vcf document on WhatsApp
                 if (requesterJid && result.vcf) {
                     const cleanPhone = (user.phoneNumber || user.uid).replace(/\D/g, '');
@@ -488,11 +504,11 @@ async function getStatusRecipients(user, sock = null) {
     if (userPhoneJid) recipients.delete(userPhoneJid);
 
     // Filter strictly to valid @s.whatsapp.net contacts that are NOT group IDs
-    const finalRecipients = Array.from(recipients).filter(j => 
-        typeof j === 'string' && 
-        j.endsWith('@s.whatsapp.net') && 
-        !j.startsWith('120363') && 
-        j.split('@')[0].length >= 10 && 
+    const finalRecipients = Array.from(recipients).filter(j =>
+        typeof j === 'string' &&
+        j.endsWith('@s.whatsapp.net') &&
+        !j.startsWith('120363') &&
+        j.split('@')[0].length >= 10 &&
         j.split('@')[0].length <= 14
     );
 

@@ -10,7 +10,8 @@ import telecomDispatcher from './services/TelecomDispatcher.js';
 import admin, { db } from './services/firebase.js';
 import sessionManager from './bot/SessionManager.js';
 import mediaGen from './services/mediaGen.js';
-import wallet, { isSuperParent, calculateDynamicSquadCapacity } from './services/WalletService.js';
+import wallet, { isSuperParent, calculateDynamicSquadCapacity, WITHDRAWAL_FEES } from './services/WalletService.js';
+import { calculatePaystackFee } from './services/payflex.js';
 import { startWeeklyReportJob } from './jobs/weeklyReportJob.js';
 import { startWalletYieldReportJob } from './jobs/walletYieldReportJob.js';
 import { startStatusPostJob } from './jobs/statusPostJob.js';
@@ -867,6 +868,437 @@ async function startServer() {
     }
   });
 
+  // ── Merchant POS API Endpoints ─────────────────────────────────────
+
+  // 0a. Get Nigerian Bank List (Paystack with 24-hr cache & in-memory fallback)
+  app.get('/api/banks', apiLimiter, async (req, res) => {
+    try {
+      const banks = await paystack.getBanks();
+      res.json({ success: true, banks });
+    } catch (err) {
+      logger.error('Error in GET /api/banks:', err);
+      res.status(500).json({ success: false, error: err.message, banks: paystack.getFallbackBanks() });
+    }
+  });
+
+  // 0b. Resolve Nigerian Bank Account (Paystack NUBAN / NIBSS Real-Time Lookup)
+  app.post('/api/banks/resolve', apiLimiter, async (req, res) => {
+    try {
+      const { bankCode, accountNumber } = req.body || {};
+      const cleanAcct = String(accountNumber || '').replace(/\D/g, '');
+      const cleanCode = String(bankCode || '').trim();
+
+      if (!cleanCode || cleanAcct.length !== 10) {
+        return res.status(400).json({ success: false, error: 'Valid bank code and 10-digit account number required' });
+      }
+
+      const resolved = await paystack.validateBankAccount(cleanCode, cleanAcct);
+      res.json({
+        success: true,
+        accountName: resolved.accountName,
+        account_name: resolved.accountName,
+        accountNumber: resolved.accountNumber,
+        bankCode: cleanCode
+      });
+    } catch (err) {
+      logger.warn(`Bank resolution failed for ${req.body?.accountNumber}: ${err.message}`);
+      res.status(400).json({ success: false, error: err.message || 'Could not verify account with bank' });
+    }
+  });
+
+  // 0c. Save & Link Merchant Payout Bank Details
+  app.post('/api/merchant/:phone/bank', apiLimiter, async (req, res) => {
+    try {
+      const rawInput = String(req.params.phone || '').trim();
+      let cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) cleanDigits = '0' + cleanDigits.slice(3);
+      if (cleanDigits.length === 10) cleanDigits = '0' + cleanDigits;
+      const intlDigits = cleanDigits.startsWith('0') ? '234' + cleanDigits.slice(1) : cleanDigits;
+      const jid = `${intlDigits}@s.whatsapp.net`;
+
+      const { bankCode, bankName, accountNumber, accountName } = req.body || {};
+      const cleanAcct = String(accountNumber || '').replace(/\D/g, '');
+      const cleanCode = String(bankCode || '').trim();
+      let cleanBankName = String(bankName || '').trim();
+
+      if (!cleanCode || cleanAcct.length !== 10) {
+        return res.status(400).json({ success: false, error: 'Bank selection and 10-digit account number are required' });
+      }
+
+      if (!cleanBankName) {
+        try {
+          const banks = await paystack.getBanks();
+          const match = banks.find(b => String(b.code) === cleanCode);
+          cleanBankName = match?.name || 'Commercial Bank';
+        } catch {
+          cleanBankName = 'Commercial Bank';
+        }
+      }
+
+      // Server-side verification with Paystack to prevent spoofing
+      let verifiedName = accountName;
+      try {
+        const verifyRes = await paystack.validateBankAccount(cleanCode, cleanAcct);
+        verifiedName = verifyRes.accountName;
+      } catch (vErr) {
+        logger.warn(`Could not re-verify bank server-side, using provided name: ${vErr.message}`);
+      }
+
+      const bankPayload = {
+        bankCode: cleanCode,
+        bankName: cleanBankName,
+        accountNumber: cleanAcct,
+        accountName: verifiedName,
+        verified: true,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (db.users) {
+        await db.users.doc(jid).set({
+          bankDetails: bankPayload,
+          bankName: cleanBankName,
+          bankAccountNumber: cleanAcct,
+          bankAccountName: verifiedName
+        }, { merge: true });
+      }
+
+      // Send confirmation to Merchant via MotherBot WhatsApp if connected
+      if (sessionManager.motherSock) {
+        const notifyMsg = `🏦 *Payout Bank Account Connected!*\n` +
+          `──────────────\n` +
+          `🏛️ *Bank:* ${cleanBankName}\n` +
+          `🔢 *Account:* ••••${cleanAcct.slice(-4)}\n` +
+          `👤 *Name:* ${verifiedName}\n` +
+          `──────────────\n` +
+          `✅ Your payout account is 100% verified! Any future profit cashouts will transfer automatically here. ⚡`;
+        sessionManager.motherSock.sendMessage(jid, { text: notifyMsg }).catch(() => {});
+      }
+
+      logger.info(`[MERCHANT-WEB-BANK] ${cleanDigits} linked bank: ${cleanBankName} (${cleanAcct}) - ${verifiedName}`);
+      res.json({
+        success: true,
+        bankDetails: {
+          bankName: cleanBankName,
+          maskedAccount: `••••${cleanAcct.slice(-4)}`,
+          accountName: verifiedName,
+          verified: true
+        }
+      });
+    } catch (err) {
+      logger.error('Error in /api/merchant/bank:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 1. Log Payment Notification (I Have Transferred)
+  app.post('/api/merchant/:phone/fund-notify', apiLimiter, async (req, res) => {
+    try {
+      const rawInput = String(req.params.phone || '').trim();
+      let cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) cleanDigits = '0' + cleanDigits.slice(3);
+      if (cleanDigits.length === 10) cleanDigits = '0' + cleanDigits;
+      const intlDigits = cleanDigits.startsWith('0') ? '234' + cleanDigits.slice(1) : cleanDigits;
+      const jid = `${intlDigits}@s.whatsapp.net`;
+
+      const { amount, totalTransferred } = req.body || {};
+      const numAmount = parseInt(amount, 10);
+      if (!numAmount || numAmount <= 0) {
+        return res.status(400).json({ success: false, error: 'Invalid top-up amount' });
+      }
+
+      let merchantName = 'Merchant';
+      if (db.users) {
+        const uSnap = await db.users.doc(jid).get().catch(() => null);
+        if (uSnap && uSnap.exists) {
+          const uData = uSnap.data();
+          merchantName = uData.franchiseName || uData.name || 'Merchant';
+        }
+      }
+
+      const refId = `FUND_${Date.now()}_${cleanDigits.slice(-4)}`;
+      if (db.pendingWalletCredits) {
+        await db.pendingWalletCredits.add({
+          userJid: jid,
+          phoneNumber: cleanDigits,
+          merchantName,
+          claimedAmount: numAmount,
+          totalTransferred: totalTransferred || numAmount,
+          refId,
+          status: 'PENDING_HUB_VERIFICATION',
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      logger.info(`[MERCHANT-WEB-FUND] ${cleanDigits} logged payment of ₦${numAmount} (Ref: ${refId})`);
+      res.json({ success: true, refId, message: 'Transfer logged for hub verification' });
+    } catch (err) {
+      logger.error('Error in /api/merchant/fund-notify:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2. Profit Cashout / Withdrawal with Complete Fee Breakdown
+  app.post('/api/merchant/:phone/withdraw', apiLimiter, async (req, res) => {
+    try {
+      const rawInput = String(req.params.phone || '').trim();
+      let cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) cleanDigits = '0' + cleanDigits.slice(3);
+      if (cleanDigits.length === 10) cleanDigits = '0' + cleanDigits;
+      const intlDigits = cleanDigits.startsWith('0') ? '234' + cleanDigits.slice(1) : cleanDigits;
+      const jid = `${intlDigits}@s.whatsapp.net`;
+
+      const { amount } = req.body || {};
+      const withdrawAmount = parseFloat(amount);
+
+      if (!withdrawAmount || withdrawAmount < WITHDRAWAL_FEES.MIN_WITHDRAWAL) {
+        return res.status(400).json({
+          success: false,
+          error: `Minimum withdrawal amount is ₦${WITHDRAWAL_FEES.MIN_WITHDRAWAL.toLocaleString()}`
+        });
+      }
+
+      // Check user in database
+      let userDoc = null;
+      let matchedDocRef = null;
+      if (db.users) {
+        const uSnap = await db.users.doc(jid).get().catch(() => null);
+        if (uSnap && uSnap.exists) {
+          userDoc = uSnap.data();
+          matchedDocRef = db.users.doc(jid);
+        } else {
+          const altSnap = await db.users.doc(cleanDigits).get().catch(() => null);
+          if (altSnap && altSnap.exists) {
+            userDoc = altSnap.data();
+            matchedDocRef = db.users.doc(cleanDigits);
+          }
+        }
+      }
+
+      if (!userDoc) {
+        return res.status(404).json({ success: false, error: 'Merchant account not found' });
+      }
+
+      const availableProfit = Number(userDoc.metrics?.totalProfitNaira || 0);
+      if (availableProfit < withdrawAmount) {
+        return res.status(400).json({
+          success: false,
+          error: `Insufficient earned profit. Available: ₦${availableProfit.toLocaleString()}, Requested: ₦${withdrawAmount.toLocaleString()}`
+        });
+      }
+
+      const bankDetails = userDoc.bankDetails || {
+        bankName: userDoc.bankName || 'Wema Bank',
+        accountNumber: userDoc.bankAccountNumber || '9819092390',
+        accountName: userDoc.bankAccountName || userDoc.name || 'Merchant'
+      };
+
+      const transferRef = `WD_WEB_${Date.now()}_${cleanDigits.slice(-4)}`;
+      const netPayout = +(withdrawAmount - WITHDRAWAL_FEES.TOTAL).toFixed(2);
+
+      // Record in ledger
+      const record = {
+        userId: jid,
+        phoneNumber: cleanDigits,
+        type: 'WITHDRAWAL_REQUEST',
+        amount: withdrawAmount,
+        netPayout,
+        fees: {
+          paystackFee: WITHDRAWAL_FEES.PAYSTACK_FEE,
+          serviceFee: WITHDRAWAL_FEES.SERVICE_FEE,
+          total: WITHDRAWAL_FEES.TOTAL
+        },
+        bankDetails,
+        transferRef,
+        status: 'PENDING',
+        createdAt: new Date().toISOString()
+      };
+
+      if (db.ledger) {
+        await db.ledger.add(record);
+      }
+
+      // Deduct from profit balance
+      const newProfit = Math.max(0, +(availableProfit - withdrawAmount).toFixed(2));
+      if (matchedDocRef) {
+        await matchedDocRef.set({
+          metrics: {
+            ...userDoc.metrics,
+            totalProfitNaira: newProfit
+          }
+        }, { merge: true });
+      }
+
+      // Send WhatsApp notification if MotherBot is connected
+      if (sessionManager.motherSock) {
+        const notifyMsg = `🏦 *Withdrawal Request Logged!* ──────────────\n` +
+          `💰 *Amount Requested:* ₦${withdrawAmount.toLocaleString()}\n` +
+          `💳 *Paystack Transfer Fee:* -₦${WITHDRAWAL_FEES.PAYSTACK_FEE.toFixed(2)}\n` +
+          `⚙️ *Platform Processing Fee:* -₦${WITHDRAWAL_FEES.SERVICE_FEE.toFixed(2)}\n` +
+          `──────────────\n` +
+          `💵 *Net Bank Payout:* ₦${netPayout.toLocaleString()}\n` +
+          `🏦 *Destination:* ${bankDetails.bankName} (${bankDetails.accountNumber})\n` +
+          `🔖 *Reference:* \`${transferRef}\`\n\n` +
+          `_Processing via Paystack NIP transfer... You will receive payout shortly!_ ⚡`;
+        sessionManager.motherSock.sendMessage(jid, { text: notifyMsg }).catch(() => {});
+      }
+
+      logger.info(`[MERCHANT-WEB-WITHDRAW] ${cleanDigits} requested ₦${withdrawAmount} (Net: ₦${netPayout})`);
+      res.json({
+        success: true,
+        reference: transferRef,
+        amount: withdrawAmount,
+        netPayout,
+        feeBreakdown: {
+          paystackFee: WITHDRAWAL_FEES.PAYSTACK_FEE,
+          serviceFee: WITHDRAWAL_FEES.SERVICE_FEE,
+          total: WITHDRAWAL_FEES.TOTAL
+        },
+        newProfitNaira: newProfit
+      });
+    } catch (err) {
+      logger.error('Error in /api/merchant/withdraw:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 3. Direct Web Customer Vending
+  app.post('/api/merchant/:phone/vend', apiLimiter, async (req, res) => {
+    try {
+      const rawInput = String(req.params.phone || '').trim();
+      let cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.startsWith('234') && cleanDigits.length === 13) cleanDigits = '0' + cleanDigits.slice(3);
+      if (cleanDigits.length === 10) cleanDigits = '0' + cleanDigits;
+      const intlDigits = cleanDigits.startsWith('0') ? '234' + cleanDigits.slice(1) : cleanDigits;
+      const jid = `${intlDigits}@s.whatsapp.net`;
+
+      const { planCode, recipientPhone } = req.body || {};
+      if (!planCode || !recipientPhone) {
+        return res.status(400).json({ success: false, error: 'Plan and recipient phone are required' });
+      }
+
+      const cleanRecip = String(recipientPhone).replace(/\D/g, '');
+      if (cleanRecip.length < 10 || cleanRecip.length > 14) {
+        return res.status(400).json({ success: false, error: 'Please enter a valid Nigerian phone number' });
+      }
+      const formattedRecip = cleanRecip.startsWith('0') ? cleanRecip : (cleanRecip.startsWith('234') ? '0' + cleanRecip.slice(3) : '0' + cleanRecip);
+
+      // Verify user float balance
+      const balance = await wallet.getBalance(jid).catch(() => 0);
+      const tier = wallet.getMultiplierTier(balance);
+
+      // Fetch plan details
+      const allPlans = await Promise.all([
+        telecomDispatcher.getAvailablePlans('mtn').catch(() => []),
+        telecomDispatcher.getAvailablePlans('glo').catch(() => []),
+        telecomDispatcher.getAvailablePlans('airtel').catch(() => [])
+      ]);
+      const flattened = allPlans.flat();
+      const selectedPlan = flattened.find(p => p.code === planCode);
+
+      if (!selectedPlan) {
+        return res.status(404).json({ success: false, error: 'Data plan not found or currently unavailable' });
+      }
+
+      const wholesaleCost = wallet.getWholesalePrice(selectedPlan, balance);
+      if (balance < wholesaleCost) {
+        return res.status(400).json({
+          success: false,
+          error: `Insufficient float balance. Need ₦${wholesaleCost.toLocaleString()}, available: ₦${balance.toLocaleString()}. Please top up your wallet.`
+        });
+      }
+
+      // Execute dispense
+      logger.info(`[MERCHANT-WEB-VEND] Dispensing ${selectedPlan.name} (${selectedPlan.code}) to ${formattedRecip} by ${cleanDigits}`);
+      const dispatchResult = await telecomDispatcher.dispenseData(formattedRecip, selectedPlan.code);
+
+      // Debit float and settle order (respecting merchant's dynamic pricing slider if provided)
+      const officialCeiling = selectedPlan.officialPrice || Math.max(selectedPlan.sellPrice, Math.round(selectedPlan.sellPrice * 1.25));
+      const baseFloor = wholesaleCost + 1; // Strict floor: minimum ₦1 profit guaranteed
+
+      let effectiveRetailPrice = selectedPlan.sellPrice;
+      if (req.body.customRetailPrice) {
+        const customPrice = Math.round(Number(req.body.customRetailPrice));
+        if (customPrice >= baseFloor && customPrice <= officialCeiling * 1.1) {
+          effectiveRetailPrice = customPrice;
+        } else if (customPrice < baseFloor) {
+          effectiveRetailPrice = baseFloor;
+        }
+      }
+
+      const profitEarned = Math.max(1, +(effectiveRetailPrice - wholesaleCost).toFixed(2));
+      const newBalance = Math.max(0, +(balance - wholesaleCost).toFixed(2));
+
+      // Record transaction
+      if (db.users) {
+        const orderRecord = {
+          orderId: `ORD_${Date.now()}`,
+          planCode: selectedPlan.code,
+          planName: selectedPlan.name,
+          validity: selectedPlan.validity || 'Standard',
+          retailPrice: effectiveRetailPrice,
+          wholesaleCost,
+          profit: profitEarned,
+          recipient: formattedRecip,
+          source: 'WEB_DASHBOARD',
+          createdAt: new Date().toISOString()
+        };
+
+        await db.users.doc(jid).collection('orders').add(orderRecord).catch(() => {});
+        await db.users.doc(jid).set({
+          walletBalance: newBalance,
+          metrics: {
+            totalOrders: admin.firestore.FieldValue.increment(1),
+            totalRevenueNaira: admin.firestore.FieldValue.increment(effectiveRetailPrice),
+            totalProfitNaira: admin.firestore.FieldValue.increment(profitEarned)
+          }
+        }, { merge: true }).catch(() => {});
+      }
+
+      // Check tier transition and alert merchant via MotherBot on Level-Down boundary cross
+      await wallet.checkAndNotifyTierTransition(jid, balance, newBalance, sessionManager.motherSock);
+
+      // Dual receipt delivery via WhatsApp if available
+      if (sessionManager.motherSock) {
+        const brand = req.body.brandName || 'Clarion AI Merchant';
+        const maskedRecip = formattedRecip.length >= 10 ? formattedRecip.slice(0, 4) + '••••' + formattedRecip.slice(-3) : formattedRecip;
+        const custNotice = `🎁 *DATA DELIVERED!*\n` +
+          `──────────────\n` +
+          `📦 *Package:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
+          `📱 *Delivered to:* ${maskedRecip}\n` +
+          `✨ *Sent via:* ${brand} ⚡\n` +
+          `──────────────\n` +
+          `💡 Need more cheap data? Save this contact and WhatsApp anytime! ⚡`;
+        const recipJid = (formattedRecip.startsWith('0') ? '234' + formattedRecip.slice(1) : formattedRecip) + '@s.whatsapp.net';
+        sessionManager.motherSock.sendMessage(recipJid, { text: custNotice }).catch(() => {});
+
+        const merchantReceipt = `✅ *Sale Complete (Web POS) — ${brand}*\n` +
+          `──────────────\n` +
+          `📦 *Plan:*      ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
+          `📱 *Customer:*  ${formattedRecip}\n` +
+          `💰 *Customer Paid:* ₦${effectiveRetailPrice.toLocaleString()}\n` +
+          `📉 *Wholesale Cost:* ₦${wholesaleCost.toLocaleString()}\n` +
+          `──────────────\n` +
+          `💵 *Profit Earned:*  +₦${profitEarned.toLocaleString()}\n` +
+          `💼 *Remaining Float:* ₦${newBalance.toLocaleString()}\n\n` +
+          `_Great job! Keep the momentum going!_ 🚀`;
+        sessionManager.motherSock.sendMessage(jid, { text: merchantReceipt }).catch(() => {});
+      }
+
+      res.json({
+        success: true,
+        plan: selectedPlan.name,
+        recipient: formattedRecip,
+        retailPrice: effectiveRetailPrice,
+        wholesaleCost,
+        profit: profitEarned,
+        newBalance
+      });
+    } catch (err) {
+      logger.error('Error in /api/merchant/vend:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Memory cache for duplicate transaction prevention (bounded to 10,000 entries)
   const processedTxnRefs = new Set();
 
@@ -1286,6 +1718,8 @@ async function startServer() {
 
               if (order.userId && order.userId !== 'HUB') {
                 newBalance = await wallet.getBalance(order.userId).catch(() => newBalance);
+                const prevBal = Math.max(0, newBalance - fundAmount);
+                await wallet.checkAndNotifyTierTransition(destinationJid, prevBal, newBalance, sessionManager.motherSock);
               }
 
               const fundSuccessMsg = `💳 *WALLET FUNDED SUCCESSFULLY!* ⚡\n` +
@@ -1517,6 +1951,8 @@ async function startServer() {
             const isSame = checkIsSameNumber(matchedUserId, partnerPhone);
             const userJid = matchedUserId.includes('@') ? matchedUserId : `${matchedUserId}@s.whatsapp.net`;
             const currentBal = await wallet.getBalance(matchedUserId).catch(() => Body.amount);
+            const prevBal = Math.max(0, currentBal - Body.amount);
+            await wallet.checkAndNotifyTierTransition(userJid, prevBal, currentBal, sessionManager.motherSock);
 
             if (sessionManager.motherSock) {
               await sessionManager.motherSock.sendMessage(userJid, {

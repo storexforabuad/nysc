@@ -115,6 +115,13 @@ class PaystackService {
     }
 
     /**
+     * Alias for validateBankAccount for NUBAN account name resolution.
+     */
+    async resolveAccount(bankCode, accountNumber) {
+        return this.validateBankAccount(bankCode, accountNumber);
+    }
+
+    /**
      * Creates or assigns a Dedicated Virtual Account (DVA) for a customer/franchise.
      * @param {string} brandName - e.g. "Clarion AI - Fatima Telecom"
      * @param {string} customerEmail - Customer email

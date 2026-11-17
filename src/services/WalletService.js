@@ -23,12 +23,14 @@ export const WITHDRAWAL_FEES = {
     BANK_UPDATE_FEE: 100.00 // Fee debited from wallet to update locked bank details
 };
 
-// Progressive Multiplier Tiers (1X = 10% base unit)
+// Progressive Multiplier Tiers (1X to 4X VIP, up to ₦10,000 Float)
 export const MULTIPLIER_TIERS = {
-    TIER_1: { level: 1, multiplier: '1X', minBalance: 0, rate: 0.10, superParentRate: 0.80, name: 'Tier 1 (1X Base)' },
-    TIER_2: { level: 2, multiplier: '2X', minBalance: 2000, rate: 0.20, superParentRate: 0.70, name: 'Tier 2 (2X Double Power)' },
-    TIER_3: { level: 3, multiplier: '3X', minBalance: 4000, rate: 0.30, superParentRate: 0.60, name: 'Tier 3 (3X Triple Power)' },
-    TIER_4: { level: 4, multiplier: '4X', minBalance: 6000, rate: 0.40, superParentRate: 0.50, name: 'Tier 4 (4X Max Power)' }
+    TIER_1: { level: 1, multiplier: '1X',   minBalance: 0,     rate: 0.10, superParentRate: 0.80, name: 'Tier 1 (1X Base)' },
+    TIER_2: { level: 2, multiplier: '1.5X', minBalance: 2000,  rate: 0.15, superParentRate: 0.75, name: 'Tier 2 (1.5X Power)' },
+    TIER_3: { level: 3, multiplier: '2X',   minBalance: 4000,  rate: 0.20, superParentRate: 0.70, name: 'Tier 3 (2X Double Power)' },
+    TIER_4: { level: 4, multiplier: '2.5X', minBalance: 6000,  rate: 0.25, superParentRate: 0.65, name: 'Tier 4 (2.5X Power)' },
+    TIER_5: { level: 5, multiplier: '3X',   minBalance: 8000,  rate: 0.30, superParentRate: 0.60, name: 'Tier 5 (3X Triple Power)' },
+    TIER_6: { level: 6, multiplier: '4X',   minBalance: 10000, rate: 0.40, superParentRate: 0.50, name: 'Tier 6 (4X MAX VIP)' }
 };
 
 /**
@@ -36,14 +38,42 @@ export const MULTIPLIER_TIERS = {
  */
 export function getMultiplierTier(walletBalance) {
     const w = Number(walletBalance) || 0;
-    if (w >= MULTIPLIER_TIERS.TIER_4.minBalance) {
+    if (w >= MULTIPLIER_TIERS.TIER_6.minBalance) {
         return {
-            ...MULTIPLIER_TIERS.TIER_4,
+            ...MULTIPLIER_TIERS.TIER_6,
             currentBalance: w,
             nextThreshold: null,
             neededToNext: 0,
             neededForNext: 0,
             progressPercent: 100
+        };
+    }
+    if (w >= MULTIPLIER_TIERS.TIER_5.minBalance) {
+        const next = MULTIPLIER_TIERS.TIER_6.minBalance;
+        const span = next - MULTIPLIER_TIERS.TIER_5.minBalance;
+        const prog = Math.min(100, Math.round(((w - MULTIPLIER_TIERS.TIER_5.minBalance) / span) * 100));
+        const needed = +(next - w).toFixed(2);
+        return {
+            ...MULTIPLIER_TIERS.TIER_5,
+            currentBalance: w,
+            nextThreshold: next,
+            neededToNext: needed,
+            neededForNext: needed,
+            progressPercent: prog
+        };
+    }
+    if (w >= MULTIPLIER_TIERS.TIER_4.minBalance) {
+        const next = MULTIPLIER_TIERS.TIER_5.minBalance;
+        const span = next - MULTIPLIER_TIERS.TIER_4.minBalance;
+        const prog = Math.min(100, Math.round(((w - MULTIPLIER_TIERS.TIER_4.minBalance) / span) * 100));
+        const needed = +(next - w).toFixed(2);
+        return {
+            ...MULTIPLIER_TIERS.TIER_4,
+            currentBalance: w,
+            nextThreshold: next,
+            neededToNext: needed,
+            neededForNext: needed,
+            progressPercent: prog
         };
     }
     if (w >= MULTIPLIER_TIERS.TIER_3.minBalance) {
@@ -286,11 +316,65 @@ export function getImpactLevel(totalCdsDonated) {
     };
 }
 
+/**
+ * Compares old and new float balances, detecting when a merchant crosses a ₦2,000 tier boundary.
+ * Sends proactive WhatsApp celebration (Level-Up) or recovery advice (Level-Down) via MotherBot.
+ */
+export async function checkAndNotifyTierTransition(userId, oldBalance, newBalance, sock) {
+    if (!sock || !userId) return null;
+    const oldTier = getMultiplierTier(oldBalance);
+    const newTier = getMultiplierTier(newBalance);
+
+    if (newTier.level === oldTier.level) {
+        return null;
+    }
+
+    const cleanUser = userId.includes('@') ? userId : `${userId}@s.whatsapp.net`;
+
+    if (newTier.level > oldTier.level) {
+        // LEVEL UP!
+        const msg = `🚀 *POWER LEVEL UP! [${newTier.multiplier}]* ──────────────\n` +
+            `🎉 Congratulations! Your wallet float reached *₦${Number(newBalance).toLocaleString()}*.\n` +
+            `⚡ *New Status:* ${newTier.name} (${newTier.multiplier})\n` +
+            `📈 *Wholesale Profit Margin:* ${Math.round(newTier.rate * 100)}%\n` +
+            `──────────────\n` +
+            `You now purchase all 40 data plans at higher discounts and pocket maximum margins per dispense! 💰\n\n` +
+            (newTier.nextThreshold 
+                ? `👉 Maintain or top up *₦${newTier.neededToNext.toLocaleString()}* more to unlock *Tier ${newTier.level + 1}*!` 
+                : `🏆 *YOU ARE AT MAXIMUM VIP TIER! Enjoy 40% wholesale discount dominance!* 🔥`);
+        try {
+            await sock.sendMessage(cleanUser, { text: msg });
+            logger.info(`[TIER_ALERT] Level up notification sent to ${userId}: ${oldTier.multiplier} -> ${newTier.multiplier}`);
+        } catch (e) {
+            logger.warn(`[TIER_ALERT] Failed to send level up alert to ${userId}:`, e.message);
+        }
+        return { type: 'LEVEL_UP', oldTier, newTier };
+    } else if (newTier.level < oldTier.level) {
+        // LEVEL DOWN
+        const nextNeeded = (oldTier.minBalance - newBalance > 0) ? (oldTier.minBalance - newBalance) : newTier.neededToNext;
+        const msg = `⚠️ *TIER DOWNGRADE NOTICE [${newTier.multiplier}]* ──────────────\n` +
+            `Your wallet float is now *₦${Number(newBalance).toLocaleString()}*.\n` +
+            `📉 You have dropped to *${newTier.name}* (${newTier.multiplier} Wholesale Margin).\n` +
+            `──────────────\n` +
+            `💡 *Don't lose your competitive edge!* Top up *₦${Number(nextNeeded).toLocaleString()}* to restore *${oldTier.name}* and maximize your profit per sale.\n\n` +
+            `👉 Top up immediately from your Merchant Terminal! ⚡`;
+        try {
+            await sock.sendMessage(cleanUser, { text: msg });
+            logger.info(`[TIER_ALERT] Level down notification sent to ${userId}: ${oldTier.multiplier} -> ${newTier.multiplier}`);
+        } catch (e) {
+            logger.warn(`[TIER_ALERT] Failed to send level down alert to ${userId}:`, e.message);
+        }
+        return { type: 'LEVEL_DOWN', oldTier, newTier };
+    }
+    return null;
+}
+
 class WalletService {
     constructor() {
         this.checkMilestone = checkMilestone;
         this.getImpactLevel = getImpactLevel;
         this.IMPACT_MILESTONES = IMPACT_MILESTONES;
+        this.checkAndNotifyTierTransition = checkAndNotifyTierTransition;
     }
 
     getWholesalePrice(plan, walletBalance) {
