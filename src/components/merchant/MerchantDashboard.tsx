@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Share2,
@@ -186,24 +186,24 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
   const [matrixSelectedTier, setMatrixSelectedTier] = useState<number>(() => user.multiplierTier?.level || 1);
   const [matrixSearchQuery, setMatrixSearchQuery] = useState<string>('');
 
+  // Viewport Auto-Adjust Helper with Sticky Navigation Clearance (~105px)
+  const smoothScrollToElement = (el: HTMLElement | null, offset = 105) => {
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const absoluteTop = rect.top + window.pageYOffset;
+    const targetY = Math.max(0, absoluteTop - offset);
+    window.scrollTo({
+      top: targetY,
+      behavior: 'smooth'
+    });
+  };
+
   const toggleStatusDrops = () => {
-    const willExpand = !statusDropsExpanded;
-    setStatusDropsExpanded(willExpand);
-    if (willExpand) {
-      setTimeout(() => {
-        statusDropsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 120);
-    }
+    setStatusDropsExpanded((prev) => !prev);
   };
 
   const togglePriceCards = () => {
-    const willExpand = !priceCardsExpanded;
-    setPriceCardsExpanded(willExpand);
-    if (willExpand) {
-      setTimeout(() => {
-        priceCardsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 120);
-    }
+    setPriceCardsExpanded((prev) => !prev);
   };
 
   useEffect(() => {
@@ -292,22 +292,22 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
   }, [bankAccountNumber, selectedBankCode]);
 
   // Dynamic Pricing Strategy Slider:
-  // 0% = Official Telco Price (Max Margin)
-  // 100% = Base 1X Wholesale Cost Floor (Max Volume / Zero Retail Markup)
-  // Default: 25% (Sweet spot, noticeably lower than official USSD while keeping healthy margin)
+  // Default to 25% (Campus) on first load so it feels alive. Min is 0% (no floor).
   const [pricingSlider, setPricingSlider] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('clarion_merchant_pricing_slider');
-      return saved !== null ? Number(saved) : 25;
+      const num = saved !== null ? Number(saved) : 25;
+      return Math.max(0, num);
     } catch {
       return 25;
     }
   });
 
   const handleSliderChange = (newVal: number) => {
-    setPricingSlider(newVal);
+    const clampedVal = Math.max(0, newVal);
+    setPricingSlider(clampedVal);
     try {
-      localStorage.setItem('clarion_merchant_pricing_slider', String(newVal));
+      localStorage.setItem('clarion_merchant_pricing_slider', String(clampedVal));
     } catch {}
   };
 
@@ -395,10 +395,10 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
   const brandName = user.franchiseName || user.name || 'Your Store';
 
   // Context-aware WhatsApp contact (MotherBot or parent proxy)
+  // Opens the MotherBot chat directly — no pre-filled text
   const chatPhone = whatsappContact?.phoneNumber || data.botWhatsAppPhone || '2348119772223';
-  const chatText = whatsappContact?.defaultText || 'MENU';
   const chatButtonLabel = whatsappContact?.buttonLabel || 'WHATSAPP CHAT';
-  const whatsappChatUrl = `https://wa.me/${chatPhone}?text=${encodeURIComponent(chatText)}`;
+  const whatsappChatUrl = `https://wa.me/${chatPhone}`;
 
   // Live plan formatter — dynamically builds price card text applying the slider discount
   function formatPriceCardText(networkName: string, planList: Plan[], brand: string): string {
@@ -408,16 +408,34 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     };
     const formatBadge = (num: number) => String(num).split('').map(d => DIGIT_EMOJIS[d] || d).join('');
 
-    let text = `✦ ${brand} ⚡\n──────────────\n📶 ${networkName.toUpperCase()} DATA BUNDLES\n\n`;
+    // Network-aware colour emoji
+    const networkEmoji: Record<string, string> = { MTN: '🟡', GLO: '🟢', AIRTEL: '🔴' };
+    const icon = networkEmoji[networkName.toUpperCase()] || '📶';
+
+    // Dynamic highest savings across active plans for this network (aligned flush, no leading spaces)
+    const maxSaving = Math.max(0, ...planList.map(p => getPlanOfficialPrice(p) - getEffectivePrice(p)));
+    const savingsSubtitle = maxSaving > 0
+      ? `💰 Save up to ₦${maxSaving.toLocaleString()} vs official prices!\n\n`
+      : '\n';
+
+    let text = `✦ ${brand} ⚡\n──────────────\n${icon} ${networkName.toUpperCase()} 5G PLANS\n${savingsSubtitle}`;
+
     planList.forEach((p, idx) => {
       const num = idx + 1;
       const badge = formatBadge(num);
       const effPrice = getEffectivePrice(p);
-      const offPrice = getPlanOfficialPrice(p);
-      const discountTag = offPrice > effPrice ? ` (Save ₦${(offPrice - effPrice).toLocaleString()})` : '';
-      text += `${badge} ${p.name} · ${p.validity || 'Standard'} — ₦${effPrice.toLocaleString()}${discountTag}\n`;
+      // Clean off (+2GB/4GB all night streaming) text for clean presentation
+      const cleanName = (p.name || '').replace(/\s*\(\+\d+(\.\d+)?GB\s+all\s+night\s+streaming\)/gi, '').trim();
+      text += `${badge} ${cleanName} · ${p.validity || 'Standard'} — ₦${effPrice.toLocaleString()}\n`;
     });
-    text += `\n──────────────\n📲 Instant delivery on payment!\nWhatsApp this number to order now. ⚡`;
+
+    // Footer: merchant bank details if linked, else DM prompt
+    const bank = user.bankDetails;
+    if (bank?.accountNumber) {
+      text += `\n──────────────\n💳 Pay directly to:\nBank: ${bank.bankName}\nAcct: ${bank.accountNumber}\nName: ${bank.accountName}\n\n💬 Or DM me here to top up fast anytime! ⚡`;
+    } else {
+      text += `\n──────────────\n📲 Instant delivery on payment!\n💬 DM me here — tell me your network & size!\nI'll sort you out in under 30 seconds! ⚡`;
+    }
     return text;
   }
 
@@ -857,7 +875,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     <span className="text-white font-bold">₦{fundAmount.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Paystack Security / Gateway Fee:</span>
+                    <span>1-Time Paystack Fee:</span>
                     <span className="text-amber-400 font-bold">+₦{paystackFee.toLocaleString()}</span>
                   </div>
                   <div className="border-t border-zinc-800 pt-1 flex justify-between text-xs font-bold">
@@ -938,7 +956,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                   ) : (
                     <Check size={14} />
                   )}
-                  <span>LOG TRANSFER (I HAVE PAID ₦{totalToTransfer.toLocaleString()})</span>
+                  <span>LOG TRANSFER — ₦{totalToTransfer.toLocaleString()}</span>
                 </button>
               )}
             </motion.div>
@@ -950,16 +968,17 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
           <div className="space-y-4">
             {/* Dynamic Pricing Strategy & Discount Slider */}
             <div className="bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 space-y-3.5">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-0.5 border-b border-zinc-800 pb-2">
                 <div className="flex items-center gap-2">
-                  <Sliders size={16} className="text-accent" />
+                  <Sliders size={14} className="text-accent shrink-0" />
                   <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white">
-                    Pricing Strategy & Discount Slider
+                    Pricing Strategy
                   </h3>
                 </div>
-                <span className="text-[10px] font-mono font-bold text-accent">
-                  {pricingSlider === 0 && '👑 MAX PROFIT'}
-                  {pricingSlider > 0 && pricingSlider < 40 && `⚡ SWEET SPOT (${pricingSlider}% OFF)`}
+                <span className="text-[10px] font-mono font-bold text-accent self-start sm:self-auto whitespace-nowrap">
+                  {pricingSlider === 0 && '👑 MAX PROFIT (0% OFF)'}
+                  {pricingSlider > 0 && pricingSlider <= 5 && '⚡ SWEET SPOT (5% OFF)'}
+                  {pricingSlider > 5 && pricingSlider < 40 && `⚡ SWEET SPOT (${pricingSlider}% OFF)`}
                   {pricingSlider >= 40 && pricingSlider < 90 && `🚀 CAMPUS PENETRATION (${pricingSlider}% OFF)`}
                   {pricingSlider >= 90 && '🔥 WHOLESALE FLOOR (MAX OFF)'}
                 </span>
@@ -969,14 +988,14 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
               <div className="grid grid-cols-4 gap-1.5 font-mono text-[10px]">
                 <button
                   type="button"
-                  onClick={() => handleSliderChange(0)}
+                  onClick={() => handleSliderChange(5)}
                   className={`py-1.5 px-1 border transition-all cursor-pointer text-center ${
-                    pricingSlider === 0
+                    pricingSlider === 5
                       ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold'
                       : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Official (0%)
+                  Sweet Spot (5%)
                 </button>
                 <button
                   type="button"
@@ -987,7 +1006,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                       : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Sweet Spot
+                  Campus (25%)
                 </button>
                 <button
                   type="button"
@@ -998,7 +1017,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                       : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Campus (50%)
+                  Student (50%)
                 </button>
                 <button
                   type="button"
@@ -1016,7 +1035,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
               {/* Slider Control */}
               <div className="space-y-1.5 pt-1">
                 <div className="flex justify-between text-[11px] font-mono text-zinc-400">
-                  <span>Official Telco Price</span>
+                  <span>0% Off</span>
                   <span className="text-white font-bold">{pricingSlider}% Discount</span>
                   <span>{user.multiplierTier?.multiplier || '1X'} Wholesale Base</span>
                 </div>
@@ -1043,7 +1062,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             </div>
 
             {/* Status Drops Module (Collapsible with Click-Outside Auto-Collapse) */}
-            <div ref={statusDropsRef} className="bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 transition-all">
+            <div ref={statusDropsRef} className="scroll-mt-28 bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 transition-all">
               <div
                 onClick={toggleStatusDrops}
                 className="flex items-center justify-between cursor-pointer select-none group"
@@ -1051,9 +1070,9 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                 <div className="flex items-center gap-2">
                   <Clock size={16} className="text-accent shrink-0" />
                   <div>
-                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white group-hover:text-accent transition-colors flex items-center gap-2">
-                      <span>AI Coach WhatsApp Status Drops</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-zinc-800 text-zinc-400 font-normal">
+                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white group-hover:text-accent transition-colors flex items-center gap-2 min-w-0">
+                      <span className="truncate">AI Coach · Status Drops</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-zinc-800 text-zinc-400 font-normal shrink-0">
                         4 DROPS
                       </span>
                     </h3>
@@ -1081,6 +1100,11 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     animate={{ height: 'auto', opacity: 1, marginTop: 16 }}
                     exit={{ height: 0, opacity: 0, marginTop: 0 }}
                     transition={{ duration: 0.25, ease: 'easeInOut' }}
+                    onAnimationComplete={() => {
+                      if (statusDropsExpanded) {
+                        smoothScrollToElement(statusDropsRef.current, 105);
+                      }
+                    }}
                     className="overflow-hidden border-t border-zinc-800/80 pt-3"
                   >
                     <div className="flex justify-between items-center mb-3">
@@ -1171,7 +1195,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             </div>
 
             {/* Branded Price Cards Module (Collapsible with Click-Outside Auto-Collapse) */}
-            <div ref={priceCardsRef} className="bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 transition-all">
+            <div ref={priceCardsRef} className="scroll-mt-28 bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 transition-all">
               <div
                 onClick={togglePriceCards}
                 className="flex items-center justify-between cursor-pointer select-none group"
@@ -1209,11 +1233,23 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     animate={{ height: 'auto', opacity: 1, marginTop: 16 }}
                     exit={{ height: 0, opacity: 0, marginTop: 0 }}
                     transition={{ duration: 0.25, ease: 'easeInOut' }}
+                    onAnimationComplete={() => {
+                      if (priceCardsExpanded) {
+                        smoothScrollToElement(priceCardsRef.current, 105);
+                      }
+                    }}
                     className="overflow-hidden border-t border-zinc-800/80 pt-3"
                   >
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-[10px] font-mono text-zinc-500">LIVE SYNCED TO CURRENT DISCOUNT SLIDER</span>
-                      <span className="text-[10px] font-mono text-accent font-bold">READY TO FORWARD</span>
+                    {/* Price Cards Header Row — mobile-safe, no wrapping */}
+                    <div className="flex items-center justify-between gap-2 mb-3 pb-2 border-b border-zinc-800/60 font-mono text-[10px]">
+                      <div className="flex items-center gap-1.5 text-zinc-500 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                        <span className="truncate">SYNCED TO DISCOUNT SLIDER</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-accent/10 border border-accent/30 text-accent font-bold uppercase tracking-wider text-[9px] whitespace-nowrap shrink-0 flex items-center gap-1">
+                        <span>✓</span>
+                        <span>READY TO FORWARD</span>
+                      </span>
                     </div>
 
                     <div className="grid sm:grid-cols-3 gap-3">
@@ -1308,15 +1344,21 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                       </div>
                     </div>
 
-                    {/* View Full Wholesale & Tier Matrix Action */}
-                    <div className="pt-2 text-center">
+                    {/* View Full Wholesale & Tier Matrix Action — single-line terminal bar */}
+                    <div className="pt-2">
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setShowPricingMatrixModal(true); }}
-                        className="w-full py-2 bg-accent/5 hover:bg-accent/10 text-accent border border-accent/20 font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                        className="w-full py-2.5 px-3 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 hover:border-accent/50 transition-all font-mono text-xs flex items-center justify-between cursor-pointer group"
                       >
-                        <Sliders size={12} />
-                        <span>VIEW FULL 40-PLAN WHOLESALE & TIER PROFIT MATRIX</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Sliders size={13} className="text-accent group-hover:scale-110 transition-transform shrink-0" />
+                          <span className="font-bold text-white tracking-wide truncate">40-PLAN WHOLESALE MATRIX</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-accent font-bold shrink-0">
+                          <span>ALL TIERS</span>
+                          <ChevronRight size={13} className="group-hover:translate-x-0.5 transition-transform" />
+                        </div>
                       </button>
                     </div>
                   </motion.div>
@@ -1418,7 +1460,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
               )}
             </div>
 
-            <div ref={progressionTableRef} className="bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 space-y-4">
+            <div ref={progressionTableRef} className="scroll-mt-28 bg-zinc-900/60 border border-zinc-800 p-4 md:p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
                 <div>
                   <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white">
@@ -1504,7 +1546,12 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           ) : (
                             <button
                               type="button"
-                              onClick={() => setShowAllTiers(true)}
+                              onClick={() => {
+                                setShowAllTiers(true);
+                                setTimeout(() => {
+                                  smoothScrollToElement(progressionTableRef.current, 105);
+                                }, 150);
+                              }}
                               className="w-full py-2 bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-white border border-dashed border-zinc-800 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
                             >
                               <ChevronDown size={13} className="text-accent" />
@@ -2133,10 +2180,6 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                         <span className="text-zinc-200">₦{officialBenchmark.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between text-zinc-400">
-                        <span>Upstream Telco Cost:</span>
-                        <span className="text-zinc-400">₦{baseCost.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between text-zinc-400">
                         <span>Your Tier Wholesale Cost:</span>
                         <span className="text-white font-bold">₦{tierWholesaleCost.toLocaleString()}</span>
                       </div>
@@ -2256,34 +2299,34 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             </div>
 
             {/* Controls Bar: Network Filter & Search */}
-            <div className="py-3 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between border-b border-zinc-900 shrink-0">
-              {/* Network Tabs */}
-              <div className="flex gap-1 overflow-x-auto pb-1 sm:pb-0">
+            <div className="py-3 flex flex-col gap-2 border-b border-zinc-900 shrink-0">
+              {/* Network Tabs — equal grid, no overflow scroll needed */}
+              <div className="grid grid-cols-4 gap-1">
                 {(['ALL', 'MTN', 'GLO', 'AIRTEL'] as const).map((net) => (
                   <button
                     key={net}
                     type="button"
                     onClick={() => setMatrixNetworkFilter(net)}
-                    className={`px-3 py-1.5 text-[11px] font-bold uppercase transition-all cursor-pointer whitespace-nowrap border ${
+                    className={`py-1.5 text-[11px] font-bold font-mono uppercase transition-all cursor-pointer border text-center ${
                       matrixNetworkFilter === net
                         ? 'bg-accent text-black border-accent'
                         : 'bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:text-white'
                     }`}
                   >
-                    {net === 'ALL' ? 'ALL NETWORKS' : net}
+                    {net === 'ALL' ? 'ALL' : net}
                   </button>
                 ))}
               </div>
 
-              {/* Search Box */}
-              <div className="relative max-w-xs w-full">
+              {/* Search Box — full width */}
+              <div className="relative w-full">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
                 <input
                   type="text"
-                  placeholder="Search plan name / validity..."
+                  placeholder="Search plan or validity..."
                   value={matrixSearchQuery}
                   onChange={(e) => setMatrixSearchQuery(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 text-white text-xs pl-8 pr-3 py-1.5 focus:border-accent focus:outline-none placeholder:text-zinc-600"
+                  className="w-full bg-zinc-900 border border-zinc-800 text-white text-xs font-mono pl-8 pr-3 py-2 focus:border-accent focus:outline-none placeholder:text-zinc-600"
                 />
               </div>
             </div>
@@ -2416,16 +2459,17 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             </div>
 
             {/* Footer */}
-            <div className="pt-3 border-t border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-2 shrink-0 text-[10px] text-zinc-500">
-              <span>
+            <div className="pt-3 border-t border-zinc-800 flex flex-col gap-2 shrink-0">
+              <p className="text-[10px] text-zinc-500">
                 💡 All retail markups are calculated dynamically. Clarion guarantees your profit never falls below ₦1 at any slider position.
-              </span>
+              </p>
               <button
                 type="button"
                 onClick={() => setShowPricingMatrixModal(false)}
-                className="px-4 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white font-bold uppercase transition-colors cursor-pointer border border-zinc-800 self-end sm:self-auto"
+                className="w-full py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer border border-zinc-800 flex items-center justify-center gap-1.5"
               >
-                CLOSE
+                <X size={12} />
+                <span>CLOSE</span>
               </button>
             </div>
           </motion.div>
@@ -2435,18 +2479,19 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
       {/* ── Fixed Bottom Bar: Back to WhatsApp ── */}
       <footer className="fixed bottom-0 left-0 right-0 z-40 bg-[#09090B]/95 backdrop-blur-md border-t border-zinc-800 p-2.5 sm:p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-2.5">
-          <div className="text-[10px] sm:text-[11px] font-mono text-zinc-400 truncate max-w-[120px] sm:max-w-none">
+          {/* Store label: hidden on mobile, visible sm+ */}
+          <div className="hidden sm:block text-[11px] font-mono text-zinc-400 truncate">
             <span className="text-white font-bold">{brandName}</span> · Retail Console
           </div>
+          {/* WhatsApp button: full-width on mobile, auto-width on sm+ */}
           <a
             href={whatsappChatUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="px-3 sm:px-4 py-2 bg-accent text-black font-mono text-xs font-bold uppercase tracking-wider hover:bg-white transition-all flex items-center gap-1.5 cursor-pointer shadow-md shrink-0 whitespace-nowrap"
+            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-accent text-black font-mono text-xs font-bold uppercase tracking-wider hover:bg-white transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md whitespace-nowrap"
           >
             <MessageSquare size={13} />
-            <span className="sm:hidden">{chatButtonLabel}</span>
-            <span className="hidden sm:inline">{chatButtonLabel}</span>
+            <span>{chatButtonLabel}</span>
           </a>
         </div>
       </footer>

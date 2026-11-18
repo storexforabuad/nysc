@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -726,13 +726,23 @@ async function startServer() {
             );
 
       let maskedBank = null;
-      if (userData.bankDetails && userData.bankDetails.accountNumber) {
-        const acct = String(userData.bankDetails.accountNumber);
+      const rawBank = userData.bankDetails || (userData.bankAccountNumber ? {
+        bankName: userData.bankName || 'Bank',
+        bankCode: userData.bankCode || '',
+        accountNumber: userData.bankAccountNumber,
+        accountName: userData.bankAccountName || userData.name || 'Verified Partner',
+        verified: true
+      } : null);
+
+      if (rawBank && (rawBank.accountNumber || rawBank.bankAccountNumber)) {
+        const acct = String(rawBank.accountNumber || rawBank.bankAccountNumber);
         maskedBank = {
-          bankName: userData.bankDetails.bankName || 'Bank',
+          bankCode: rawBank.bankCode || '',
+          bankName: rawBank.bankName || 'Bank',
+          accountNumber: acct,
           maskedAccount: acct.length >= 4 ? `••••${acct.slice(-4)}` : acct,
-          accountName: userData.bankDetails.accountName || userData.name || 'Verified Partner',
-          verified: Boolean(userData.bankDetails.verified)
+          accountName: rawBank.accountName || userData.name || 'Verified Partner',
+          verified: rawBank.verified !== undefined ? Boolean(rawBank.verified) : true
         };
       }
 
@@ -1260,28 +1270,52 @@ async function startServer() {
       // Dual receipt delivery via WhatsApp if available
       if (sessionManager.motherSock) {
         const brand = req.body.brandName || 'Clarion AI Merchant';
-        const maskedRecip = formattedRecip.length >= 10 ? formattedRecip.slice(0, 4) + '••••' + formattedRecip.slice(-3) : formattedRecip;
-        const custNotice = `🎁 *DATA DELIVERED!*\n` +
-          `──────────────\n` +
-          `📦 *Package:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
-          `📱 *Delivered to:* ${maskedRecip}\n` +
-          `✨ *Sent via:* ${brand} ⚡\n` +
-          `──────────────\n` +
-          `💡 Need more cheap data? Save this contact and WhatsApp anytime! ⚡`;
-        const recipJid = (formattedRecip.startsWith('0') ? '234' + formattedRecip.slice(1) : formattedRecip) + '@s.whatsapp.net';
-        sessionManager.motherSock.sendMessage(recipJid, { text: custNotice }).catch(() => {});
+        const { getMultiplierTier } = await import('./services/WalletService.js');
+        const tierInfo = getMultiplierTier(newBalance);
+        const tierLabel = `${tierInfo.multiplier} Power · ${Math.round(tierInfo.rate * 100)}% Wholesale Margin`;
+        const orderId = `CLR-${Date.now()}`;
+        const deliveryTimestamp = new Date().toLocaleString('en-NG', {
+          day: '2-digit', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', hour12: true
+        });
 
-        const merchantReceipt = `✅ *Sale Complete (Web POS) — ${brand}*\n` +
-          `──────────────\n` +
-          `📦 *Plan:*      ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
-          `📱 *Customer:*  ${formattedRecip}\n` +
+        // Message 1: Merchant internal profit ledger (confidential)
+        const merchantReceipt =
+          `⚡ *DATA DISPATCHED & CONFIRMED!*\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `✨ *Store:* ${brand}\n` +
+          `📦 *Plan:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
+          `📱 *Customer:* ${formattedRecip}\n` +
+          `💳 *Wholesale Cost:* ₦${wholesaleCost.toLocaleString()}\n` +
           `💰 *Customer Paid:* ₦${effectiveRetailPrice.toLocaleString()}\n` +
-          `📉 *Wholesale Cost:* ₦${wholesaleCost.toLocaleString()}\n` +
-          `──────────────\n` +
-          `💵 *Profit Earned:*  +₦${profitEarned.toLocaleString()}\n` +
-          `💼 *Remaining Float:* ₦${newBalance.toLocaleString()}\n\n` +
-          `_Great job! Keep the momentum going!_ 🚀`;
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `💵 *NET PROFIT:* +₦${profitEarned.toLocaleString()}\n` +
+          `⚡ *Tier Power:* ${tierLabel}\n` +
+          `💼 *Remaining Float:* ₦${newBalance.toLocaleString()}\n` +
+          `🔖 *Ref:* ${orderId}\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `_👇 Below is your customer receipt ready to forward!_`;
+
+        // Message 2: Forwardable customer delivery receipt
+        const customerForwardableReceipt =
+          `🧾 *OFFICIAL DATA DELIVERY RECEIPT*\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `✨ *Merchant:* ${brand}\n` +
+          `📱 *Recipient:* ${formattedRecip}\n` +
+          `📦 *Package:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
+          `📅 *Delivered:* ${deliveryTimestamp}\n` +
+          `🔖 *Transaction Ref:* ${orderId}\n` +
+          `⚡ *Status:* DELIVERED & ACTIVE ✅\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `💡 *Thank you for your patronage!*\n` +
+          `💬 DM me anytime to top up fast! ⚡`;
+
         sessionManager.motherSock.sendMessage(jid, { text: merchantReceipt }).catch(() => {});
+        sessionManager.motherSock.sendMessage(jid, { text: customerForwardableReceipt }).catch(() => {});
+
+        // Also send delivery notice directly to customer's WhatsApp if number is valid
+        const recipJid = (formattedRecip.startsWith('0') ? '234' + formattedRecip.slice(1) : formattedRecip) + '@s.whatsapp.net';
+        sessionManager.motherSock.sendMessage(recipJid, { text: customerForwardableReceipt }).catch(() => {});
       }
 
       res.json({
@@ -1525,29 +1559,52 @@ async function startServer() {
 
             if (sessionManager.motherSock) {
               const partnerJid = matchedPartnerId.includes('@') ? matchedPartnerId : `${matchedPartnerId}@s.whatsapp.net`;
+              const { getMultiplierTier } = await import('./services/WalletService.js');
+              const partnerBalance = Number(matchedPartner?.walletBalance) || 0;
+              const tierInfo = getMultiplierTier(partnerBalance);
+              const tierLabel = `${tierInfo.multiplier} Power · ${Math.round(tierInfo.rate * 100)}% Wholesale Margin`;
+              const partnerBrand = matchedPartner?.franchiseName || matchedPartner?.brandName || 'Clarion AI Store';
+              const deliveryTimestamp = new Date().toLocaleString('en-NG', {
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true
+              });
 
-              const confirmMsg = `✅ *ORDER ${manualOrder.orderId} FULFILLED!*\n` +
-                `━━━━━━━━━━━━━━\n` +
+              // Message 1: Merchant internal profit ledger
+              const merchantProfitMsg =
+                `⚡ *DATA DISPATCHED & CONFIRMED!*\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `✨ *Store:* ${partnerBrand}\n` +
+                `📦 *Plan:* ${manualOrder.planName}\n` +
                 `📱 *Customer:* ${manualOrder.targetPhone}\n` +
-                `📦 *Plan:* ${manualOrder.planName}\n` +
-                `💰 *Amount:* ₦${manualOrder.amount.toLocaleString()}\n` +
-                `💵 *Your Earnings:* ₦${settlement.coMemberShare.toFixed(2)}\n` +
-                `🎖️ *CDS Contribution:* ₦${settlement.cdsShare.toFixed(2)}\n` +
-                `━━━━━━━━━━━━━━`;
+                `💳 *Wholesale Cost:* ₦${manualOrder.amount.toLocaleString()}\n` +
+                `💰 *NET PROFIT:* +₦${settlement.coMemberShare.toFixed(2)}\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `⚡ *Tier Power:* ${tierLabel}\n` +
+                `💼 *Remaining Float:* ₦${partnerBalance.toLocaleString()}\n` +
+                `🔖 *Ref:* ${manualOrder.orderId}\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `_👇 Below is your customer receipt ready to forward!_`;
 
-              const deliveryTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-              const receiptMsg = `👇 *Forward this receipt to your customer:*\n\n` +
-                `━━━━━━━━━━━━━━\n` +
-                `✅ *DATA DELIVERED!*\n\n` +
-                `📱 *Number:* ${manualOrder.targetPhone}\n` +
-                `📦 *Plan:* ${manualOrder.planName}\n` +
-                `🕐 *Delivered:* ${deliveryTime}\n` +
-                `🔖 *Ref:* ${manualOrder.orderId}\n\n` +
-                `Powered by Clarion A.I. ⚡\n` +
-                `━━━━━━━━━━━━━━`;
+              // Message 2: Forwardable customer delivery receipt
+              const customerForwardableReceipt =
+                `🧾 *OFFICIAL DATA DELIVERY RECEIPT*\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `✨ *Merchant:* ${partnerBrand}\n` +
+                `📱 *Recipient:* ${manualOrder.targetPhone}\n` +
+                `📦 *Package:* ${manualOrder.planName}\n` +
+                `📅 *Delivered:* ${deliveryTimestamp}\n` +
+                `🔖 *Transaction Ref:* ${manualOrder.orderId}\n` +
+                `⚡ *Status:* DELIVERED & ACTIVE ✅\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `💡 *Thank you for your patronage!*\n` +
+                `💬 DM me anytime to top up fast! ⚡`;
 
-              await sessionManager.motherSock.sendMessage(partnerJid, { text: confirmMsg }).catch(() => { });
-              await sessionManager.motherSock.sendMessage(partnerJid, { text: receiptMsg }).catch(() => { });
+              await sessionManager.motherSock.sendMessage(partnerJid, { text: merchantProfitMsg }).catch(() => { });
+              await sessionManager.motherSock.sendMessage(partnerJid, { text: customerForwardableReceipt }).catch(() => { });
+
+              // Send delivery voucher directly to customer
+              const customerJid = (manualOrder.targetPhone.startsWith('0') ? '234' + manualOrder.targetPhone.slice(1) : manualOrder.targetPhone) + '@s.whatsapp.net';
+              sessionManager.motherSock.sendMessage(customerJid, { text: customerForwardableReceipt }).catch(() => { });
             }
 
             if (db.users && manualOrder.targetPhone) {

@@ -4614,35 +4614,56 @@ export const handleMotherMessage = async (sock, msg) => {
               }, { merge: true }).catch(() => {});
             }
 
-            // Dual receipt: Send Customer Delivery Notice
+            // Dual receipt: Send Merchant Profit Ledger + Forwardable Customer Receipt
             const recipientJid = (targetPhone.startsWith('0') ? '234' + targetPhone.slice(1) : targetPhone) + '@s.whatsapp.net';
             const maskedRecip = targetPhone.length >= 10 ? targetPhone.slice(0, 4) + '••••' + targetPhone.slice(-3) : targetPhone;
 
-            const custNotice = `🎁 *DATA DELIVERED!*\n` +
-              `──────────────\n` +
-              `📦 *Package:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
-              `📱 *Delivered to:* ${maskedRecip}\n` +
-              `✨ *Sent via:* ${brand} ⚡\n` +
-              `──────────────\n` +
-              `💡 Need more cheap data? Save this contact and WhatsApp anytime! ⚡`;
-
-            sock.sendMessage(recipientJid, { text: custNotice }).catch(() => {});
-
-            // Send Merchant Profit Receipt
-            const newBal = (balance - finalDebit).toFixed(2);
-            return sock.sendMessage(from, {
-              text: `✅ *Sale Complete — ${brand}*\n` +
-                `──────────────\n` +
-                `📦 *Plan:*      ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
-                `📱 *Delivered:* ${maskedRecip}\n` +
-                `💳 *Charged:*   ₦${finalDebit.toLocaleString()} (from Clarion Wallet)\n` +
-                `💰 *Profit:*    ₦${netProfit.toLocaleString()} earned ✨\n` +
-                `──────────────\n` +
-                `💼 *Wallet:*    ₦${newBal} remaining\n` +
-                `🌍 *CDS Share:* ₦${cdsContrib.toLocaleString()} contributed to community projects 🇳🇬\n` +
-                `──────────────\n` +
-                `_Reply ${network.toUpperCase()} PLANS to send another price card!_`
+            // Resolve tier info from post-sale balance
+            const newBal = +(balance - finalDebit).toFixed(2);
+            const tierInfo = wallet.getMultiplierTier(newBal);
+            const tierLabel = `${tierInfo.multiplier} Power · ${Math.round(tierInfo.rate * 100)}% Wholesale Margin`;
+            const orderId = `CLR-${Date.now()}`;
+            const deliveryTimestamp = new Date().toLocaleString('en-NG', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit', hour12: true
             });
+
+            // Message 1: Merchant internal profit ledger (confidential)
+            const merchantProfitReceipt =
+              `⚡ *DATA DISPATCHED & CONFIRMED!*\n` +
+              `━━━━━━━━━━━━━━━━━━━━\n` +
+              `✨ *Store:* ${brand}\n` +
+              `📦 *Plan:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
+              `📱 *Customer:* ${maskedRecip}\n` +
+              `💳 *Wholesale Cost:* ₦${finalDebit.toLocaleString()}\n` +
+              `💰 *Profit Earned:* +₦${netProfit.toLocaleString()}\n` +
+              `━━━━━━━━━━━━━━━━━━━━\n` +
+              `⚡ *Tier Power:* ${tierLabel}\n` +
+              `💼 *Remaining Float:* ₦${newBal.toLocaleString()}\n` +
+              `🔖 *Ref:* ${orderId}\n` +
+              `━━━━━━━━━━━━━━━━━━━━\n` +
+              `_👇 Below is your customer receipt ready to forward!_`;
+
+            // Message 2: Forwardable customer delivery receipt
+            const customerForwardableReceipt =
+              `🧾 *OFFICIAL DATA DELIVERY RECEIPT*\n` +
+              `━━━━━━━━━━━━━━━━━━━━\n` +
+              `✨ *Merchant:* ${brand}\n` +
+              `📱 *Recipient:* ${targetPhone}\n` +
+              `📦 *Package:* ${selectedPlan.name} (${selectedPlan.validity || 'Standard'})\n` +
+              `📅 *Delivered:* ${deliveryTimestamp}\n` +
+              `🔖 *Transaction Ref:* ${orderId}\n` +
+              `⚡ *Status:* DELIVERED & ACTIVE ✅\n` +
+              `━━━━━━━━━━━━━━━━━━━━\n` +
+              `💡 *Thank you for your patronage!*\n` +
+              `💬 DM me anytime to top up fast! ⚡`;
+
+            // Send both to merchant
+            await sock.sendMessage(from, { text: merchantProfitReceipt });
+            await sock.sendMessage(from, { text: customerForwardableReceipt });
+
+            // Send delivery voucher directly to customer if they're on WhatsApp
+            return sock.sendMessage(recipientJid, { text: customerForwardableReceipt }).catch(() => {});
           } catch (err) {
             logger.error(`Error vending data for manual merchant: ${err.message}`);
             if (debitRecordId) {
