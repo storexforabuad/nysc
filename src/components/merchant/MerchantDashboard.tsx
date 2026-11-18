@@ -159,12 +159,40 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
   const [saveBankError, setSaveBankError] = useState<string | null>(null);
   const [saveBankSuccessMsg, setSaveBankSuccessMsg] = useState<string | null>(null);
 
-  // Direct Vending Modal State
+  // Direct Vending Modal State & Unified Terminal
   const [vendingPlan, setVendingPlan] = useState<Plan | null>(null);
+  const [vendNetworkTab, setVendNetworkTab] = useState<'mtn' | 'glo' | 'airtel'>('mtn');
   const [recipientPhone, setRecipientPhone] = useState<string>('');
   const [isVending, setIsVending] = useState(false);
   const [vendError, setVendError] = useState<string | null>(null);
   const [vendSuccessMsg, setVendSuccessMsg] = useState<string | null>(null);
+  const [lastVendedBundle, setLastVendedBundle] = useState<{
+    code: string;
+    network: string;
+    name: string;
+    validity: string;
+  } | null>(() => {
+    try {
+      const saved = localStorage.getItem('clarion_last_vended_bundle');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Open Unified Quick-Vend Modal helper with favorite/recent auto-select
+  const openUnifiedVendModal = (targetNetwork?: 'mtn' | 'glo' | 'airtel') => {
+    const net = targetNetwork || (lastVendedBundle?.network?.toLowerCase() as 'mtn' | 'glo' | 'airtel') || 'mtn';
+    setVendNetworkTab(net);
+    const netPlans = plans?.[net] || [];
+    const matchedPlan = lastVendedBundle && lastVendedBundle.network.toLowerCase() === net
+      ? netPlans.find(p => p.code === lastVendedBundle.code) || netPlans[0]
+      : netPlans[0];
+    setVendingPlan(matchedPlan || null);
+    setRecipientPhone('');
+    setVendError(null);
+    setVendSuccessMsg(null);
+  };
 
   // Collapsible Marketing Sections & Click-Outside Auto-Collapse
   const [statusDropsExpanded, setStatusDropsExpanded] = useState<boolean>(false);
@@ -647,6 +675,16 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Dispense failed');
       setVendSuccessMsg(`🎉 Successfully dispensed ${vendingPlan.name} to ${json.recipient}! Profit: +₦${json.profit}`);
+      const savedBundle = {
+        code: vendingPlan.code,
+        network: vendNetworkTab || vendingPlan.network?.toLowerCase() || 'mtn',
+        name: vendingPlan.name,
+        validity: vendingPlan.validity
+      };
+      setLastVendedBundle(savedBundle);
+      try {
+        localStorage.setItem('clarion_last_vended_bundle', JSON.stringify(savedBundle));
+      } catch {}
       onRefresh();
       setTimeout(() => {
         setVendingPlan(null);
@@ -1272,7 +1310,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           </button>
                           {(plans?.mtn?.length ?? 0) > 0 && (
                             <button
-                              onClick={(e) => { e.stopPropagation(); setVendingPlan(plans!.mtn[0]); setRecipientPhone(''); setVendError(null); setVendSuccessMsg(null); }}
+                              onClick={(e) => { e.stopPropagation(); openUnifiedVendModal('mtn'); }}
                               className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] font-mono font-bold border border-amber-500/30 flex items-center gap-1 cursor-pointer transition-colors"
                               title="Vend MTN data to a customer"
                             >
@@ -1302,7 +1340,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           </button>
                           {(plans?.glo?.length ?? 0) > 0 && (
                             <button
-                              onClick={(e) => { e.stopPropagation(); setVendingPlan(plans!.glo[0]); setRecipientPhone(''); setVendError(null); setVendSuccessMsg(null); }}
+                              onClick={(e) => { e.stopPropagation(); openUnifiedVendModal('glo'); }}
                               className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold border border-emerald-500/30 flex items-center gap-1 cursor-pointer transition-colors"
                               title="Vend GLO data to a customer"
                             >
@@ -1332,7 +1370,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           </button>
                           {(plans?.airtel?.length ?? 0) > 0 && (
                             <button
-                              onClick={(e) => { e.stopPropagation(); setVendingPlan(plans!.airtel[0]); setRecipientPhone(''); setVendError(null); setVendSuccessMsg(null); }}
+                              onClick={(e) => { e.stopPropagation(); openUnifiedVendModal('airtel'); }}
                               className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-mono font-bold border border-red-500/30 flex items-center gap-1 cursor-pointer transition-colors"
                               title="Vend Airtel data to a customer"
                             >
@@ -1948,12 +1986,20 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
               className="bg-zinc-950 border border-zinc-800 w-full max-w-sm p-5 font-mono space-y-4 shadow-2xl"
             >
               {/* Modal Header */}
-              <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Send size={15} className="text-accent" />
-                  Vend Data to Customer
-                </h3>
+              <div className="flex justify-between items-center border-b border-zinc-800 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                    <Zap size={13} className="text-emerald-400 fill-emerald-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                      Quick Vend Data
+                    </h3>
+                    <p className="text-[9px] text-zinc-400">Multi-Network Point-of-Sale</p>
+                  </div>
+                </div>
                 <button
+                  type="button"
                   onClick={() => { setVendingPlan(null); setVendError(null); setVendSuccessMsg(null); setRecipientPhone(''); }}
                   className="text-zinc-500 hover:text-white transition-colors p-1"
                 >
@@ -1961,36 +2007,101 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                 </button>
               </div>
 
+              {/* Network Switcher Tabs */}
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono">
+                  {(['mtn', 'glo', 'airtel'] as const).map((net) => {
+                    const isSelected = vendNetworkTab === net;
+                    const netEmoji = net === 'mtn' ? '🟡 MTN' : net === 'glo' ? '🟢 GLO' : '🔴 AIRTEL';
+                    const planCount = plans?.[net]?.length || 0;
+                    return (
+                      <button
+                        key={net}
+                        type="button"
+                        onClick={() => {
+                          setVendNetworkTab(net);
+                          const netPlans = plans?.[net] || [];
+                          if (netPlans.length > 0) setVendingPlan(netPlans[0]);
+                        }}
+                        className={`py-2 px-1 text-center font-bold uppercase transition-all cursor-pointer border ${
+                          isSelected
+                            ? net === 'mtn'
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm'
+                              : net === 'glo'
+                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-sm'
+                              : 'bg-red-500/20 border-red-400 text-red-300 shadow-sm'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
+                        }`}
+                      >
+                        <div>{netEmoji}</div>
+                        <div className="text-[9px] font-normal opacity-70">{planCount} plans</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 1-Tap Quick Re-Vend / Favorite Chip */}
+              {lastVendedBundle && (
+                <div className="p-2 bg-zinc-900/80 border border-zinc-800 flex items-center justify-between gap-2 text-[10px]">
+                  <div className="flex items-center gap-1.5 truncate text-zinc-300">
+                    <span className="text-amber-400">★</span>
+                    <span className="text-zinc-500">Recent:</span>
+                    <span className="font-bold text-white uppercase">{lastVendedBundle.network}</span>
+                    <span className="truncate">{lastVendedBundle.name} ({lastVendedBundle.validity})</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const net = lastVendedBundle.network.toLowerCase() as 'mtn' | 'glo' | 'airtel';
+                      setVendNetworkTab(net);
+                      const netPlans = plans?.[net] || [];
+                      const target = netPlans.find(p => p.code === lastVendedBundle.code) || netPlans[0];
+                      if (target) setVendingPlan(target);
+                    }}
+                    className="shrink-0 px-2 py-0.5 bg-accent/20 hover:bg-accent/30 text-accent font-bold border border-accent/40 uppercase cursor-pointer transition-colors"
+                  >
+                    1-Tap Auto Fill
+                  </button>
+                </div>
+              )}
+
               {/* Plan Selector */}
-              <div className="space-y-2">
-                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block">Select Plan:</label>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-[10px] text-zinc-500 uppercase tracking-wider">
+                  <span>Select {vendNetworkTab.toUpperCase()} Data Plan:</span>
+                  <span className="text-zinc-400">{plans?.[vendNetworkTab]?.length || 0} Available</span>
+                </div>
                 <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                  {[
-                    ...(plans?.mtn || []).map(p => ({ ...p, _net: 'mtn' })),
-                    ...(plans?.glo || []).map(p => ({ ...p, _net: 'glo' })),
-                    ...(plans?.airtel || []).map(p => ({ ...p, _net: 'airtel' })),
-                  ]
-                    .filter(p => {
-                      const net = vendingPlan.network?.toLowerCase() || '';
-                      return p._net === net || p._net === vendingPlan.network?.toLowerCase();
-                    })
-                    .map((p) => (
+                  {(plans?.[vendNetworkTab] || []).map((p) => {
+                    const isSelected = vendingPlan?.code === p.code;
+                    const cleanName = (p.name || '').replace(/\s*\(\+\d+(\.\d+)?GB\s+all\s+night\s+streaming\)/gi, '').trim();
+                    const eff = getEffectivePrice(p);
+                    const cost = getMerchantWholesaleCost(p, user.walletBalance);
+                    const profit = Math.max(0, eff - cost);
+                    return (
                       <button
                         key={p.code}
                         type="button"
                         onClick={() => setVendingPlan(p)}
-                        className={`w-full text-left px-3 py-2 text-[11px] border transition-colors cursor-pointer ${
-                          vendingPlan.code === p.code
+                        className={`w-full text-left px-2.5 py-2 text-[11px] border transition-colors cursor-pointer flex items-center justify-between gap-2 ${
+                          isSelected
                             ? 'bg-accent/20 border-accent text-accent font-bold'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
                         }`}
                       >
-                        <span className="font-bold">{p.name}</span>
-                        <span className="text-zinc-500 mx-1">·</span>
-                        <span>{p.validity}</span>
-                        <span className="float-right font-bold text-accent">₦{getEffectivePrice(p).toLocaleString()}</span>
+                        <div className="truncate">
+                          <span className="font-bold">{cleanName}</span>
+                          <span className="text-zinc-500 mx-1">·</span>
+                          <span className="text-[10px] text-zinc-400">{p.validity}</span>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="font-bold text-white">₦{eff.toLocaleString()}</span>
+                          <span className="text-[9px] text-emerald-400 font-mono ml-1.5">(+₦{profit})</span>
+                        </div>
                       </button>
-                    ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2476,23 +2587,33 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
         )}
       </AnimatePresence>
 
-      {/* ── Fixed Bottom Bar: Back to WhatsApp ── */}
+      {/* ── Fixed Bottom Bar: Dual-Action Quick Vend & WhatsApp ── */}
       <footer className="fixed bottom-0 left-0 right-0 z-40 bg-[#09090B]/95 backdrop-blur-md border-t border-zinc-800 p-2.5 sm:p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="max-w-2xl mx-auto flex items-center justify-between gap-2.5">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
           {/* Store label: hidden on mobile, visible sm+ */}
           <div className="hidden sm:block text-[11px] font-mono text-zinc-400 truncate">
             <span className="text-white font-bold">{brandName}</span> · Retail Console
           </div>
-          {/* WhatsApp button: full-width on mobile, auto-width on sm+ */}
-          <a
-            href={whatsappChatUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-accent text-black font-mono text-xs font-bold uppercase tracking-wider hover:bg-white transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md whitespace-nowrap"
-          >
-            <MessageSquare size={13} />
-            <span>{chatButtonLabel}</span>
-          </a>
+          {/* Dual Action Dock: Quick Vend + WhatsApp Chat */}
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => openUnifiedVendModal()}
+              className="flex-1 sm:flex-initial px-4 py-2.5 sm:py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-mono text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md whitespace-nowrap active:scale-[0.98]"
+            >
+              <Zap size={14} className="fill-black" />
+              <span>QUICK VEND</span>
+            </button>
+            <a
+              href={whatsappChatUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 sm:flex-initial px-4 py-2.5 sm:py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-mono text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md whitespace-nowrap"
+            >
+              <MessageSquare size={13} className="text-emerald-400" />
+              <span>{chatButtonLabel}</span>
+            </a>
+          </div>
         </div>
       </footer>
     </div>
