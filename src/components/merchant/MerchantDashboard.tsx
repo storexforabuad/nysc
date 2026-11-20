@@ -161,6 +161,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
 
   // Direct Vending Modal State & Unified Terminal
   const [vendingPlan, setVendingPlan] = useState<Plan | null>(null);
+  const vendPlanListRef = useRef<HTMLDivElement>(null);
   const [vendNetworkTab, setVendNetworkTab] = useState<'mtn' | 'glo' | 'airtel'>('mtn');
   const [recipientPhone, setRecipientPhone] = useState<string>('');
   const [isVending, setIsVending] = useState(false);
@@ -180,6 +181,16 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     }
   });
 
+  // Auto-scroll selected plan into visible viewport in vend modal
+  useEffect(() => {
+    if (vendingPlan && vendPlanListRef.current) {
+      const selectedEl = vendPlanListRef.current.querySelector(`[data-plan-code="${vendingPlan.code}"]`) as HTMLElement | null;
+      if (selectedEl) {
+        selectedEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [vendingPlan?.code, vendNetworkTab]);
+
   // Open Unified Quick-Vend Modal helper with favorite/recent auto-select
   const openUnifiedVendModal = (targetNetwork?: 'mtn' | 'glo' | 'airtel') => {
     const net = targetNetwork || (lastVendedBundle?.network?.toLowerCase() as 'mtn' | 'glo' | 'airtel') || 'mtn';
@@ -192,6 +203,19 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     setRecipientPhone('');
     setVendError(null);
     setVendSuccessMsg(null);
+  };
+
+  // 1-Click Top Up from Modal -> Switches to Wallet tab, auto-opens Top Up Area, pre-fills needed amount, and scrolls down
+  const handleModalTopUpClick = (neededAmount?: number) => {
+    setVendingPlan(null);
+    setActiveTab('wallet');
+    setShowTopUpGuide(true);
+    if (neededAmount && neededAmount > 0) {
+      setFundAmount(neededAmount);
+    }
+    setTimeout(() => {
+      topUpCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 120);
   };
 
   // Collapsible Marketing Sections & Click-Outside Auto-Collapse
@@ -211,7 +235,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
   // Full-Screen Wholesale Pricing & Tier Matrix Modal
   const [showPricingMatrixModal, setShowPricingMatrixModal] = useState<boolean>(false);
   const [matrixNetworkFilter, setMatrixNetworkFilter] = useState<'ALL' | 'MTN' | 'GLO' | 'AIRTEL'>('ALL');
-  const [matrixSelectedTier, setMatrixSelectedTier] = useState<number>(() => user.multiplierTier?.level || 1);
+  const [matrixSelectedTier, setMatrixSelectedTier] = useState<number>(6);
   const [matrixSearchQuery, setMatrixSearchQuery] = useState<string>('');
 
   // Viewport Auto-Adjust Helper with Sticky Navigation Clearance (~105px)
@@ -390,12 +414,13 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     return Math.max(floor, rounded);
   }
 
-  function getMerchantWholesaleCost(plan: Plan, balance: number): number {
+  function getMerchantWholesaleCost(plan: Plan, _balance?: number): number {
     const s = plan.sellPrice;
     const c = getPlanBaseCost(plan);
     const f = s < 2500 ? Math.round(s * 0.015) : Math.min(2000, Math.round(s * 0.015 + 100));
     const netP = Math.max(0, s - c - f);
-    const rate = balance >= 10000 ? 0.40 : balance >= 8000 ? 0.30 : balance >= 6000 ? 0.25 : balance >= 4000 ? 0.20 : balance >= 2000 ? 0.15 : 0.10;
+    // Universal 4X VIP Wholesale Power: All merchants enjoy top 40% margin pool allocation from Day 1
+    const rate = 0.40;
     const discountAmount = Math.round(netP * rate);
     return Math.max(c, s - discountAmount);
   }
@@ -490,12 +515,16 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     `⚡ From quick daily bundles (₦${lowestDailyPrice.toLocaleString()}) to full monthly packages.\n\n` +
     `📲 Message ${brandName} right here with your network to top up sharp-sharp!`;
 
-  const communityDrop = `💚 Smart Data That Gives Back 🇳🇬\n\n` +
-    `Did you know? Every time you buy data or pay bills through ${brandName}:\n` +
-    `• You get verified, ultra-cheap data in seconds\n` +
+  const communityDrop = `✦ ${brandName} ⚡\n` +
+    `──────────────────────────────\n` +
+    `Hey everyone! 👋 You can now get fast, reliable data for MTN, Airtel & Glo directly from me.\n\n` +
+    `💚 Smart Data That Gives Back:\n` +
+    `Did you know? Every time you buy data through ${brandName}:\n` +
+    `• You get verified, ultra-cheap data delivered in under 30 seconds\n` +
     `• A portion of every purchase quietly supports grassroots community projects & youth development in underserved local areas!\n\n` +
     `Fast data that empowers our community. 🏫✨\n` +
-    `📲 Reply to this status anytime with your network & budget to support!`;
+    `📲 DM me your network & size anytime you need data! ⚡\n` +
+    `— ${brandName}`;
 
   const middayGiftingDrop = `🎁 Need data on your second phone, MiFi, or for a friend? ⚡\n\n` +
     `You don't need to leave WhatsApp or stress over bank apps.\n` +
@@ -811,40 +840,34 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             <div>
               <p className="text-[10px] font-mono text-accent uppercase tracking-[0.2em] font-bold">Wholesale Discount Engine</p>
               <h2 className="text-xl md:text-2xl font-bold uppercase tracking-tight text-white mt-0.5">
-                {user.multiplierTier?.name || 'Tier 1 (1X Base)'}
+                Tier 6 · 4X MAX VIP
               </h2>
             </div>
             <div className="bg-accent text-black font-mono font-bold text-xs px-2.5 py-1 tracking-wider uppercase">
-              {user.multiplierTier?.multiplier || '1X'} POWER
+              4X VIP POWER
             </div>
           </div>
 
-          {/* Float Liquidity Bar */}
+          {/* Wallet Balance Bar */}
           <div className="space-y-1.5 mt-3">
             <div className="flex justify-between text-xs font-mono">
-              <span className="text-zinc-400">Clarion Float Liquidity:</span>
-              <span className="text-white font-bold">
-                ₦{user.walletBalance.toLocaleString()} {user.multiplierTier?.nextThreshold ? `/ ₦${user.multiplierTier.nextThreshold.toLocaleString()}` : '/ ₦10,000 (VIP Cap)'}
-              </span>
+              <span className="text-zinc-400">Clarion Wallet Balance:</span>
+              <span className="text-white font-bold">₦{user.walletBalance.toLocaleString()}</span>
             </div>
             <div className="w-full bg-zinc-950 border border-zinc-800 h-2.5 overflow-hidden">
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, Math.max(5, Math.round((user.walletBalance / 10000) * 100)))}%` }}
-                transition={{ duration: 0.8, ease: 'easeOut' }}
-                className="bg-accent h-full shadow-[0_0_10px_rgba(255,255,255,0.4)]"
-              />
+              <div className="bg-accent h-full w-full shadow-[0_0_10px_rgba(255,255,255,0.4)]" />
             </div>
           </div>
 
           <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-zinc-800/80">
-            <p className="text-[11px] font-mono text-zinc-400">
-              {user.multiplierTier?.neededToNext > 0 ? (
-                <>Add <span className="text-accent font-bold">₦{user.multiplierTier.neededToNext.toLocaleString()}</span> float to level up to next multiplier tier.</>
-              ) : (
-                <span className="text-accent font-bold">🔥 You are at maximum VIP tier (40% wholesale discount)!</span>
-              )}
-            </p>
+            <div className="text-[11px] font-mono space-y-0.5">
+              <p className="text-accent font-bold">
+                ⚡ Maximum VIP Tier Active · Up to 24% off official Prices!
+              </p>
+              <p className="text-zinc-400 text-[10px]">
+                No minimum balance required to maintain 4X rates. Fund what you need to vend.
+              </p>
+            </div>
             <button
               onClick={() => setShowTopUpGuide(!showTopUpGuide)}
               className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono font-bold transition-all cursor-pointer border border-zinc-700 shrink-0 text-center"
@@ -862,9 +885,9 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
               <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
                 <p className="text-accent font-bold uppercase tracking-wider flex items-center gap-1.5">
                   <CreditCard size={14} />
-                  <span>Central Hub Payment Details</span>
+                  <span>Top Up Area · Bank Transfer</span>
                 </p>
-                <span className="text-[10px] text-zinc-500 font-bold">INSTANT FLOAT CREDIT</span>
+                <span className="text-[10px] text-zinc-500 font-bold">INSTANT WALLET CREDIT</span>
               </div>
 
               {/* Amount to Fund Selector & Fee Breakdown */}
@@ -909,7 +932,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                 {/* Live Mathematical Fee Breakdown */}
                 <div className="p-2.5 bg-black/60 border border-zinc-800/80 space-y-1.5 text-[11px] text-zinc-400 font-mono">
                   <div className="flex justify-between">
-                    <span>Float Balance to Credit:</span>
+                    <span>Wallet Balance to Credit:</span>
                     <span className="text-white font-bold">₦{fundAmount.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
@@ -933,11 +956,12 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                   <div className="flex items-center gap-1.5">
                     <span className="font-bold text-white text-sm">9819092390</span>
                     <button
+                      type="button"
                       onClick={() => copyToClipboard('9819092390', 'acct')}
-                      className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 transition-colors"
-                      title="Copy Account Number"
+                      className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
                     >
-                      {copiedKey === 'acct' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      {copiedKey === 'acct' ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                      <span>{copiedKey === 'acct' ? 'COPIED' : 'COPY'}</span>
                     </button>
                   </div>
                 </div>
@@ -967,7 +991,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
               {/* Step-by-Step Instructions & Warning */}
               <div className="p-2.5 bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-300 space-y-1">
                 <p className="text-white font-bold flex items-center gap-1 text-[11px]">
-                  ⚡ <span>How to Top Up Your Float:</span>
+                  ⚡ <span>How to Top Up Your Wallet:</span>
                 </p>
                 <p>1️⃣ Transfer <span className="text-accent font-bold">₦{totalToTransfer.toLocaleString()}</span> to Wema Bank 9819092390 above.</p>
                 <p className="text-amber-300">
@@ -1075,7 +1099,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                 <div className="flex justify-between text-[11px] font-mono text-zinc-400">
                   <span>0% Off</span>
                   <span className="text-white font-bold">{pricingSlider}% Discount</span>
-                  <span>{user.multiplierTier?.multiplier || '1X'} Wholesale Base</span>
+                  <span>4X Wholesale Base</span>
                 </div>
                 <input
                   type="range"
@@ -1110,13 +1134,13 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                   <div>
                     <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white group-hover:text-accent transition-colors flex items-center gap-2 min-w-0">
                       <span className="truncate">AI Coach · Status Drops</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-zinc-800 text-zinc-400 font-normal shrink-0">
-                        4 DROPS
+                      <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold shrink-0">
+                        2 SLOTS ACTIVE
                       </span>
                     </h3>
                     {!statusDropsExpanded && (
                       <p className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                        Morning · Community · Gifting · Streamers
+                        Slot 1: First Touch & Community · Slot 2: Active Timed Drop
                       </p>
                     )}
                   </div>
@@ -1145,36 +1169,17 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     }}
                     className="overflow-hidden border-t border-zinc-800/80 pt-3"
                   >
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-[10px] font-mono text-zinc-500">READY-TO-POST WHATSAPP TEMPLATES</span>
+                    <div className="flex justify-between items-center mb-2.5">
+                      <span className="text-[10px] font-mono text-zinc-500">2-SLOT MARKETING ENGINE</span>
                       <span className="text-[10px] font-mono text-accent font-bold">1-CLICK COPY</span>
                     </div>
 
                     <div className="grid gap-3">
-                      {/* Morning Drop */}
-                      <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5 font-mono">
-                            🌅 08:30 AM · Morning Hustle
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); copyToClipboard(morningDrop, 'drop_morning'); }}
-                            className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
-                          >
-                            {copiedKey === 'drop_morning' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                            <span>{copiedKey === 'drop_morning' ? 'COPIED' : 'COPY'}</span>
-                          </button>
-                        </div>
-                        <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">
-                          {morningDrop}
-                        </pre>
-                      </div>
-
-                      {/* Community Impact Drop (Clean Whitelabel - NO NYSC) */}
-                      <div className="p-3 bg-zinc-950/70 border border-emerald-900/40 space-y-2">
+                      {/* Slot 1: Permanent First-Touch & Community Impact Drop */}
+                      <div className="p-3 bg-zinc-950/70 border border-emerald-900/50 space-y-2">
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 font-mono">
-                            💚 Community Impact · Giving Back
+                            ★ SLOT 1: First Touch & Community Impact
                           </span>
                           <button
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(communityDrop, 'drop_community'); }}
@@ -1184,48 +1189,58 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                             <span>{copiedKey === 'drop_community' ? 'COPIED' : 'COPY'}</span>
                           </button>
                         </div>
-                        <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">
+                        <div className="text-[10px] font-mono text-zinc-400 p-1.5 bg-black/40 border border-zinc-800/80 leading-normal">
+                          📱 <span className="text-white font-bold">Target:</span> Send directly as a DM to all your close contacts + post to WhatsApp Status. Perfect for introducing your business to your circle!
+                        </div>
+                        <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
                           {communityDrop}
                         </pre>
                       </div>
 
-                      {/* Midday Gifting Drop */}
-                      <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5 font-mono">
-                            🎁 01:30 PM · Data Gifting & MiFi Refill
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); copyToClipboard(middayGiftingDrop, 'drop_midday'); }}
-                            className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
-                          >
-                            {copiedKey === 'drop_midday' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                            <span>{copiedKey === 'drop_midday' ? 'COPIED' : 'COPY'}</span>
-                          </button>
-                        </div>
-                        <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">
-                          {middayGiftingDrop}
-                        </pre>
-                      </div>
+                      {/* Slot 2: Dynamic Time-of-Day Drop (Auto-Switches by Local Hour) */}
+                      {(() => {
+                        const hr = new Date().getHours();
+                        const isMorning = hr >= 6 && hr < 12;
+                        const isMidday = hr >= 12 && hr < 17;
+                        
+                        const title = isMorning
+                          ? '🌅 SLOT 2 (Morning Hustle): 06:00 AM – 12:00 PM'
+                          : isMidday
+                          ? '🎁 SLOT 2 (Midday Gifting): 12:00 PM – 05:00 PM'
+                          : '🌙 SLOT 2 (Golden Hour Streamers): 05:00 PM – 06:00 AM';
+                          
+                        const text = isMorning
+                          ? morningDrop
+                          : isMidday
+                          ? middayGiftingDrop
+                          : eveningDrop;
 
-                      {/* Evening Drop */}
-                      <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold text-purple-400 flex items-center gap-1.5 font-mono">
-                            🌙 07:30 PM · Golden Hour Streamers
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); copyToClipboard(eveningDrop, 'drop_evening'); }}
-                            className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
-                          >
-                            {copiedKey === 'drop_evening' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                            <span>{copiedKey === 'drop_evening' ? 'COPIED' : 'COPY'}</span>
-                          </button>
-                        </div>
-                        <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">
-                          {eveningDrop}
-                        </pre>
-                      </div>
+                        const dropKey = isMorning ? 'drop_morning' : isMidday ? 'drop_midday' : 'drop_evening';
+                        const colorClass = isMorning ? 'text-amber-400' : isMidday ? 'text-blue-400' : 'text-purple-400';
+
+                        return (
+                          <div className="p-3 bg-zinc-950/70 border border-zinc-800 space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className={`text-xs font-bold ${colorClass} flex items-center gap-1.5 font-mono`}>
+                                {title}
+                              </span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); copyToClipboard(text, dropKey); }}
+                                className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-zinc-700"
+                              >
+                                {copiedKey === dropKey ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                                <span>{copiedKey === dropKey ? 'COPIED' : 'COPY'}</span>
+                              </button>
+                            </div>
+                            <div className="text-[10px] font-mono text-zinc-400 p-1.5 bg-black/40 border border-zinc-800/80 leading-normal">
+                              🕒 <span className="text-white font-bold">Target:</span> Post to your WhatsApp Status right now. Synced to peak customer demand at this hour.
+                            </div>
+                            <pre className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
+                              {text}
+                            </pre>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </motion.div>
                 )}
@@ -1300,24 +1315,14 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           </div>
                           <p className="text-[10px] font-mono text-zinc-400 mt-1">{getBestPreview(plans?.mtn || [], 'Bundle plans')}</p>
                         </div>
-                        <div className="pt-2 border-t border-zinc-900 flex gap-2">
+                        <div className="pt-2 border-t border-zinc-900">
                           <button
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(formatPriceCardText('MTN', plans?.mtn || [], brandName), 'card_mtn'); }}
-                            className="flex-1 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-[10px] font-mono font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer border border-zinc-800"
+                            className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-[10px] font-mono font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-800"
                           >
                             {copiedKey === 'card_mtn' ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-                            <span>{copiedKey === 'card_mtn' ? 'COPIED' : 'COPY LIST'}</span>
+                            <span>{copiedKey === 'card_mtn' ? 'COPIED TO CLIPBOARD' : 'COPY MTN 5G PRICE LIST'}</span>
                           </button>
-                          {(plans?.mtn?.length ?? 0) > 0 && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openUnifiedVendModal('mtn'); }}
-                              className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] font-mono font-bold border border-amber-500/30 flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Vend MTN data to a customer"
-                            >
-                              <Send size={10} />
-                              <span>VEND</span>
-                            </button>
-                          )}
                         </div>
                       </div>
 
@@ -1330,24 +1335,14 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           </div>
                           <p className="text-[10px] font-mono text-zinc-400 mt-1">{getBestPreview(plans?.glo || [], 'Bundle plans')}</p>
                         </div>
-                        <div className="pt-2 border-t border-zinc-900 flex gap-2">
+                        <div className="pt-2 border-t border-zinc-900">
                           <button
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(formatPriceCardText('GLO', plans?.glo || [], brandName), 'card_glo'); }}
-                            className="flex-1 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-[10px] font-mono font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer border border-zinc-800"
+                            className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-[10px] font-mono font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-800"
                           >
                             {copiedKey === 'card_glo' ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-                            <span>{copiedKey === 'card_glo' ? 'COPIED' : 'COPY LIST'}</span>
+                            <span>{copiedKey === 'card_glo' ? 'COPIED TO CLIPBOARD' : 'COPY GLO 5G PRICE LIST'}</span>
                           </button>
-                          {(plans?.glo?.length ?? 0) > 0 && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openUnifiedVendModal('glo'); }}
-                              className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold border border-emerald-500/30 flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Vend GLO data to a customer"
-                            >
-                              <Send size={10} />
-                              <span>VEND</span>
-                            </button>
-                          )}
                         </div>
                       </div>
 
@@ -1360,24 +1355,14 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                           </div>
                           <p className="text-[10px] font-mono text-zinc-400 mt-1">{getBestPreview(plans?.airtel || [], 'Bundle plans')}</p>
                         </div>
-                        <div className="pt-2 border-t border-zinc-900 flex gap-2">
+                        <div className="pt-2 border-t border-zinc-900">
                           <button
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(formatPriceCardText('AIRTEL', plans?.airtel || [], brandName), 'card_airtel'); }}
-                            className="flex-1 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-[10px] font-mono font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer border border-zinc-800"
+                            className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-[10px] font-mono font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-800"
                           >
                             {copiedKey === 'card_airtel' ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-                            <span>{copiedKey === 'card_airtel' ? 'COPIED' : 'COPY LIST'}</span>
+                            <span>{copiedKey === 'card_airtel' ? 'COPIED TO CLIPBOARD' : 'COPY AIRTEL 5G PRICE LIST'}</span>
                           </button>
-                          {(plans?.airtel?.length ?? 0) > 0 && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openUnifiedVendModal('airtel'); }}
-                              className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-mono font-bold border border-red-500/30 flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Vend Airtel data to a customer"
-                            >
-                              <Send size={10} />
-                              <span>VEND</span>
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -2072,7 +2057,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                   <span>Select {vendNetworkTab.toUpperCase()} Data Plan:</span>
                   <span className="text-zinc-400">{plans?.[vendNetworkTab]?.length || 0} Available</span>
                 </div>
-                <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                <div ref={vendPlanListRef} className="max-h-36 overflow-y-auto space-y-1 pr-1">
                   {(plans?.[vendNetworkTab] || []).map((p) => {
                     const isSelected = vendingPlan?.code === p.code;
                     const cleanName = (p.name || '').replace(/\s*\(\+\d+(\.\d+)?GB\s+all\s+night\s+streaming\)/gi, '').trim();
@@ -2082,6 +2067,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     return (
                       <button
                         key={p.code}
+                        data-plan-code={p.code}
                         type="button"
                         onClick={() => setVendingPlan(p)}
                         className={`w-full text-left px-2.5 py-2 text-[11px] border transition-colors cursor-pointer flex items-center justify-between gap-2 ${
@@ -2122,7 +2108,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                         <span className="text-white font-bold font-mono">₦{modalEffectivePrice.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-zinc-400">Wholesale Float Debit (Tier {user.multiplierTier?.level || 1}):</span>
+                        <span className="text-zinc-400">Wholesale Wallet Debit (4X VIP):</span>
                         <span className="text-red-400 font-bold font-mono">−₦{modalWholesaleCost.toLocaleString()}</span>
                       </div>
                       <div className="border-t border-zinc-800 pt-1.5 flex justify-between items-center">
@@ -2134,7 +2120,7 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                         </span>
                       </div>
                       <div className="border-t border-zinc-800/60 pt-1 flex justify-between items-center text-[10px] text-zinc-400 font-mono">
-                        <span>Float Left After Vend:</span>
+                        <span>Wallet Left After Vend:</span>
                         <span className={hasInsufficientFloat ? 'text-red-400 font-bold' : 'text-zinc-200'}>
                           ₦{Math.max(0, modalBalanceAfter).toLocaleString()}
                         </span>
@@ -2142,9 +2128,23 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
                     </div>
 
                     {hasInsufficientFloat && (
-                      <div className="text-red-400 text-[11px] p-2.5 bg-red-500/10 border border-red-500/30 flex items-center gap-2">
-                        <AlertCircle size={12} className="shrink-0" />
-                        <span>Insufficient float balance! Need ₦{modalWholesaleCost.toLocaleString()}, available: ₦{user.walletBalance.toLocaleString()}. Please Top Up.</span>
+                      <div className="p-2.5 bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-3 font-mono">
+                        <div className="space-y-0.5 min-w-0">
+                          <div className="flex items-center gap-1.5 text-red-400 font-bold text-xs uppercase tracking-wider">
+                            <AlertCircle size={13} className="shrink-0" />
+                            <span>Insufficient Wallet Balance</span>
+                          </div>
+                          <p className="text-[11px] text-zinc-300 truncate">
+                            Need <span className="text-white font-bold">₦{modalWholesaleCost.toLocaleString()}</span> · Available: <span className="text-red-400 font-bold">₦{user.walletBalance.toLocaleString()}</span>
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleModalTopUpClick(modalWholesaleCost - (user.walletBalance || 0))}
+                          className="px-3 py-1.5 bg-red-500 hover:bg-red-400 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm shrink-0 active:scale-95"
+                        >
+                          TOP UP
+                        </button>
                       </div>
                     )}
 

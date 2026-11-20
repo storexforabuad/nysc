@@ -673,7 +673,16 @@ async function startServer() {
       }
 
       const balance = await wallet.getBalance(matchedUid).catch(() => 0);
-      const tier = wallet.getMultiplierTier(balance);
+      // Universal 4X VIP Tier for all merchants (Day 1 unlock)
+      const tier = {
+        level: 6,
+        multiplier: '4X',
+        name: 'Tier 6 · 4X MAX VIP',
+        minBalance: 0,
+        neededToNext: 0,
+        progressPercent: 100,
+        nextThreshold: null
+      };
       const schedule = getNextStatusSchedule();
 
       let squadPartners = [];
