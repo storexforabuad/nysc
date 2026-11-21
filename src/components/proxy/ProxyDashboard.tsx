@@ -102,7 +102,8 @@ interface DashboardPayload {
 }
 
 export default function ProxyDashboard() {
-  const { identifier } = useParams<{ identifier: string }>();
+  const { identifier: paramIdentifier } = useParams<{ identifier: string }>();
+  const identifier = paramIdentifier || (typeof window !== 'undefined' ? localStorage.getItem('orbit_terminal_phone') : null) || '09155946561';
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

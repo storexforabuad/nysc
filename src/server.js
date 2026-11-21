@@ -1342,6 +1342,178 @@ async function startServer() {
     }
   });
 
+  // In-memory waitlist cache
+  const waitlistSubmissions = [];
+
+  // ── OrbitVTU Reseller Waitlist Registration ──
+  app.post('/api/waitlist/register', apiLimiter, async (req, res) => {
+    try {
+      const { businessName, contact, campus } = req.body;
+      if (!businessName || !contact) {
+        return res.status(400).json({ success: false, error: 'businessName and contact are required' });
+      }
+
+      const entry = {
+        id: `wait_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        businessName: String(businessName).trim(),
+        contact: String(contact).trim(),
+        campus: campus ? String(campus).trim() : null,
+        registeredAt: new Date().toISOString(),
+        status: 'PRIORITY_WAITLIST'
+      };
+
+      if (db.waitlist) {
+        await db.waitlist.doc(entry.id).set(entry).catch((err) => {
+          logger.warn('Failed to persist waitlist to Firestore:', err.message);
+        });
+      }
+
+      waitlistSubmissions.unshift(entry);
+      if (waitlistSubmissions.length > 500) waitlistSubmissions.pop();
+
+      logger.info(`[WAITLIST] New prospective reseller: ${entry.businessName} (${entry.contact})`);
+      res.json({ success: true, entry, totalWaitlisted: waitlistSubmissions.length });
+    } catch (err) {
+      logger.error('Error in /api/waitlist/register:', err);
+      res.status(500).json({ success: false, error: err.message || 'Waitlist registration failed' });
+    }
+  });
+
+  // ── Admin: Get Reseller Waitlist ──
+  app.get('/api/admin/waitlist', apiLimiter, async (req, res) => {
+    try {
+      let results = [];
+      if (db.waitlist) {
+        const snap = await db.waitlist.orderBy('registeredAt', 'desc').limit(100).get().catch(() => null);
+        if (snap && !snap.empty) {
+          results = snap.docs.map(d => d.data());
+        }
+      }
+
+      if (results.length === 0) {
+        results = waitlistSubmissions;
+      }
+
+      res.json({ success: true, waitlist: results });
+    } catch (err) {
+      logger.error('Error in /api/admin/waitlist:', err);
+      res.status(500).json({ success: false, error: err.message, waitlist: waitlistSubmissions });
+    }
+  });
+
+  // In-memory student grant submissions cache
+  const grantSubmissions = [];
+
+  // ── OrbitVTU Student Research Data Grant Application ──
+  app.post('/api/grants/apply', apiLimiter, async (req, res) => {
+    try {
+      const { fullName, institution, courseAndLevel, phone, network, purpose } = req.body;
+      if (!fullName || !institution || !phone) {
+        return res.status(400).json({ success: false, error: 'Full name, institution, and phone are required' });
+      }
+
+      const grantEntry = {
+        id: `grant_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        fullName: String(fullName).trim(),
+        institution: String(institution).trim(),
+        courseAndLevel: String(courseAndLevel || '').trim(),
+        phone: String(phone).trim(),
+        network: String(network || 'MTN').trim().toUpperCase(),
+        purpose: String(purpose || '').trim(),
+        appliedAt: new Date().toISOString(),
+        status: 'PENDING_REVIEW'
+      };
+
+      if (db.grantApplications) {
+        await db.grantApplications.doc(grantEntry.id).set(grantEntry).catch((err) => {
+          logger.warn('Failed to persist grant application to Firestore:', err.message);
+        });
+      }
+
+      grantSubmissions.unshift(grantEntry);
+      if (grantSubmissions.length > 500) grantSubmissions.pop();
+
+      logger.info(`[DATA-GRANT] New applicant: ${grantEntry.fullName} (${grantEntry.institution}) - ${grantEntry.phone}`);
+      res.json({ success: true, grantId: grantEntry.id });
+    } catch (err) {
+      logger.error('Error in /api/grants/apply:', err);
+      res.status(500).json({ success: false, error: err.message || 'Application submission failed' });
+    }
+  });
+
+  // ── Admin: Get Student Data Grants ──
+  app.get('/api/admin/grants', apiLimiter, async (req, res) => {
+    try {
+      let results = [];
+      if (db.grantApplications) {
+        const snap = await db.grantApplications.orderBy('appliedAt', 'desc').limit(100).get().catch(() => null);
+        if (snap && !snap.empty) {
+          results = snap.docs.map(d => d.data());
+        }
+      }
+
+      if (results.length === 0) {
+        results = grantSubmissions;
+      }
+
+      res.json({ success: true, grants: results });
+    } catch (err) {
+      logger.error('Error in /api/admin/grants:', err);
+      res.status(500).json({ success: false, error: err.message, grants: grantSubmissions });
+    }
+  });
+
+  // ── OrbitVTU Direct Buy: Paystack Checkout Session ──
+  app.post('/api/orbit/direct-checkout', apiLimiter, async (req, res) => {
+    try {
+      const { planCode, recipientPhone, network, amount } = req.body;
+      if (!planCode || !recipientPhone || !amount) {
+        return res.status(400).json({ success: false, error: 'planCode, recipientPhone and amount are required' });
+      }
+
+      const cleanDigits = String(recipientPhone).replace(/\D/g, '');
+      const formattedRecip = cleanDigits.startsWith('234') && cleanDigits.length === 13 
+        ? '0' + cleanDigits.slice(3) 
+        : cleanDigits;
+
+      const plan = telecomDispatcher.findPlan(planCode);
+      if (!plan) {
+        return res.status(404).json({ success: false, error: 'Selected data plan not found in catalog' });
+      }
+
+      const reference = `orbit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const host = req.get('host') || 'localhost:3000';
+      const protocol = req.protocol === 'https' || host.includes('vercel.app') ? 'https' : 'http';
+      const callbackUrl = `${protocol}://${host}/?status=success&reference=${reference}&plan=${encodeURIComponent(plan.name)}&network=${encodeURIComponent(plan.network)}&phone=${encodeURIComponent(formattedRecip)}&amount=${amount}`;
+
+      const checkoutSession = await paystack.initializeTransaction({
+        email: `customer_${formattedRecip}@orbitvtu.com`,
+        amountNaira: Number(amount),
+        reference,
+        callbackUrl,
+        metadata: {
+          type: 'DIRECT_VEND',
+          planCode: plan.code,
+          recipientPhone: formattedRecip,
+          network: plan.network,
+          planName: plan.name,
+          validity: plan.validity,
+          amountPaid: Number(amount)
+        }
+      });
+
+      res.json({
+        success: true,
+        authorizationUrl: checkoutSession.authorizationUrl,
+        reference: checkoutSession.reference,
+        accessCode: checkoutSession.accessCode
+      });
+    } catch (err) {
+      logger.error('Error in /api/orbit/direct-checkout:', err);
+      res.status(500).json({ success: false, error: err.message || 'Failed to initialize Paystack checkout' });
+    }
+  });
+
   // Memory cache for duplicate transaction prevention (bounded to 10,000 entries)
   const processedTxnRefs = new Set();
 
@@ -1433,6 +1605,19 @@ async function startServer() {
       logger.info(`Received successful payment: ${TransactionRef} (Amount: ₦${Body.amount})`);
 
       try {
+        // Check if this is an OrbitVTU Direct Buy payment
+        const meta = rawPayload?.data?.metadata || {};
+        if (meta.type === 'DIRECT_VEND' && meta.recipientPhone && meta.planCode) {
+          logger.info(`[DIRECT-VEND] Instant dispensing ${meta.planCode} to ${meta.recipientPhone} (Ref: ${TransactionRef})`);
+          try {
+            await telecomDispatcher.dispenseData(meta.recipientPhone, meta.planCode);
+            logger.info(`[DIRECT-VEND] Dispense successful for ${meta.recipientPhone} on plan ${meta.planCode}`);
+          } catch (dispenseErr) {
+            logger.error(`[DIRECT-VEND] Upstream dispense failed for ${meta.recipientPhone}:`, dispenseErr.message);
+          }
+          return { status: 'success', message: 'Direct vend processed' };
+        }
+
         // ── 0. Check for Matching Manual Order (Manual Storefront Mode) ──
         const virtualAccountNo = Body.virtual_account_number || Body.account_number;
         let matchedPartner = null;

@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Share2,
@@ -28,8 +28,12 @@ import {
   ChevronRight,
   Search,
   Maximize2,
-  Building2
+  Building2,
+  Bell
 } from 'lucide-react';
+import NotificationsModal from '../orbit/NotificationsModal';
+import OrbitTab from '../orbit/OrbitTab';
+import { generateMotherBotNotifications, markAllNotificationsAsRead, type MotherBotNotification } from '../../services/motherBotEngine';
 
 interface MultiplierTier {
   level: number;
@@ -118,9 +122,28 @@ interface MerchantDashboardProps {
 
 export default function MerchantDashboard({ data, onRefresh }: MerchantDashboardProps) {
   const { user, plans, whatsappContact } = data;
-  const [activeTab, setActiveTab] = useState<'marketing' | 'wallet' | 'sales'>('marketing');
+  const [activeTab, setActiveTab] = useState<'marketing' | 'wallet' | 'sales' | 'orbit'>('marketing');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showTopUpGuide, setShowTopUpGuide] = useState(false);
+  const [showNotifModal, setShowNotifModal] = useState(false);
+  const [notifications, setNotifications] = useState<MotherBotNotification[]>(() =>
+    generateMotherBotNotifications({
+      todayVends: (data.user.metrics?.totalOrders || 0),
+      todayProfit: (data.user.metrics?.totalProfitNaira || 0),
+      streakDays: parseInt(typeof window !== 'undefined' ? (localStorage.getItem('orbit_streak_days') || '4') : '4', 10),
+      activeReferrals: parseInt(typeof window !== 'undefined' ? (localStorage.getItem('orbit_active_referrals') || '3') : '3', 10),
+      brandName: data.user.franchiseName || data.user.name || undefined
+    })
+  );
+  const unreadNotifCount = notifications.filter(n => !n.read).length;
+  const refreshNotifications = () =>
+    setNotifications(generateMotherBotNotifications({
+      todayVends: (data.user.metrics?.totalOrders || 0),
+      todayProfit: (data.user.metrics?.totalProfitNaira || 0),
+      streakDays: parseInt(typeof window !== 'undefined' ? (localStorage.getItem('orbit_streak_days') || '4') : '4', 10),
+      activeReferrals: parseInt(typeof window !== 'undefined' ? (localStorage.getItem('orbit_active_referrals') || '3') : '3', 10),
+      brandName: data.user.franchiseName || data.user.name || undefined
+    }));
 
   // Top Up Calculator State
   const [fundAmount, setFundAmount] = useState<number>(2000);
@@ -374,8 +397,8 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
     if (name.includes('500MB')) return 500;
     if (name.includes('600MB')) return 400;
     if (name.includes('1.2GB')) return 600;
-    if (name.includes('1GB') && validity.includes('1 DAY')) return 350;
-    if (name.includes('1GB') && validity.includes('3 DAY')) return 500;
+    if (name.includes('1GB') && validity.includes('1 DAY')) return 500;
+    if (name.includes('1GB') && validity.includes('3 DAY')) return 400;
     if (name.includes('1GB') && validity.includes('7 DAY')) return 800;
     if (name.includes('1GB') && validity.includes('30 DAY')) return 1000;
     if (name.includes('2GB') && validity.includes('30 DAY')) return 2000;
@@ -415,11 +438,20 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
   }
 
   function getMerchantWholesaleCost(plan: Plan, _balance?: number): number {
+    // Exact locked wholesale prices for merchants on hot 1GB packages
+    if (plan.code === 'M1GB1D') return 290;
+    if (plan.code === 'M1GBS') return 550;
+    if (plan.code === 'M1GBS2') return 650;
+    if (plan.code === 'G1GB1') return 390;
+    if (plan.code === 'G1GB2') return 390;
+    if (plan.code === 'G1GB4') return 450;
+    if (plan.code === 'A1GB') return 800;
+
     const s = plan.sellPrice;
     const c = getPlanBaseCost(plan);
     const f = s < 2500 ? Math.round(s * 0.015) : Math.min(2000, Math.round(s * 0.015 + 100));
     const netP = Math.max(0, s - c - f);
-    // Universal 4X VIP Wholesale Power: All merchants enjoy top 40% margin pool allocation from Day 1
+    // Universal 4X VIP Wholesale Power: All merchants enjoy top 40% margin pool allocation
     const rate = 0.40;
     const discountAmount = Math.round(netP * rate);
     return Math.max(c, s - discountAmount);
@@ -771,6 +803,19 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
             <span className="sm:hidden">LIVE</span>
             <span className="hidden sm:inline">STORE_ONLINE</span>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowNotifModal(true)}
+            className="relative p-1.5 text-zinc-400 hover:text-accent transition-colors cursor-pointer"
+            title="Notifications"
+          >
+            <Bell size={15} />
+            {unreadNotifCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-amber-400 rounded-full text-[9px] text-black font-black flex items-center justify-center leading-none animate-pulse">
+                {unreadNotifCount}
+              </span>
+            )}
+          </button>
           <button
             onClick={onRefresh}
             className="p-1.5 text-zinc-400 hover:text-accent transition-colors cursor-pointer"
@@ -1659,7 +1704,35 @@ export default function MerchantDashboard({ data, onRefresh }: MerchantDashboard
           </div>
         )}
 
+        {/* ── TAB 4: ORBIT ── */}
+        {activeTab === 'orbit' && (
+          <OrbitTab
+            user={user}
+            brandName={brandName}
+            onUpdateBrandName={(newName) => {
+              try { localStorage.setItem('clarion_merchant_brand', newName); } catch {}
+            }}
+            onOpenQuickVend={() => openUnifiedVendModal()}
+          />
+        )}
+
       </main>
+
+      {/* ── Notifications Modal ── */}
+      {showNotifModal && (
+        <NotificationsModal
+          isOpen={showNotifModal}
+          onClose={() => setShowNotifModal(false)}
+          notifications={notifications}
+          onRefreshNotifications={refreshNotifications}
+          onActionClick={(actionType, payload) => {
+            setShowNotifModal(false);
+            if (actionType === 'QUICK_VEND') openUnifiedVendModal();
+            else if (actionType === 'VIEW_ORBIT') setActiveTab('orbit');
+            else if (actionType === 'COPY_STATUS') setActiveTab('marketing');
+          }}
+        />
+      )}
 
       {/* ── Withdrawal / Cash-Out Modal Overlay ── */}
       <AnimatePresence>

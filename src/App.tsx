@@ -7,6 +7,7 @@ import MetricsDisplay from './components/admin/MetricsDisplay';
 import ManagementViews from './components/admin/ManagementViews';
 import ScaleAdvisor from './components/admin/ScaleAdvisor';
 import ProxyDashboard from './components/proxy/ProxyDashboard';
+import OrbitLandingPage from './components/orbit/OrbitLandingPage';
 
 function LandingPage() {
   const navigate = useNavigate();
@@ -202,7 +203,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/" element={<OrbitLandingPage />} />
+        <Route path="/landing" element={<LandingPage />} />
+        <Route path="/terminal" element={<ProxyDashboard />} />
         <Route path="/admin" element={<AdminLogin />} />
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
         <Route path="/p/:identifier" element={<ProxyDashboard />} />
