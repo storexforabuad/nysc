@@ -2359,14 +2359,18 @@ async function startServer() {
       // Initialize Bots in the background so they don't block the preview
       (async () => {
         try {
-          await sessionManager.initMotherBot();
-          startWeeklyReportJob();
-          startWalletYieldReportJob();
-          startStatusPostJob();
-          startSubscriptionReminderJob();
-          startThursdayPromotionJob();
-          initDailyMerchantReportJob();
-          broadcastQueue.start();
+          if (process.env.ENABLE_MOTHER_BOT === 'true') {
+            await sessionManager.initMotherBot();
+            startWeeklyReportJob();
+            startWalletYieldReportJob();
+            startStatusPostJob();
+            startSubscriptionReminderJob();
+            startThursdayPromotionJob();
+            initDailyMerchantReportJob();
+            broadcastQueue.start();
+          } else {
+            logger.info('MotherBot WhatsApp QR disabled (ENABLE_MOTHER_BOT=false). Webhooks, API & Landing page fully active.');
+          }
 
           // Wire up RetryQueue customer notification callback to Proxy Workers
           retryQueue.onOrderUpdate = async (event) => {
